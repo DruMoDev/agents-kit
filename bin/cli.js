@@ -71,52 +71,84 @@ async function ask(question) {
   return answer.trim();
 }
 
+// Raw-mode keypress loop shared by the selectors. `handle` returns undefined to keep
+// looping or any other value to finish and resolve with it. Ctrl-C always exits.
+function keypressLoop(draw, handle) {
+  return new Promise((resolve) => {
+    readlineBase.emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    draw(false);
+    const onKey = (str, key = {}) => {
+      if (key.ctrl && key.name === 'c') {
+        process.stdin.setRawMode(false);
+        process.exit(130);
+      }
+      const result = handle(str, key);
+      if (result !== undefined) {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        process.stdin.off('keypress', onKey);
+        resolve(result);
+        return;
+      }
+      draw(true);
+    };
+    process.stdin.on('keypress', onKey);
+  });
+}
+
+// Arrow-key single choice. Enter picks the highlighted option.
+function singleSelect(title, options) {
+  let cursor = 0;
+  const draw = (redraw) => {
+    if (redraw) process.stdout.write(`\x1b[${options.length + 1}A`);
+    process.stdout.write(`\x1b[2K${title}\n`);
+    options.forEach((o, i) => {
+      process.stdout.write(`\x1b[2K ${i === cursor ? `\x1b[36m> ${o}\x1b[0m` : `  ${o}`}\n`);
+    });
+  };
+  return keypressLoop(draw, (str, key) => {
+    if (key.name === 'up') cursor = (cursor - 1 + options.length) % options.length;
+    else if (key.name === 'down') cursor = (cursor + 1) % options.length;
+    else if (key.name === 'return' || key.name === 'enter') return options[cursor];
+    return undefined;
+  });
+}
+
+// Interactive checkbox list. Arrows move, space toggles, "a" toggles all, enter confirms, q/esc skips.
+function multiSelect(title, items) {
+  const checked = items.map((it) => it.preselected !== false);
+  let cursor = 0;
+  const draw = (redraw) => {
+    if (redraw) process.stdout.write(`\x1b[${items.length + 1}A`);
+    process.stdout.write(`\x1b[2K${title}\n`);
+    items.forEach((it, i) => {
+      const ptr = i === cursor ? '\x1b[36m>\x1b[0m' : ' ';
+      process.stdout.write(`\x1b[2K ${ptr} [${checked[i] ? 'x' : ' '}] ${it.label}\n`);
+    });
+  };
+  return keypressLoop(draw, (str, key) => {
+    if (key.name === 'up') cursor = (cursor - 1 + items.length) % items.length;
+    else if (key.name === 'down') cursor = (cursor + 1) % items.length;
+    else if (key.name === 'space' || str === ' ') checked[cursor] = !checked[cursor];
+    else if (str === 'a') checked.fill(!checked.every(Boolean));
+    else if (key.name === 'return' || key.name === 'enter') return items.filter((_, i) => checked[i]);
+    else if (key.name === 'escape' || str === 'q') return [];
+    return undefined;
+  });
+}
+
 async function promptFramework() {
   const names = Object.keys(FRAMEWORKS);
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    return singleSelect('Project framework (arrows move, enter picks):', names);
+  }
   names.forEach((n, i) => console.log(`  ${i + 1}. ${n}`));
   const answer = await ask(`Framework [1-${names.length}]: `);
   const pick = names[Number(answer) - 1];
   if (!pick) die('Invalid choice.');
   return pick;
-}
-
-// Interactive checkbox list. Arrows move, space toggles, "a" toggles all, enter confirms, q/esc skips.
-function multiSelect(title, items) {
-  return new Promise((resolve) => {
-    const checked = items.map((it) => it.preselected !== false);
-    let cursor = 0;
-    const draw = (redraw) => {
-      if (redraw) process.stdout.write(`\x1b[${items.length + 1}A`);
-      process.stdout.write(`\x1b[2K${title}\n`);
-      items.forEach((it, i) => {
-        const ptr = i === cursor ? '\x1b[36m>\x1b[0m' : ' ';
-        process.stdout.write(`\x1b[2K ${ptr} [${checked[i] ? 'x' : ' '}] ${it.label}\n`);
-      });
-    };
-    readlineBase.emitKeypressEvents(process.stdin);
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    draw(false);
-    const finish = (result) => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      process.stdin.off('keypress', onKey);
-      resolve(result);
-    };
-    const onKey = (str, key = {}) => {
-      if (key.ctrl && key.name === 'c') {
-        process.stdin.setRawMode(false);
-        process.exit(130);
-      } else if (key.name === 'up') cursor = (cursor - 1 + items.length) % items.length;
-      else if (key.name === 'down') cursor = (cursor + 1) % items.length;
-      else if (key.name === 'space' || str === ' ') checked[cursor] = !checked[cursor];
-      else if (str === 'a') checked.fill(!checked.every(Boolean));
-      else if (key.name === 'return' || key.name === 'enter') return finish(items.filter((_, i) => checked[i]));
-      else if (key.name === 'escape' || str === 'q') return finish([]);
-      draw(true);
-    };
-    process.stdin.on('keypress', onKey);
-  });
 }
 
 // Kit-owned files for a framework: [destPath, templatePath][]
