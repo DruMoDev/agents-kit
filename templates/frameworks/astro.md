@@ -1,5 +1,7 @@
 # Astro rules
 
+Framework knowledge and best practices come from the official Astro skill (the kit installer prints its install command) — this file only pins this project's fixed choices.
+
 - Zero JS by default. Add islands (`client:*`) only for real interactivity; static content ships no JS.
 - Content lives in Content Collections with a typed, validated frontmatter schema — never loose markdown folders.
 - SEO baseline on every page: unique `<title>` (max 60 chars) and meta description (max 155), canonical URL, Open Graph + Twitter cards, JSON-LD matching the page type, sitemap and RSS where applicable.

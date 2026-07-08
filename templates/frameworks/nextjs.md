@@ -1,5 +1,7 @@
 # Next.js rules
 
+Framework knowledge and best practices come from the official sources (bundled docs below, plus the official skills the kit installer prints) — this file only pins this project's fixed choices.
+
 This may not be the Next.js you know. APIs, conventions, and file structure may differ from your training data. Before any framework-level change (routing, route handlers, Server Actions, metadata, config, middleware), read the matching guide in `node_modules/next/dist/docs/` and heed deprecation notices.
 
 - Server Components by default. Client Components only where interactivity requires them, with `"use client"` as low in the tree as possible.

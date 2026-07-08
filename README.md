@@ -28,15 +28,17 @@ docs/agent/
 - The kit owns `docs/agent/*`, the AGENTS.md header, and the CLAUDE.md line. Your `## Project` section and anything else you add are never touched.
 - `init` is idempotent; `update` rewrites only kit-owned files.
 
-## Per-framework skill recommendations
+## Framework knowledge vs project choices
 
-Printed after `init` (never auto-run). Edit `recommendations.json` to change them.
+The kit deliberately does NOT maintain framework best practices — those live in official, vendor-maintained sources: [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) for React/Next, the [official Astro skill](https://github.com/astrolicious/agent-skills), and Next.js's own bundled docs (`node_modules/next/dist/docs/`). The kit's `<framework>.md` files only pin *your fixed stack choices* (e.g. Tailwind-only, React Query over `useEffect+fetch`, zero-JS Astro).
 
-| Framework | Skills |
+Install commands for the official skills are printed after `init` (never auto-run). Edit `recommendations.json` to change them.
+
+| Framework | Printed commands |
 |---|---|
-| next / react | vercel-react-best-practices, vercel-composition-patterns, web-design-guidelines |
-| astro | web-design-guidelines |
-| all | supabase skill if using Supabase; ponytail plugin for its audit/review commands |
+| next / react | `npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines` |
+| astro | `npx skills add astrolicious/agent-skills --skill astro` + web-design-guidelines |
+| all (notes) | Supabase skills if using Supabase; anthropics frontend-design for distinctive UI; ponytail plugin for its audit/review commands |
 
 ## Skills convention (future)
 

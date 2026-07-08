@@ -1,22 +1,21 @@
 {
   "next": [
-    "npx add-skill vercel-react-best-practices",
-    "npx add-skill vercel-composition-patterns",
-    "npx add-skill web-design-guidelines"
+    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines"
   ],
   "react": [
-    "npx add-skill vercel-react-best-practices",
-    "npx add-skill vercel-composition-patterns",
-    "npx add-skill web-design-guidelines"
+    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines"
   ],
   "astro": [
-    "npx add-skill web-design-guidelines"
+    "npx skills add astrolicious/agent-skills --skill astro",
+    "npx skills add vercel-labs/agent-skills --skill web-design-guidelines"
   ],
   "node-backend": [],
   "python": [],
   "generic": [],
   "notes": [
-    "Using Supabase? install its skill: npx add-skill supabase",
+    "Framework knowledge lives in official skills/docs (Next.js bundles its own in node_modules/next/dist/docs); the kit only pins your project choices",
+    "Using Supabase? npx skills add supabase/agent-skills --skill supabase --skill supabase-postgres-best-practices",
+    "Distinctive UI work? npx skills add anthropics/skills --skill frontend-design",
     "Want the full lazy-dev toolchain (audit/review commands)? install the ponytail plugin - base.md already ships the distilled ruleset"
   ]
 }
