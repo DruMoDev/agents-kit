@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+KIT="$(cd "$(dirname "$0")/.." && pwd)"
+CLI="node $KIT/bin/cli.js"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+fail() { echo "FAIL: $1"; exit 1; }
+
+# 1. init --framework next on an empty project
+cd "$TMP" && mkdir p1 && cd p1
+$CLI init --framework next >out.txt
+[ -f docs/agent/base.md ] || fail "base.md missing"
+[ -f docs/agent/nextjs.md ] || fail "nextjs.md missing"
+[ -f docs/agent/testing.md ] || fail "testing.md missing"
+[ -f docs/agent/docs-discipline.md ] || fail "docs-discipline.md missing"
+grep -q '^@docs/agent/base.md' AGENTS.md || fail "AGENTS.md missing base import"
+grep -q '^@docs/agent/nextjs.md' AGENTS.md || fail "AGENTS.md missing framework import"
+grep -q '^## Project' AGENTS.md || fail "AGENTS.md missing Project section"
+[ "$(cat CLAUDE.md)" = "@AGENTS.md" ] || fail "CLAUDE.md shim wrong"
+grep -q 'vercel-react-best-practices' out.txt || fail "next recommendations not logged"
+
+# 2. re-running init changes nothing (idempotent)
+sum_before=$(find . -type f ! -name out.txt -exec shasum {} + | sort | shasum)
+$CLI init --framework next >/dev/null
+sum_after=$(find . -type f ! -name out.txt -exec shasum {} + | sort | shasum)
+[ "$sum_before" = "$sum_after" ] || fail "re-run not idempotent"
+
+# 3. generic installs no framework file and leaks no placeholder
+cd "$TMP" && mkdir p2 && cd p2
+$CLI init --framework generic >/dev/null
+[ ! -f docs/agent/nextjs.md ] || fail "generic must not install a framework file"
+grep -q '{{FRAMEWORK_IMPORT}}' AGENTS.md && fail "placeholder leaked into AGENTS.md" || true
+
+# 4. pre-existing AGENTS.md / CLAUDE.md: user content preserved, kit lines added
+cd "$TMP" && mkdir p3 && cd p3
+printf '# My project\nMy content\n' > AGENTS.md
+printf '# Old claude notes\n' > CLAUDE.md
+$CLI init --framework astro >/dev/null
+grep -q 'My content' AGENTS.md || fail "user AGENTS.md content lost"
+head -1 AGENTS.md | grep -q 'Mandatory reading' || fail "header not prepended to AGENTS.md"
+grep -q '^@AGENTS.md' CLAUDE.md || fail "@AGENTS.md line not added to CLAUDE.md"
+grep -q 'Old claude notes' CLAUDE.md || fail "user CLAUDE.md content lost"
+
+echo "ALL SMOKE TESTS PASSED"
