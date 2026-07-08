@@ -57,9 +57,9 @@ Catalog: `next-devtools`, `astro-docs`, `supabase`, `playwright` (edit `MCP_CATA
 
 **Browser testing/debugging choice:** the kit blesses exactly one option — the official Playwright MCP. It works identically across Claude Code, opencode and Cursor, and covers both E2E testing and interactive debugging. `webapp-testing` (skill) and `agent-browser` (CLI) overlap with it; skip them unless you have a specific need.
 
-## Skills convention (future)
+## Skills location
 
-The kit ships no skills today. When skills are added, they go in `.agents/skills/` (ecosystem-canonical) with a symlink `.claude/skills -> ../.agents/skills` for Claude Code.
+Skills live canonically in `.agents/skills/` (where the `skills` CLI installs them). `init` and `update` automatically create the symlink `.claude/skills -> ../.agents/skills` so Claude Code always sees the same skills as every other tool — update `.agents/` and everything stays in sync. A pre-existing real `.claude/skills` directory is never replaced (you'll get a hint to move its content into `.agents/skills`).
 
 ## Development
 

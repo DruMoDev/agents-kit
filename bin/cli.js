@@ -78,14 +78,17 @@ function keypressLoop(draw, handle) {
     readlineBase.emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
     process.stdin.resume();
+    process.stdout.write('\x1b[?25l');
     draw(false);
     const onKey = (str, key = {}) => {
       if (key.ctrl && key.name === 'c') {
+        process.stdout.write('\x1b[?25h');
         process.stdin.setRawMode(false);
         process.exit(130);
       }
       const result = handle(str, key);
       if (result !== undefined) {
+        process.stdout.write('\x1b[?25h');
         process.stdin.setRawMode(false);
         process.stdin.pause();
         process.stdin.off('keypress', onKey);
@@ -98,14 +101,22 @@ function keypressLoop(draw, handle) {
   });
 }
 
+// Each logical line must occupy exactly one terminal row or the cursor-up redraw
+// stacks duplicated frames, so truncate to the terminal width before styling.
+function selectLine(text, highlighted) {
+  const width = process.stdout.columns || 80;
+  const raw = text.slice(0, width - 1);
+  return `\x1b[2K${highlighted ? `\x1b[36m${raw}\x1b[0m` : raw}\n`;
+}
+
 // Arrow-key single choice. Enter picks the highlighted option.
 function singleSelect(title, options) {
   let cursor = 0;
   const draw = (redraw) => {
     if (redraw) process.stdout.write(`\x1b[${options.length + 1}A`);
-    process.stdout.write(`\x1b[2K${title}\n`);
+    process.stdout.write(selectLine(title, false));
     options.forEach((o, i) => {
-      process.stdout.write(`\x1b[2K ${i === cursor ? `\x1b[36m> ${o}\x1b[0m` : `  ${o}`}\n`);
+      process.stdout.write(selectLine(` ${i === cursor ? '>' : ' '} ${o}`, i === cursor));
     });
   };
   return keypressLoop(draw, (str, key) => {
@@ -122,10 +133,9 @@ function multiSelect(title, items) {
   let cursor = 0;
   const draw = (redraw) => {
     if (redraw) process.stdout.write(`\x1b[${items.length + 1}A`);
-    process.stdout.write(`\x1b[2K${title}\n`);
+    process.stdout.write(selectLine(title, false));
     items.forEach((it, i) => {
-      const ptr = i === cursor ? '\x1b[36m>\x1b[0m' : ' ';
-      process.stdout.write(`\x1b[2K ${ptr} [${checked[i] ? 'x' : ' '}] ${it.label}\n`);
+      process.stdout.write(selectLine(` ${i === cursor ? '>' : ' '} [${checked[i] ? 'x' : ' '}] ${it.label}`, i === cursor));
     });
   };
   return keypressLoop(draw, (str, key) => {
@@ -207,6 +217,24 @@ function ensureClaudeMd() {
 
 function report(status, file) {
   console.log(`  ${status.padEnd(9)} ${file}`);
+}
+
+// Skills live canonically in .agents/skills; Claude Code reads .claude/skills.
+// Keep the latter a symlink so updating .agents/ updates every tool.
+function ensureClaudeSkillsLink() {
+  if (!fs.existsSync(path.join('.agents', 'skills'))) return;
+  const dest = path.join('.claude', 'skills');
+  let existing = null;
+  try {
+    existing = fs.lstatSync(dest);
+  } catch {}
+  if (existing) {
+    if (existing.isSymbolicLink()) return report('unchanged', '.claude/skills -> ../.agents/skills');
+    return report('skipped', '.claude/skills (real directory exists - move its content into .agents/skills to unify)');
+  }
+  fs.mkdirSync('.claude', { recursive: true });
+  fs.symlinkSync(path.join('..', '.agents', 'skills'), dest, 'dir');
+  report('linked', '.claude/skills -> ../.agents/skills');
 }
 
 function readJson(file, fallback) {
@@ -304,6 +332,7 @@ async function init(args) {
   report(ensureAgentsMd(framework), 'AGENTS.md');
   report(ensureClaudeMd(), 'CLAUDE.md');
   await offerExtras(framework);
+  ensureClaudeSkillsLink();
 }
 
 function detectFramework() {
@@ -319,6 +348,7 @@ function update(args) {
   for (const [dest, src] of kitFiles(framework)) report(installFile(src, dest, true), dest);
   report(ensureAgentsMd(framework), 'AGENTS.md');
   report(ensureClaudeMd(), 'CLAUDE.md');
+  ensureClaudeSkillsLink();
 }
 
 const args = parseArgs(process.argv.slice(2));

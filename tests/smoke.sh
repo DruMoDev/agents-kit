@@ -70,4 +70,18 @@ $CLI mcp next-devtools playwright supabase --project-ref testref >/dev/null
 after=$(shasum .mcp.json opencode.json)
 [ "$before" = "$after" ] || fail "mcp re-run not idempotent"
 
+# 7. .claude/skills symlink to .agents/skills (created, resolves, never clobbers a real dir)
+cd "$TMP" && mkdir p4 && cd p4
+mkdir -p .agents/skills/foo && echo 'x' > .agents/skills/foo/SKILL.md
+$CLI init --framework generic >/dev/null
+[ -L .claude/skills ] || fail ".claude/skills symlink not created"
+[ -f .claude/skills/foo/SKILL.md ] || fail ".claude/skills symlink does not resolve"
+$CLI update >/dev/null
+[ -L .claude/skills ] || fail "update broke the symlink"
+cd "$TMP" && mkdir p5 && cd p5
+mkdir -p .agents/skills .claude/skills/real && echo 'y' > .claude/skills/real/SKILL.md
+$CLI init --framework generic >/dev/null
+[ ! -L .claude/skills ] || fail "real .claude/skills dir was replaced by a symlink"
+[ -f .claude/skills/real/SKILL.md ] || fail "real .claude/skills content lost"
+
 echo "ALL SMOKE TESTS PASSED"
