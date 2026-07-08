@@ -25,7 +25,7 @@ Non-goal: being extensive. The kit ships only the key, universally-applicable in
 
 ```
 AGENTS.md                     canonical, tool-agnostic (user-owned except header)
-CLAUDE.md                     3-line shim; only missing @ lines are ever re-added
+CLAUDE.md                     1-line shim: `@AGENTS.md` (constant, framework-independent)
 docs/agent/
   base.md                     core rules — always loaded (kit-owned)
   <framework>.md              framework rules — always loaded (kit-owned, omitted for generic)
@@ -33,25 +33,25 @@ docs/agent/
   docs-discipline.md          lazy reference (kit-owned)
 ```
 
-**`AGENTS.md`** starts with a mandatory-read header:
+**`AGENTS.md`** starts with a mandatory-read header (the `@` lines live here, on their own lines):
 
 ```markdown
-> **Mandatory:** before any work, read `docs/agent/base.md` and `docs/agent/nextjs.md`.
-> (Claude Code imports them automatically; other agents must read them now.)
+**Mandatory reading before any work** (Claude Code auto-imports these; other agents: read them now):
+
+@docs/agent/base.md
+@docs/agent/nextjs.md
 
 ## Project
 <project-specific context: what it is, stack, commands, skills-to-load table, codebase map>
 ```
 
-**`CLAUDE.md`** (static):
+**`CLAUDE.md`** (constant, one line):
 
 ```markdown
-@docs/agent/base.md
-@docs/agent/nextjs.md
 @AGENTS.md
 ```
 
-Rationale: `@import` is Claude Code-only syntax and guarantees the rules are in context every session; other tools (Cursor, opencode, Codex, Warp) read `AGENTS.md` natively and follow the mandatory-read header. A symlink `CLAUDE.md -> AGENTS.md` was rejected because it loses the guaranteed imports.
+Rationale: Claude Code `@` imports are recursive (max 5 hops), so `CLAUDE.md -> AGENTS.md -> base.md + <framework>.md` guarantees the rules are in context every session. Other tools (Cursor, opencode, Codex, Warp) read `AGENTS.md` natively and treat the `@` lines as plain path references, backed by the "read them now" instruction. The framework choice is recorded in exactly one place (AGENTS.md header). A symlink `CLAUDE.md -> AGENTS.md` was rejected because Claude Code would then treat AGENTS.md content as top-level CLAUDE.md — workable, but the one-line import file is explicit, portable (works on Windows checkouts), and diff-friendly.
 
 **Ownership rule:** the kit owns everything under `docs/agent/` plus the AGENTS.md header and the CLAUDE.md shim. The user owns `## Project` and everything else. `update` only ever rewrites kit-owned files.
 
@@ -65,15 +65,15 @@ Runs from GitHub without npm publish: `npx github:DruMoDev/agents-kit <cmd>` (if
 
 1. Prompts for framework if no flag (plain readline, numbered list).
 2. Writes `docs/agent/base.md`, `docs/agent/<framework>.md`, `docs/agent/testing.md`, `docs/agent/docs-discipline.md`.
-3. Creates `AGENTS.md` (header + empty `## Project` template with commented placeholders: skills-to-load table, codebase map, commands) if missing; if it exists, only ensures the mandatory-read header is present at the top.
-4. Creates `CLAUDE.md` shim if missing; if a CLAUDE.md exists, prepends the missing `@` lines only.
+3. Creates `AGENTS.md` (mandatory-read header with the `@` lines + empty `## Project` template with commented placeholders: skills-to-load table, codebase map, commands) if missing; if it exists, only ensures the header block (with the `@` lines) is present at the top.
+4. Creates `CLAUDE.md` (`@AGENTS.md`) if missing; if a CLAUDE.md exists, prepends the `@AGENTS.md` line if absent.
 5. Prints next steps from `recommendations.json`: framework-specific skill installs and MCP suggestions. Never executes them.
 
 Idempotent: re-running changes nothing already in place; `--force` re-copies kit-owned files (same as `update`). Existing files with user content are never overwritten, only appended to as described.
 
 ### `update`
 
-Overwrites kit-owned files under `docs/agent/` with the latest templates, re-ensures the AGENTS.md header and CLAUDE.md import lines, and prints which files changed. Detects the installed framework by which `docs/agent/<framework>.md` exists (`--framework` overrides).
+Overwrites kit-owned files under `docs/agent/` with the latest templates, re-ensures the AGENTS.md header block and the `@AGENTS.md` line in CLAUDE.md, and prints which files changed. Detects the installed framework by which `docs/agent/<framework>.md` exists (`--framework` overrides).
 
 ### Implementation
 
