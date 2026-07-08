@@ -76,12 +76,14 @@
     }
   },
   "global": {
+    "skills": [
+      { "name": "deploy-to-vercel", "source": "vercel-labs/agent-skills", "why": "only if this project deploys to Vercel", "preselected": false },
+      { "name": "find-skills", "source": "vercel-labs/skills", "why": "teaches the agent to search the skills registry", "preselected": false },
+      { "name": "ponytail", "source": "DietrichGebert/ponytail", "why": "full lazy-dev toolchain (audit/review); base.md already ships its distilled rules", "preselected": false }
+    ],
     "notes": [
       "Framework knowledge lives in official skills/docs (Next.js bundles its own in node_modules/next/dist/docs and next dev >=16.3 generates agent rules); the kit only pins your project choices",
-      "Browser testing AND debugging are covered by the playwright MCP - skip agent-browser/webapp-testing, they overlap",
-      "Deploying on Vercel? npx skills add vercel-labs/agent-skills --skill deploy-to-vercel",
-      "Can't find a skill for your stack? npx skills add vercel-labs/skills --skill find-skills teaches the agent to search the registry",
-      "Want the full lazy-dev toolchain (audit/review commands)? install the ponytail plugin - base.md already ships the distilled ruleset"
+      "Browser testing AND debugging are covered by the playwright MCP - skip agent-browser/webapp-testing, they overlap"
     ]
   }
 }

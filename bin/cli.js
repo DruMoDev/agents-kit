@@ -243,14 +243,14 @@ function mcp(args) {
   writeJson('opencode.json', openCfg);
 }
 
-function printCommands(fw) {
-  if (fw.skills.length) {
+function printCommands(skills, mcps) {
+  if (skills.length) {
     console.log('\nRecommended skills (one command each - pick what this project needs):');
-    for (const s of fw.skills) console.log(`  npx skills add ${s.source} --skill ${s.name}   # ${s.why}`);
+    for (const s of skills) console.log(`  npx skills add ${s.source} --skill ${s.name}   # ${s.why}`);
   }
-  if (fw.mcps.length) {
+  if (mcps.length) {
     console.log('\nRecommended MCP servers (each configures Claude Code + opencode, project scope):');
-    for (const m of fw.mcps) console.log(`  npx github:DruMoDev/agents-kit mcp ${m.name}   # ${m.why}`);
+    for (const m of mcps) console.log(`  npx github:DruMoDev/agents-kit mcp ${m.name}   # ${m.why}`);
   }
 }
 
@@ -260,20 +260,22 @@ function printNotes(fw, rec) {
 }
 
 async function offerExtras(framework) {
-  const rec = readJson(path.join(KIT_ROOT, 'recommendations.json'), { frameworks: {}, global: { notes: [] } });
+  const rec = readJson(path.join(KIT_ROOT, 'recommendations.json'), { frameworks: {}, global: { skills: [], notes: [] } });
   const fw = { skills: [], mcps: [], notes: [], ...(rec.frameworks[framework] ?? {}) };
-  if (!fw.skills.length && !fw.mcps.length) {
+  const skills = [...fw.skills, ...(rec.global.skills ?? [])];
+  const mcps = fw.mcps;
+  if (!skills.length && !mcps.length) {
     printNotes(fw, rec);
     return;
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    printCommands(fw);
+    printCommands(skills, mcps);
     printNotes(fw, rec);
     return;
   }
   const items = [
-    ...fw.skills.map((s) => ({ ...s, kind: 'skill', label: `skill  ${s.name.padEnd(34)} ${s.why}` })),
-    ...fw.mcps.map((m) => ({ ...m, kind: 'mcp', label: `mcp    ${m.name.padEnd(34)} ${m.why}` })),
+    ...skills.map((s) => ({ ...s, kind: 'skill', label: `skill  ${s.name.padEnd(34)} ${s.why}` })),
+    ...mcps.map((m) => ({ ...m, kind: 'mcp', label: `mcp    ${m.name.padEnd(34)} ${m.why}` })),
   ];
   console.log('');
   const chosen = await multiSelect(
