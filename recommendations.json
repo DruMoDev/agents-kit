@@ -1,21 +1,27 @@
 {
   "next": [
-    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines"
+    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
+    "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing",
+    "npx skills add millionco/react-doctor --skill react-doctor"
   ],
   "react": [
-    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines"
+    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
+    "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing",
+    "npx skills add millionco/react-doctor --skill react-doctor"
   ],
   "astro": [
     "npx skills add astrolicious/agent-skills --skill astro",
-    "npx skills add vercel-labs/agent-skills --skill web-design-guidelines"
+    "npx skills add vercel-labs/agent-skills --skill web-design-guidelines",
+    "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing"
   ],
   "node-backend": [],
   "python": [],
   "generic": [],
   "notes": [
-    "Framework knowledge lives in official skills/docs (Next.js bundles its own in node_modules/next/dist/docs); the kit only pins your project choices",
+    "Framework knowledge lives in official skills/docs (Next.js bundles its own in node_modules/next/dist/docs and next dev >=16.3 generates agent rules); the kit only pins your project choices",
+    "Next-specific task skills (dev loop, cache components): npx skills add vercel/next.js --list",
     "Using Supabase? npx skills add supabase/agent-skills --skill supabase --skill supabase-postgres-best-practices",
-    "Distinctive UI work? npx skills add anthropics/skills --skill frontend-design",
+    "Deploying on Vercel? npx skills add vercel-labs/agent-skills --skill deploy-to-vercel",
     "Want the full lazy-dev toolchain (audit/review commands)? install the ponytail plugin - base.md already ships the distilled ruleset"
   ]
 }

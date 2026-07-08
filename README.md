@@ -36,9 +36,9 @@ Install commands for the official skills are printed after `init` (never auto-ru
 
 | Framework | Printed commands |
 |---|---|
-| next / react | `npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines` |
-| astro | `npx skills add astrolicious/agent-skills --skill astro` + web-design-guidelines |
-| all (notes) | Supabase skills if using Supabase; anthropics frontend-design for distinctive UI; ponytail plugin for its audit/review commands |
+| next / react | vercel-react-best-practices + vercel-composition-patterns + web-design-guidelines (vercel-labs/agent-skills); frontend-design + webapp-testing (anthropics/skills); react-doctor (millionco/react-doctor) |
+| astro | astro (astrolicious/agent-skills); web-design-guidelines; frontend-design + webapp-testing |
+| all (notes) | Next task skills live in `vercel/next.js` (dev loop, cache components); Supabase skills if using Supabase; deploy-to-vercel if deploying there; ponytail plugin for its audit/review commands |
 
 ## Skills convention (future)
 
