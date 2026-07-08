@@ -1,0 +1,22 @@
+{
+  "next": [
+    "npx add-skill vercel-react-best-practices",
+    "npx add-skill vercel-composition-patterns",
+    "npx add-skill web-design-guidelines"
+  ],
+  "react": [
+    "npx add-skill vercel-react-best-practices",
+    "npx add-skill vercel-composition-patterns",
+    "npx add-skill web-design-guidelines"
+  ],
+  "astro": [
+    "npx add-skill web-design-guidelines"
+  ],
+  "node-backend": [],
+  "python": [],
+  "generic": [],
+  "notes": [
+    "Using Supabase? install its skill: npx add-skill supabase",
+    "Want the full lazy-dev toolchain (audit/review commands)? install the ponytail plugin - base.md already ships the distilled ruleset"
+  ]
+}
