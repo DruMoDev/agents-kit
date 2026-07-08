@@ -31,9 +31,9 @@ docs/agent/
 
 ## Framework knowledge vs project choices
 
-The kit deliberately does NOT maintain framework best practices — those live in official, vendor-maintained sources: [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) for React/Next, the [official Astro skill](https://github.com/astrolicious/agent-skills), and Next.js's own bundled docs (`node_modules/next/dist/docs/`). The kit's `<framework>.md` files only pin *your fixed stack choices* (e.g. Tailwind-only, React Query over `useEffect+fetch`, zero-JS Astro).
+The kit deliberately does NOT maintain framework best practices — those live in official, vendor-maintained sources: [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) for React/Next, the [official Astro skill](https://github.com/astrolicious/agent-skills), FastAPI's in-repo skill, and Next.js's own bundled docs (`node_modules/next/dist/docs/`). The kit's `<framework>.md` files only pin *your fixed stack choices* (e.g. Tailwind-only, React Query over `useEffect+fetch`, zero-JS Astro).
 
-Install commands for the official skills are printed after `init` (never auto-run). Edit `recommendations.json` to change them.
+After installing the rules, `init` shows an interactive checkbox picker with the recommended skills and MCP servers for the framework (recommended ones pre-checked, conditional ones like Supabase unchecked) and installs your selection: skills via `npx skills add <source> --skill <name> -y`, MCPs via the dual-write `mcp` command below. In non-interactive contexts (CI, piped output) it prints one copy-pasteable command per skill/MCP instead. Edit `recommendations.json` to change the catalog.
 
 | Framework | Skills | MCP servers |
 |---|---|---|

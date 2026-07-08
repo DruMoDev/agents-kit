@@ -2,12 +2,18 @@
   "frameworks": {
     "next": {
       "skills": [
-        "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
-        "npx skills add anthropics/skills --skill frontend-design",
-        "npx skills add millionco/react-doctor --skill react-doctor"
+        { "name": "vercel-react-best-practices", "source": "vercel-labs/agent-skills", "why": "React/Next performance rules from Vercel Engineering" },
+        { "name": "vercel-composition-patterns", "source": "vercel-labs/agent-skills", "why": "scalable React composition patterns" },
+        { "name": "web-design-guidelines", "source": "vercel-labs/agent-skills", "why": "UI compliance review (accessibility/UX)" },
+        { "name": "frontend-design", "source": "anthropics/skills", "why": "distinctive visual design guidance" },
+        { "name": "react-doctor", "source": "millionco/react-doctor", "why": "60+ React health rules (state, perf, security)" },
+        { "name": "supabase", "source": "supabase/agent-skills", "why": "only if this project uses Supabase", "preselected": false },
+        { "name": "supabase-postgres-best-practices", "source": "supabase/agent-skills", "why": "Postgres optimization - only with Supabase", "preselected": false }
       ],
       "mcps": [
-        "npx github:DruMoDev/agents-kit mcp next-devtools playwright"
+        { "name": "next-devtools", "why": "official Next.js DevTools MCP" },
+        { "name": "playwright", "why": "browser testing + debugging (the kit's single blessed option)" },
+        { "name": "supabase", "why": "only if using Supabase (asks for project ref)", "preselected": false }
       ],
       "notes": [
         "Next-specific task skills (dev loop, cache components): npx skills add vercel/next.js --list"
@@ -15,39 +21,53 @@
     },
     "react": {
       "skills": [
-        "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
-        "npx skills add anthropics/skills --skill frontend-design",
-        "npx skills add millionco/react-doctor --skill react-doctor"
+        { "name": "vercel-react-best-practices", "source": "vercel-labs/agent-skills", "why": "React performance rules from Vercel Engineering" },
+        { "name": "vercel-composition-patterns", "source": "vercel-labs/agent-skills", "why": "scalable React composition patterns" },
+        { "name": "web-design-guidelines", "source": "vercel-labs/agent-skills", "why": "UI compliance review (accessibility/UX)" },
+        { "name": "frontend-design", "source": "anthropics/skills", "why": "distinctive visual design guidance" },
+        { "name": "react-doctor", "source": "millionco/react-doctor", "why": "60+ React health rules (state, perf, security)" },
+        { "name": "supabase", "source": "supabase/agent-skills", "why": "only if this project uses Supabase", "preselected": false },
+        { "name": "supabase-postgres-best-practices", "source": "supabase/agent-skills", "why": "Postgres optimization - only with Supabase", "preselected": false }
       ],
       "mcps": [
-        "npx github:DruMoDev/agents-kit mcp playwright"
+        { "name": "playwright", "why": "browser testing + debugging (the kit's single blessed option)" },
+        { "name": "supabase", "why": "only if using Supabase (asks for project ref)", "preselected": false }
       ],
       "notes": []
     },
     "astro": {
       "skills": [
-        "npx skills add astrolicious/agent-skills --skill astro",
-        "npx skills add vercel-labs/agent-skills --skill web-design-guidelines",
-        "npx skills add anthropics/skills --skill frontend-design"
+        { "name": "astro", "source": "astrolicious/agent-skills", "why": "Astro components, content collections, SSR, deploy" },
+        { "name": "web-design-guidelines", "source": "vercel-labs/agent-skills", "why": "UI compliance review (accessibility/UX)" },
+        { "name": "frontend-design", "source": "anthropics/skills", "why": "distinctive visual design guidance" },
+        { "name": "supabase", "source": "supabase/agent-skills", "why": "only if this project uses Supabase", "preselected": false },
+        { "name": "supabase-postgres-best-practices", "source": "supabase/agent-skills", "why": "Postgres optimization - only with Supabase", "preselected": false }
       ],
       "mcps": [
-        "npx github:DruMoDev/agents-kit mcp astro-docs playwright"
+        { "name": "astro-docs", "why": "official Astro docs MCP (remote)" },
+        { "name": "playwright", "why": "browser testing + debugging (the kit's single blessed option)" },
+        { "name": "supabase", "why": "only if using Supabase (asks for project ref)", "preselected": false }
       ],
       "notes": []
     },
     "node-backend": {
-      "skills": [],
-      "mcps": [],
+      "skills": [
+        { "name": "supabase", "source": "supabase/agent-skills", "why": "only if this project uses Supabase", "preselected": false },
+        { "name": "supabase-postgres-best-practices", "source": "supabase/agent-skills", "why": "Postgres optimization - only with Supabase", "preselected": false }
+      ],
+      "mcps": [
+        { "name": "supabase", "why": "only if using Supabase (asks for project ref)", "preselected": false }
+      ],
       "notes": [
         "No vendor-official skill exists for Express/Fastify/Nest/Hono; use find-skills (see below) if you want to evaluate community ones"
       ]
     },
     "python": {
-      "skills": [],
+      "skills": [
+        { "name": "fastapi", "source": "fastapi/fastapi", "why": "FastAPI's own official skill - only if using FastAPI", "preselected": false }
+      ],
       "mcps": [],
-      "notes": [
-        "Using FastAPI? it ships its own official skill: npx skills add fastapi/fastapi --skill fastapi"
-      ]
+      "notes": []
     },
     "generic": {
       "skills": [],
@@ -58,8 +78,7 @@
   "global": {
     "notes": [
       "Framework knowledge lives in official skills/docs (Next.js bundles its own in node_modules/next/dist/docs and next dev >=16.3 generates agent rules); the kit only pins your project choices",
-      "Using Supabase? skills: npx skills add supabase/agent-skills --skill supabase --skill supabase-postgres-best-practices | MCP: npx github:DruMoDev/agents-kit mcp supabase --project-ref <ref>",
-      "Browser testing AND debugging are covered by the playwright MCP above - skip agent-browser/webapp-testing, they overlap",
+      "Browser testing AND debugging are covered by the playwright MCP - skip agent-browser/webapp-testing, they overlap",
       "Deploying on Vercel? npx skills add vercel-labs/agent-skills --skill deploy-to-vercel",
       "Can't find a skill for your stack? npx skills add vercel-labs/skills --skill find-skills teaches the agent to search the registry",
       "Want the full lazy-dev toolchain (audit/review commands)? install the ponytail plugin - base.md already ships the distilled ruleset"

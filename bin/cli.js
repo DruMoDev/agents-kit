@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline/promises';
+import { spawnSync } from 'node:child_process';
+import readlineBase from 'node:readline';
+import readlinePromises from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
 const KIT_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,7 +37,8 @@ Usage:
 Frameworks: ${Object.keys(FRAMEWORKS).join(', ')}
 MCP servers: ${Object.keys(MCP_CATALOG).join(', ')}
 
-init    installs docs/agent rules, AGENTS.md and the CLAUDE.md shim (idempotent)
+init    installs docs/agent rules, AGENTS.md and the CLAUDE.md shim (idempotent),
+        then lets you pick recommended skills/MCPs (checkboxes) and installs them
 update  rewrites kit-owned files under docs/agent/ with the latest templates
 mcp     configures MCP servers for Claude Code (.mcp.json) AND opencode (opencode.json), project scope
 --force re-copies kit-owned files during init even if locally modified
@@ -61,15 +64,59 @@ function parseArgs(argv) {
   return args;
 }
 
+async function ask(question) {
+  const rl = readlinePromises.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question(question);
+  rl.close();
+  return answer.trim();
+}
+
 async function promptFramework() {
   const names = Object.keys(FRAMEWORKS);
   names.forEach((n, i) => console.log(`  ${i + 1}. ${n}`));
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`Framework [1-${names.length}]: `);
-  rl.close();
+  const answer = await ask(`Framework [1-${names.length}]: `);
   const pick = names[Number(answer) - 1];
   if (!pick) die('Invalid choice.');
   return pick;
+}
+
+// Interactive checkbox list. Arrows move, space toggles, "a" toggles all, enter confirms, q/esc skips.
+function multiSelect(title, items) {
+  return new Promise((resolve) => {
+    const checked = items.map((it) => it.preselected !== false);
+    let cursor = 0;
+    const draw = (redraw) => {
+      if (redraw) process.stdout.write(`\x1b[${items.length + 1}A`);
+      process.stdout.write(`\x1b[2K${title}\n`);
+      items.forEach((it, i) => {
+        const ptr = i === cursor ? '\x1b[36m>\x1b[0m' : ' ';
+        process.stdout.write(`\x1b[2K ${ptr} [${checked[i] ? 'x' : ' '}] ${it.label}\n`);
+      });
+    };
+    readlineBase.emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    draw(false);
+    const finish = (result) => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.off('keypress', onKey);
+      resolve(result);
+    };
+    const onKey = (str, key = {}) => {
+      if (key.ctrl && key.name === 'c') {
+        process.stdin.setRawMode(false);
+        process.exit(130);
+      } else if (key.name === 'up') cursor = (cursor - 1 + items.length) % items.length;
+      else if (key.name === 'down') cursor = (cursor + 1) % items.length;
+      else if (key.name === 'space' || str === ' ') checked[cursor] = !checked[cursor];
+      else if (str === 'a') checked.fill(!checked.every(Boolean));
+      else if (key.name === 'return' || key.name === 'enter') return finish(items.filter((_, i) => checked[i]));
+      else if (key.name === 'escape' || str === 'q') return finish([]);
+      draw(true);
+    };
+    process.stdin.on('keypress', onKey);
+  });
 }
 
 // Kit-owned files for a framework: [destPath, templatePath][]
@@ -130,45 +177,6 @@ function report(status, file) {
   console.log(`  ${status.padEnd(9)} ${file}`);
 }
 
-function printNextSteps(framework) {
-  const rec = JSON.parse(fs.readFileSync(path.join(KIT_ROOT, 'recommendations.json'), 'utf8'));
-  const fw = rec.frameworks[framework] ?? { skills: [], mcps: [], notes: [] };
-  if (fw.skills.length) {
-    console.log('\nRecommended skills for this framework (run them yourself):');
-    for (const c of fw.skills) console.log(`  ${c}`);
-  }
-  if (fw.mcps.length) {
-    console.log('\nRecommended MCP servers (one command configures Claude Code + opencode, project scope):');
-    for (const c of fw.mcps) console.log(`  ${c}`);
-  }
-  console.log('\nNotes:');
-  for (const n of [...fw.notes, ...rec.global.notes]) console.log(`  - ${n}`);
-}
-
-async function init(args) {
-  const framework = args.framework ?? (await promptFramework());
-  console.log(`Installing agent rules (framework: ${framework})`);
-  for (const [dest, src] of kitFiles(framework)) report(installFile(src, dest, args.force), dest);
-  report(ensureAgentsMd(framework), 'AGENTS.md');
-  report(ensureClaudeMd(), 'CLAUDE.md');
-  printNextSteps(framework);
-}
-
-function detectFramework() {
-  for (const [name, file] of Object.entries(FRAMEWORKS)) {
-    if (file && fs.existsSync(path.join(AGENT_DIR, file))) return name;
-  }
-  return 'generic';
-}
-
-function update(args) {
-  const framework = args.framework ?? detectFramework();
-  console.log(`Framework: ${framework}`);
-  for (const [dest, src] of kitFiles(framework)) report(installFile(src, dest, true), dest);
-  report(ensureAgentsMd(framework), 'AGENTS.md');
-  report(ensureClaudeMd(), 'CLAUDE.md');
-}
-
 function readJson(file, fallback) {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback;
 }
@@ -201,6 +209,82 @@ function mcp(args) {
   }
   writeJson('.mcp.json', claudeCfg);
   writeJson('opencode.json', openCfg);
+}
+
+function printCommands(fw) {
+  if (fw.skills.length) {
+    console.log('\nRecommended skills (one command each - pick what this project needs):');
+    for (const s of fw.skills) console.log(`  npx skills add ${s.source} --skill ${s.name}   # ${s.why}`);
+  }
+  if (fw.mcps.length) {
+    console.log('\nRecommended MCP servers (each configures Claude Code + opencode, project scope):');
+    for (const m of fw.mcps) console.log(`  npx github:DruMoDev/agents-kit mcp ${m.name}   # ${m.why}`);
+  }
+}
+
+function printNotes(fw, rec) {
+  console.log('\nNotes:');
+  for (const n of [...(fw.notes ?? []), ...rec.global.notes]) console.log(`  - ${n}`);
+}
+
+async function offerExtras(framework) {
+  const rec = readJson(path.join(KIT_ROOT, 'recommendations.json'), { frameworks: {}, global: { notes: [] } });
+  const fw = { skills: [], mcps: [], notes: [], ...(rec.frameworks[framework] ?? {}) };
+  if (!fw.skills.length && !fw.mcps.length) {
+    printNotes(fw, rec);
+    return;
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    printCommands(fw);
+    printNotes(fw, rec);
+    return;
+  }
+  const items = [
+    ...fw.skills.map((s) => ({ ...s, kind: 'skill', label: `skill  ${s.name.padEnd(34)} ${s.why}` })),
+    ...fw.mcps.map((m) => ({ ...m, kind: 'mcp', label: `mcp    ${m.name.padEnd(34)} ${m.why}` })),
+  ];
+  console.log('');
+  const chosen = await multiSelect(
+    'Select extras to install now (arrows move, space toggles, "a" all, enter confirms, q skips):',
+    items,
+  );
+  for (const it of chosen.filter((i) => i.kind === 'skill')) {
+    console.log(`\n> npx skills add ${it.source} --skill ${it.name} -y`);
+    const r = spawnSync('npx', ['skills', 'add', it.source, '--skill', it.name, '-y'], { stdio: 'inherit' });
+    if (r.status !== 0) console.log(`  install failed - run it manually later`);
+  }
+  const mcpNames = chosen.filter((i) => i.kind === 'mcp').map((i) => i.name);
+  if (mcpNames.length) {
+    let projectRef = null;
+    if (mcpNames.includes('supabase')) projectRef = (await ask('\nSupabase project ref (empty to skip the param): ')) || null;
+    console.log('');
+    mcp({ names: mcpNames, projectRef });
+  }
+  printNotes(fw, rec);
+}
+
+async function init(args) {
+  const framework = args.framework ?? (await promptFramework());
+  console.log(`Installing agent rules (framework: ${framework})`);
+  for (const [dest, src] of kitFiles(framework)) report(installFile(src, dest, args.force), dest);
+  report(ensureAgentsMd(framework), 'AGENTS.md');
+  report(ensureClaudeMd(), 'CLAUDE.md');
+  await offerExtras(framework);
+}
+
+function detectFramework() {
+  for (const [name, file] of Object.entries(FRAMEWORKS)) {
+    if (file && fs.existsSync(path.join(AGENT_DIR, file))) return name;
+  }
+  return 'generic';
+}
+
+function update(args) {
+  const framework = args.framework ?? detectFramework();
+  console.log(`Framework: ${framework}`);
+  for (const [dest, src] of kitFiles(framework)) report(installFile(src, dest, true), dest);
+  report(ensureAgentsMd(framework), 'AGENTS.md');
+  report(ensureClaudeMd(), 'CLAUDE.md');
 }
 
 const args = parseArgs(process.argv.slice(2));
