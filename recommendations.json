@@ -1,27 +1,66 @@
 {
-  "next": [
-    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
-    "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing",
-    "npx skills add millionco/react-doctor --skill react-doctor"
-  ],
-  "react": [
-    "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
-    "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing",
-    "npx skills add millionco/react-doctor --skill react-doctor"
-  ],
-  "astro": [
-    "npx skills add astrolicious/agent-skills --skill astro",
-    "npx skills add vercel-labs/agent-skills --skill web-design-guidelines",
-    "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing"
-  ],
-  "node-backend": [],
-  "python": [],
-  "generic": [],
-  "notes": [
-    "Framework knowledge lives in official skills/docs (Next.js bundles its own in node_modules/next/dist/docs and next dev >=16.3 generates agent rules); the kit only pins your project choices",
-    "Next-specific task skills (dev loop, cache components): npx skills add vercel/next.js --list",
-    "Using Supabase? npx skills add supabase/agent-skills --skill supabase --skill supabase-postgres-best-practices",
-    "Deploying on Vercel? npx skills add vercel-labs/agent-skills --skill deploy-to-vercel",
-    "Want the full lazy-dev toolchain (audit/review commands)? install the ponytail plugin - base.md already ships the distilled ruleset"
-  ]
+  "frameworks": {
+    "next": {
+      "skills": [
+        "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
+        "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing",
+        "npx skills add millionco/react-doctor --skill react-doctor"
+      ],
+      "mcps": [
+        "claude mcp add next-devtools -- npx -y next-devtools-mcp@latest"
+      ],
+      "notes": [
+        "Next-specific task skills (dev loop, cache components): npx skills add vercel/next.js --list"
+      ]
+    },
+    "react": {
+      "skills": [
+        "npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices --skill vercel-composition-patterns --skill web-design-guidelines",
+        "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing",
+        "npx skills add millionco/react-doctor --skill react-doctor"
+      ],
+      "mcps": [],
+      "notes": []
+    },
+    "astro": {
+      "skills": [
+        "npx skills add astrolicious/agent-skills --skill astro",
+        "npx skills add vercel-labs/agent-skills --skill web-design-guidelines",
+        "npx skills add anthropics/skills --skill frontend-design --skill webapp-testing"
+      ],
+      "mcps": [
+        "claude mcp add --transport http astro-docs https://mcp.docs.astro.build/mcp"
+      ],
+      "notes": []
+    },
+    "node-backend": {
+      "skills": [],
+      "mcps": [],
+      "notes": [
+        "No vendor-official skill exists for Express/Fastify/Nest/Hono; use find-skills (see below) if you want to evaluate community ones"
+      ]
+    },
+    "python": {
+      "skills": [],
+      "mcps": [],
+      "notes": [
+        "Using FastAPI? it ships its own official skill: npx skills add fastapi/fastapi --skill fastapi"
+      ]
+    },
+    "generic": {
+      "skills": [],
+      "mcps": [],
+      "notes": []
+    }
+  },
+  "global": {
+    "notes": [
+      "Framework knowledge lives in official skills/docs (Next.js bundles its own in node_modules/next/dist/docs and next dev >=16.3 generates agent rules); the kit only pins your project choices",
+      "Using Supabase? skills: npx skills add supabase/agent-skills --skill supabase --skill supabase-postgres-best-practices | MCP: claude mcp add --transport http supabase \"https://mcp.supabase.com/mcp?project_ref=<ref>\"",
+      "Browser control for testing/debugging: claude mcp add playwright -- npx -y @playwright/mcp@latest (overlaps with the webapp-testing skill - pick one approach)",
+      "Deploying on Vercel? npx skills add vercel-labs/agent-skills --skill deploy-to-vercel",
+      "Can't find a skill for your stack? npx skills add vercel-labs/skills --skill find-skills teaches the agent to search the registry",
+      "Want the full lazy-dev toolchain (audit/review commands)? install the ponytail plugin - base.md already ships the distilled ruleset"
+    ]
+  }
 }

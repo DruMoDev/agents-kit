@@ -119,13 +119,17 @@ function report(status, file) {
 
 function printNextSteps(framework) {
   const rec = JSON.parse(fs.readFileSync(path.join(KIT_ROOT, 'recommendations.json'), 'utf8'));
-  const cmds = rec[framework] ?? [];
-  if (cmds.length) {
+  const fw = rec.frameworks[framework] ?? { skills: [], mcps: [], notes: [] };
+  if (fw.skills.length) {
     console.log('\nRecommended skills for this framework (run them yourself):');
-    for (const c of cmds) console.log(`  ${c}`);
+    for (const c of fw.skills) console.log(`  ${c}`);
+  }
+  if (fw.mcps.length) {
+    console.log('\nRecommended MCP servers (Claude Code syntax; add the same server to Cursor/opencode config):');
+    for (const c of fw.mcps) console.log(`  ${c}`);
   }
   console.log('\nNotes:');
-  for (const n of rec.notes) console.log(`  - ${n}`);
+  for (const n of [...fw.notes, ...rec.global.notes]) console.log(`  - ${n}`);
 }
 
 async function init(args) {

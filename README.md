@@ -34,11 +34,14 @@ The kit deliberately does NOT maintain framework best practices — those live i
 
 Install commands for the official skills are printed after `init` (never auto-run). Edit `recommendations.json` to change them.
 
-| Framework | Printed commands |
-|---|---|
-| next / react | vercel-react-best-practices + vercel-composition-patterns + web-design-guidelines (vercel-labs/agent-skills); frontend-design + webapp-testing (anthropics/skills); react-doctor (millionco/react-doctor) |
-| astro | astro (astrolicious/agent-skills); web-design-guidelines; frontend-design + webapp-testing |
-| all (notes) | Next task skills live in `vercel/next.js` (dev loop, cache components); Supabase skills if using Supabase; deploy-to-vercel if deploying there; ponytail plugin for its audit/review commands |
+| Framework | Skills | MCP servers |
+|---|---|---|
+| next | vercel-react-best-practices + vercel-composition-patterns + web-design-guidelines (vercel-labs/agent-skills); frontend-design + webapp-testing (anthropics/skills); react-doctor (millionco/react-doctor) | next-devtools-mcp |
+| react | same as next | — |
+| astro | astro (astrolicious/agent-skills); web-design-guidelines; frontend-design + webapp-testing | official Astro docs MCP (`https://mcp.docs.astro.build/mcp`) |
+| node-backend | none (no vendor-official skill exists for Express/Fastify/Nest/Hono) | — |
+| python | FastAPI ships its own official skill (`npx skills add fastapi/fastapi --skill fastapi`) | — |
+| all (notes) | Next task skills live in `vercel/next.js`; Supabase skills + MCP if using Supabase; playwright MCP for browser control (overlaps webapp-testing — pick one); deploy-to-vercel; find-skills to search the registry; ponytail plugin |
 
 ## Skills convention (future)
 

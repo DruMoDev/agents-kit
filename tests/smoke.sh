@@ -17,7 +17,8 @@ grep -q '^@docs/agent/base.md' AGENTS.md || fail "AGENTS.md missing base import"
 grep -q '^@docs/agent/nextjs.md' AGENTS.md || fail "AGENTS.md missing framework import"
 grep -q '^## Project' AGENTS.md || fail "AGENTS.md missing Project section"
 [ "$(cat CLAUDE.md)" = "@AGENTS.md" ] || fail "CLAUDE.md shim wrong"
-grep -q 'vercel-react-best-practices' out.txt || fail "next recommendations not logged"
+grep -q 'vercel-react-best-practices' out.txt || fail "next skill recommendations not logged"
+grep -q 'next-devtools-mcp' out.txt || fail "next MCP recommendations not logged"
 
 # 2. re-running init changes nothing (idempotent)
 sum_before=$(find . -type f ! -name out.txt -exec shasum {} + | sort | shasum)
