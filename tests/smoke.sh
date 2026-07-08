@@ -41,4 +41,12 @@ head -1 AGENTS.md | grep -q 'Mandatory reading' || fail "header not prepended to
 grep -q '^@AGENTS.md' CLAUDE.md || fail "@AGENTS.md line not added to CLAUDE.md"
 grep -q 'Old claude notes' CLAUDE.md || fail "user CLAUDE.md content lost"
 
+# 5. update overwrites kit-owned edits and auto-detects the framework
+cd "$TMP/p1"
+echo 'LOCAL EDIT' >> docs/agent/base.md
+$CLI update >upd.txt
+grep -q 'LOCAL EDIT' docs/agent/base.md && fail "update did not overwrite base.md" || true
+grep -q 'Framework: next' upd.txt || fail "update framework detection failed"
+grep -q 'My content' "$TMP/p3/AGENTS.md" || fail "sanity: p3 user content"
+
 echo "ALL SMOKE TESTS PASSED"

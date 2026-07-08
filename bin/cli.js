@@ -137,8 +137,19 @@ async function init(args) {
   printNextSteps(framework);
 }
 
+function detectFramework() {
+  for (const [name, file] of Object.entries(FRAMEWORKS)) {
+    if (file && fs.existsSync(path.join(AGENT_DIR, file))) return name;
+  }
+  return 'generic';
+}
+
 function update(args) {
-  die('update: not implemented yet');
+  const framework = args.framework ?? detectFramework();
+  console.log(`Framework: ${framework}`);
+  for (const [dest, src] of kitFiles(framework)) report(installFile(src, dest, true), dest);
+  report(ensureAgentsMd(framework), 'AGENTS.md');
+  report(ensureClaudeMd(), 'CLAUDE.md');
 }
 
 const args = parseArgs(process.argv.slice(2));
