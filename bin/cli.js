@@ -17,16 +17,27 @@ const FRAMEWORKS = {
   generic: null,
 };
 
+// One definition per MCP server; rendered into .mcp.json (Claude/Cursor) and opencode.json
+const MCP_CATALOG = {
+  'next-devtools': { command: ['npx', '-y', 'next-devtools-mcp@latest'] },
+  'astro-docs': { url: 'https://mcp.docs.astro.build/mcp' },
+  supabase: { url: 'https://mcp.supabase.com/mcp' },
+  playwright: { command: ['npx', '-y', '@playwright/mcp@latest'] },
+};
+
 const HELP = `agents-kit - install a reusable agent instruction set
 
 Usage:
   npx github:DruMoDev/agents-kit init [--framework <fw>] [--force]
   npx github:DruMoDev/agents-kit update [--framework <fw>]
+  npx github:DruMoDev/agents-kit mcp <name...> [--project-ref <ref>]
 
 Frameworks: ${Object.keys(FRAMEWORKS).join(', ')}
+MCP servers: ${Object.keys(MCP_CATALOG).join(', ')}
 
 init    installs docs/agent rules, AGENTS.md and the CLAUDE.md shim (idempotent)
 update  rewrites kit-owned files under docs/agent/ with the latest templates
+mcp     configures MCP servers for Claude Code (.mcp.json) AND opencode (opencode.json), project scope
 --force re-copies kit-owned files during init even if locally modified
 `;
 
@@ -36,10 +47,12 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
-  const args = { cmd: argv[0], framework: null, force: false };
+  const args = { cmd: argv[0], framework: null, force: false, names: [], projectRef: null };
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '--framework' || argv[i] === '-f') args.framework = argv[++i];
     else if (argv[i] === '--force') args.force = true;
+    else if (argv[i] === '--project-ref') args.projectRef = argv[++i];
+    else if (!argv[i].startsWith('-')) args.names.push(argv[i]);
     else die(`Unknown argument: ${argv[i]}\n\n${HELP}`);
   }
   if (args.framework && !(args.framework in FRAMEWORKS)) {
@@ -125,7 +138,7 @@ function printNextSteps(framework) {
     for (const c of fw.skills) console.log(`  ${c}`);
   }
   if (fw.mcps.length) {
-    console.log('\nRecommended MCP servers (Claude Code syntax; add the same server to Cursor/opencode config):');
+    console.log('\nRecommended MCP servers (one command configures Claude Code + opencode, project scope):');
     for (const c of fw.mcps) console.log(`  ${c}`);
   }
   console.log('\nNotes:');
@@ -156,9 +169,44 @@ function update(args) {
   report(ensureClaudeMd(), 'CLAUDE.md');
 }
 
+function readJson(file, fallback) {
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback;
+}
+
+function writeJson(file, data) {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+}
+
+function mcpEntries(name, projectRef) {
+  const def = MCP_CATALOG[name];
+  const url = def.url && projectRef ? `${def.url}?project_ref=${projectRef}` : def.url;
+  return {
+    claude: def.url ? { type: 'http', url } : { command: def.command[0], args: def.command.slice(1) },
+    opencode: def.url ? { type: 'remote', url } : { type: 'local', command: def.command, enabled: true },
+  };
+}
+
+function mcp(args) {
+  if (!args.names.length) die(`Usage: mcp <name...> [--project-ref <ref>]\nAvailable: ${Object.keys(MCP_CATALOG).join(', ')}`);
+  const claudeCfg = readJson('.mcp.json', {});
+  claudeCfg.mcpServers ??= {};
+  const openCfg = readJson('opencode.json', { $schema: 'https://opencode.ai/config.json' });
+  openCfg.mcp ??= {};
+  for (const name of args.names) {
+    if (!(name in MCP_CATALOG)) die(`Unknown MCP "${name}". Available: ${Object.keys(MCP_CATALOG).join(', ')}`);
+    const entries = mcpEntries(name, args.projectRef);
+    claudeCfg.mcpServers[name] = entries.claude;
+    openCfg.mcp[name] = entries.opencode;
+    report('configured', `${name} -> .mcp.json + opencode.json`);
+  }
+  writeJson('.mcp.json', claudeCfg);
+  writeJson('opencode.json', openCfg);
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.cmd === 'init') await init(args);
 else if (args.cmd === 'update') update(args);
+else if (args.cmd === 'mcp') mcp(args);
 else {
   console.log(HELP);
   if (args.cmd && args.cmd !== 'help') process.exit(1);

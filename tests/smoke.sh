@@ -18,7 +18,7 @@ grep -q '^@docs/agent/nextjs.md' AGENTS.md || fail "AGENTS.md missing framework 
 grep -q '^## Project' AGENTS.md || fail "AGENTS.md missing Project section"
 [ "$(cat CLAUDE.md)" = "@AGENTS.md" ] || fail "CLAUDE.md shim wrong"
 grep -q 'vercel-react-best-practices' out.txt || fail "next skill recommendations not logged"
-grep -q 'next-devtools-mcp' out.txt || fail "next MCP recommendations not logged"
+grep -q 'mcp next-devtools' out.txt || fail "next MCP recommendations not logged"
 
 # 2. re-running init changes nothing (idempotent)
 sum_before=$(find . -type f ! -name out.txt -exec shasum {} + | sort | shasum)
@@ -49,5 +49,25 @@ $CLI update >upd.txt
 grep -q 'LOCAL EDIT' docs/agent/base.md && fail "update did not overwrite base.md" || true
 grep -q 'Framework: next' upd.txt || fail "update framework detection failed"
 grep -q 'My content' "$TMP/p3/AGENTS.md" || fail "sanity: p3 user content"
+
+# 6. mcp command: dual-write to .mcp.json + opencode.json, merge, idempotent
+cd "$TMP/p1"
+printf '{ "mcp": { "custom": { "type": "remote", "url": "https://example.com" } } }\n' > opencode.json
+$CLI mcp next-devtools playwright supabase --project-ref testref >/dev/null
+node -e "
+const fs = require('fs');
+const c = JSON.parse(fs.readFileSync('.mcp.json', 'utf8'));
+const o = JSON.parse(fs.readFileSync('opencode.json', 'utf8'));
+if (c.mcpServers['next-devtools'].args.join(' ') !== '-y next-devtools-mcp@latest') throw 'claude next-devtools wrong';
+if (c.mcpServers.playwright.command !== 'npx') throw 'claude playwright wrong';
+if (c.mcpServers.supabase.url !== 'https://mcp.supabase.com/mcp?project_ref=testref') throw 'claude supabase ref wrong';
+if (o.mcp['next-devtools'].type !== 'local') throw 'opencode next-devtools wrong';
+if (o.mcp.supabase.type !== 'remote') throw 'opencode supabase wrong';
+if (o.mcp.custom.url !== 'https://example.com') throw 'existing opencode entry lost';
+" || fail "mcp configs wrong"
+before=$(shasum .mcp.json opencode.json)
+$CLI mcp next-devtools playwright supabase --project-ref testref >/dev/null
+after=$(shasum .mcp.json opencode.json)
+[ "$before" = "$after" ] || fail "mcp re-run not idempotent"
 
 echo "ALL SMOKE TESTS PASSED"

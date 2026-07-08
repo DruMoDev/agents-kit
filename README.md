@@ -8,6 +8,7 @@ Installs a reusable agent instruction set into any project, parameterized by fra
 # in your project root
 npx github:DruMoDev/agents-kit init --framework next   # next | astro | react | node-backend | python | generic
 npx github:DruMoDev/agents-kit update                   # pull the latest kit rules into the project
+npx github:DruMoDev/agents-kit mcp <name...>            # configure MCP servers for Claude Code + opencode
 ```
 
 If the repo is private, use `npx git+ssh://git@github.com/DruMoDev/agents-kit <cmd>`.
@@ -36,12 +37,25 @@ Install commands for the official skills are printed after `init` (never auto-ru
 
 | Framework | Skills | MCP servers |
 |---|---|---|
-| next | vercel-react-best-practices + vercel-composition-patterns + web-design-guidelines (vercel-labs/agent-skills); frontend-design + webapp-testing (anthropics/skills); react-doctor (millionco/react-doctor) | next-devtools-mcp |
-| react | same as next | — |
-| astro | astro (astrolicious/agent-skills); web-design-guidelines; frontend-design + webapp-testing | official Astro docs MCP (`https://mcp.docs.astro.build/mcp`) |
+| next | vercel-react-best-practices + vercel-composition-patterns + web-design-guidelines (vercel-labs/agent-skills); frontend-design (anthropics/skills); react-doctor (millionco/react-doctor) | next-devtools + playwright |
+| react | same as next | playwright |
+| astro | astro (astrolicious/agent-skills); web-design-guidelines; frontend-design | astro-docs + playwright |
 | node-backend | none (no vendor-official skill exists for Express/Fastify/Nest/Hono) | — |
 | python | FastAPI ships its own official skill (`npx skills add fastapi/fastapi --skill fastapi`) | — |
-| all (notes) | Next task skills live in `vercel/next.js`; Supabase skills + MCP if using Supabase; playwright MCP for browser control (overlaps webapp-testing — pick one); deploy-to-vercel; find-skills to search the registry; ponytail plugin |
+| all (notes) | Next task skills live in `vercel/next.js`; Supabase skills + MCP if using Supabase; deploy-to-vercel; find-skills to search the registry; ponytail plugin |
+
+## The `mcp` command
+
+One MCP server definition, two config syntaxes: `mcp` writes the same server into `.mcp.json` (Claude Code / Cursor format) and `opencode.json` (opencode format), always project-scoped, merging without touching your existing entries.
+
+```bash
+npx github:DruMoDev/agents-kit mcp next-devtools playwright
+npx github:DruMoDev/agents-kit mcp supabase --project-ref <your-ref>
+```
+
+Catalog: `next-devtools`, `astro-docs`, `supabase`, `playwright` (edit `MCP_CATALOG` in `bin/cli.js` to add more).
+
+**Browser testing/debugging choice:** the kit blesses exactly one option — the official Playwright MCP. It works identically across Claude Code, opencode and Cursor, and covers both E2E testing and interactive debugging. `webapp-testing` (skill) and `agent-browser` (CLI) overlap with it; skip them unless you have a specific need.
 
 ## Skills convention (future)
 
