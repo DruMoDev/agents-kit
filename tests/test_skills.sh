@@ -46,4 +46,10 @@ grep -q 'git ls-files --error-unmatch .agents-kit.json' "$on" || fail "kit-on mu
 grep -q 'git ls-files --error-unmatch .agents-kit.json' "$off" || fail "kit-off must detect an interrupted run"
 grep -q 'rama `kit-on`' "$on" || fail "kit-on must mention a leftover kit-on branch"
 grep -q 'rama `kit-off`' "$off" || fail "kit-off must mention a leftover kit-off branch"
+for pth in .agents-kit.json CHANGELOG.md AGENTS.md CLAUDE.md .agents/ .claude/; do
+  grep -qF "\`$pth\`" "$on" || fail "kit-on resume guard must list $pth"
+done
+grep -q 'no relacionad' "$on" || fail "kit-on must stop on unrelated changes when resuming"
+grep -q 'creado: AGENTS.md' "$on" || fail "kit-on step 4 gate must use 'creado: AGENTS.md'"
+grep -q 'borrado del marcador pendiente' "$off" || fail "kit-off must report dirty tree + pending marker deletion"
 echo "ok"
