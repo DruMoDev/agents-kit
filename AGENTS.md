@@ -8,7 +8,7 @@ Verificado contra Claude Code 2.1.302 y codex-cli 0.162.1 con un plugin de prueb
 
 - `.claude-plugin/plugin.json`: manifiesto de Claude Code (`name`, `version`, `description`, `author`...).
 - `.claude-plugin/marketplace.json`: marketplace de Claude Code. Entrada local: `{"name": "<plugin>", "source": "./"}`; requiere `name` y `owner` en la raíz.
-- `.codex-plugin/plugin.json`: manifiesto de Codex (`name`, `version`, `description`, `skills: "./skills/"`, `interface`...). Rutas relativas a la raíz del plugin, con prefijo `./`.
+- `.codex-plugin/plugin.json`: manifiesto de Codex. Probado solo con `name`, `version`, `description`; `skills: "./skills/"` e `interface` salen de la documentación y de superpowers (sin probar en el spike). Rutas relativas a la raíz del plugin, con prefijo `./`.
 - `.agents/plugins/marketplace.json`: marketplace de Codex. Cada entrada necesita `name`, `source`, `policy` y `category`. Entrada local:
   ```json
   {"name": "<plugin>", "source": {"source": "local", "path": "./"},
@@ -21,7 +21,8 @@ Verificado contra Claude Code 2.1.302 y codex-cli 0.162.1 con un plugin de prueb
 
 - Codex SÍ carga hooks de plugin: descubre `hooks/hooks.json` por defecto.
 - NO declarar `"hooks"` en `.codex-plugin/plugin.json`. Cualquier valor explícito sustituye al descubrimiento por defecto; `"hooks": {}` (lo que hace superpowers) desactiva los hooks del plugin en Codex.
-- Los hooks de plugin no son de confianza al instalar: Codex los omite en silencio hasta que el usuario los aprueba una vez con `/hooks` en el CLI interactivo. La confianza se guarda por hash en `~/.codex/config.toml` (`[hooks.state."<ruta>:session_start:0:0"]`, `trusted_hash`); si cambia la definición del hook hay que volver a aprobarla.
+- Los hooks de plugin no son de confianza al instalar: Codex los omite en silencio (verificado) hasta que el usuario los aprueba con `/hooks` en el CLI interactivo. Según la documentación, la confianza se persiste por hash de la definición del hook, y un hook nuevo o modificado vuelve a omitirse hasta que se aprueba otra vez. Sin verificar: el flujo `/hooks`, el formato exacto de la clave en `config.toml` y qué cubre el hash (solo la entrada de `hooks.json` o también el script).
+- Aviso: la documentación de Codex dice que los hooks de ciclo de vida de plugins solo están soportados para plugins instalados manualmente en la app de escritorio de Codex. Aun así, en codex-cli 0.162.1 un plugin instalado por CLI desde un marketplace local ejecutó su hook. Puede cambiar en versiones futuras.
 - `codex exec --dangerously-bypass-hook-trust` ejecuta hooks sin confianza persistida (solo para pruebas).
 - Codex copia el plugin a `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/`; tras editar el código fuente hay que reinstalar (`codex plugin remove` + `codex plugin add`).
 - Estrategia decidida: hook de plugin (no hace falta el fallback global en `~/.codex/hooks.json`).
@@ -40,7 +41,7 @@ Verificado contra Claude Code 2.1.302 y codex-cli 0.162.1 con un plugin de prueb
 - Texto plano por stdout también se inyecta como contexto en Codex.
 - Sin salida (y exit 0) = no inyecta nada; así se mantiene inerte en repos sin `.agents-kit.json`.
 - El stdin es JSON e incluye `cwd` en ambas: usar `cwd` para buscar `.agents-kit.json`. Campos: `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `source` (+ `model`, `permission_mode` en Codex). El proceso arranca además con el `cwd` de la sesión como directorio de trabajo.
-- Valores de `source`: `startup`, `resume`, `clear`, `compact` (Codex añade `fork`).
+- Valores de `source` (según la documentación): `startup`, `resume`, `clear`, `compact`; Codex añade `fork`. En el spike solo se ejecutó `source=startup`.
 
 ### Variables de entorno en el hook
 
