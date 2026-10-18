@@ -13,7 +13,10 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
 
 ## Pasos
 
-1. **Raíz y marcador.** `git rev-parse --show-toplevel` da la raíz (si falla, no es un repo git: díselo y para). Si no existe `<raíz>/.agents-kit.json`, dile que el kit no está activo aquí y termina.
+1. **Raíz y marcador.** `git rev-parse --show-toplevel` da la raíz (si falla, no es un repo git: díselo y para). Si no existe `<raíz>/.agents-kit.json`:
+   - Si sigue confirmado (`git ls-files --error-unmatch .agents-kit.json` sale 0) y `git status --porcelain` muestra solo su borrado, es una desactivación interrumpida: sigue desde el paso 4.
+   - Si no, el kit no está activo aquí. Díselo y termina.
+   - Si queda una rama `kit-off` (local en `git branch --list kit-off` o en origin en `git ls-remote --heads origin kit-off`) o un PR abierto (`gh pr list --head kit-off`), díselo a Dru antes del paso 4: si el PR sigue abierto, que lo fusione o lo cierre; si no, que borre la rama vieja (`git branch -D kit-off`, `git push origin --delete kit-off`).
 2. **Árbol limpio.** Si `git status --porcelain` no está vacío, para: dile a Dru que confirme o guarde sus cambios antes de `kit-off`.
 3. **Desactivar.** `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-deactivate.sh" <raíz>`. Exit 1 (`no está activado`): díselo y termina. Exit 2: error de entorno, explícalo y para.
 4. **PR.** `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-ship-pr.sh" <raíz> kit-off "chore: desactivar agents-kit" "Borra .agents-kit.json. AGENTS.md, CHANGELOG.md y las skills del proyecto se quedan."`
