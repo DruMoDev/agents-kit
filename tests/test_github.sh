@@ -49,7 +49,8 @@ grep -q '^pr merge .*--squash' "$GH_LOG" || fail "pr merge sin --squash"
 [ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = trunk ] || fail "no termina en trunk"
 git -C "$r" show-ref --verify -q refs/heads/kit/cambio && fail "rama local no borrada"
 git -C "$r" ls-remote --exit-code --heads origin kit/cambio >/dev/null 2>&1 || fail "rama no se subió"
-[ "$(git -C "$r" log -1 --format=%s kit/cambio 2>/dev/null)" != "" ] || true
+git -C "$r" ls-tree -r --name-only origin/kit/cambio | grep -qx new.txt || fail "el commit de la rama no incluye new.txt"
+[ "$(git -C "$r" log -1 --format=%s origin/kit/cambio)" = "feat: algo" ] || fail "título de commit incorrecto"
 case "$out" in *"github.com/dru/demo/pull/1"*"FIN: ok"*) ;; *) fail "salida sin URL/FIN: $out";; esac
 
 # --- ship: nothing to ship
@@ -63,6 +64,63 @@ echo c > "$r/f.txt"; git -C "$r" branch kit/dup
 err="$(bash "$ship" "$r" kit/dup t b 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "rama existente: exit $rc"
 [ -f "$r/f.txt" ] || fail "rama existente: cambios perdidos"
+
+# --- ship: remote branch exists -> exit 1
+r="$(mk_with_origin main)"; echo c > "$r/f.txt"
+(cd "$r" && git branch kit/rem && git push -q origin kit/rem && git branch -q -D kit/rem) >/dev/null 2>&1
+err="$(bash "$ship" "$r" kit/rem t b 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "rama remota existente: exit $rc"
+case "$err" in *origin*) ;; *) fail "rama remota: stderr '$err'";; esac
+[ -f "$r/f.txt" ] || fail "rama remota: cambios perdidos"
+
+# --- ship: diverged local default -> exit 1
+r="$(mk_with_origin main)"
+(cd "$r" && echo x > local.txt && git add local.txt && git commit -q -m local-only) || fail setup
+echo c > "$r/f.txt"
+bash "$ship" "$r" kit/div t b >/dev/null 2>&1; [ $? -eq 1 ] || fail "default divergida debe salir 1"
+[ -f "$r/f.txt" ] || fail "default divergida: cambios perdidos"
+
+# --- ship: non-default branch with unpublished commits -> exit 1
+r="$(mk_with_origin main)"
+(cd "$r" && git checkout -q -b feature && echo x > a.txt && git add a.txt && git commit -q -m wip) || fail setup
+echo c > "$r/f.txt"
+err="$(bash "$ship" "$r" kit/nb t b 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "rama con commits sin publicar: exit $rc"
+[ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = feature ] || fail "debe quedarse en feature"
+
+# --- ship: stash that captures nothing must never apply an older stash
+r="$(mk_with_origin main)"
+sub="$(mktemp -d)"; (cd "$sub" && git init -q -b main && git config user.name T && git config user.email t@e.c && echo s > s && git add s && git commit -q -m s)
+(cd "$r" && git -c protocol.file.allow=always submodule add -q "$sub" sub && git commit -q -m addsub && git push -q origin main) >/dev/null 2>&1 || fail "submodule setup"
+(cd "$r" && echo old > old.txt && git stash push -u -q -m older) || fail "older stash"
+old_sha="$(git -C "$r" rev-parse refs/stash)"
+echo dirty >> "$r/sub/s"
+[ -n "$(git -C "$r" status --porcelain)" ] || fail "el submódulo debería estar sucio"
+bash "$ship" "$r" kit/subm t b >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] || fail "stash vacío debe fallar"
+[ "$(git -C "$r" rev-parse refs/stash)" = "$old_sha" ] || fail "el stash antiguo fue tocado"
+[ ! -e "$r/old.txt" ] || fail "se aplicó el stash antiguo"
+git -C "$r" ls-remote --exit-code --heads origin kit/subm >/dev/null 2>&1 && fail "se subió una rama"
+
+# --- ship: commit failure leaves changes in tree and no branch
+r="$(mk_with_origin main)"; echo c > "$r/f.txt"
+printf '#!/bin/sh\nexit 1\n' > "$r/.git/hooks/pre-commit"; chmod +x "$r/.git/hooks/pre-commit"
+err="$(bash "$ship" "$r" kit/hook t b 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "commit fallido: exit $rc"
+[ -f "$r/f.txt" ] || fail "commit fallido: cambios perdidos"
+git -C "$r" show-ref --verify -q refs/heads/kit/hook && fail "rama vacía no borrada"
+case "$err" in *"árbol de trabajo"*) ;; *) fail "commit fallido: mensaje '$err'";; esac
+
+# --- ship: detached HEAD at origin/main works
+r="$(mk_with_origin main)"; git -C "$r" checkout -q --detach; echo c > "$r/f.txt"
+GH_STUB_MODE=ok bash "$ship" "$r" kit/det "t" b >/dev/null 2>&1 || fail "detached: exit $?"
+[ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = main ] || fail "detached: debe terminar en main"
+
+# --- auth / no origin -> 2
+r="$(mk_repo)"
+GH_STUB_MODE=no-auth bash "$setup" "$r" >/dev/null 2>&1; [ $? -eq 2 ] || fail "setup sin auth debe salir 2"
+echo c > "$r/f.txt"
+bash "$ship" "$r" kit/x t b >/dev/null 2>&1; [ $? -eq 2 ] || fail "sin origin debe salir 2"
 
 # --- ship: not a git repo -> 2
 bash "$ship" "$(mktemp -d)" kit/x t b >/dev/null 2>&1; [ $? -eq 2 ] || fail "no-repo debe salir 2"

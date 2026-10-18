@@ -3,11 +3,13 @@
 #   ok                  default branch main, no changelog issue yet
 #   default-branch-trunk  default branch trunk
 #   issue-exists        changelog issue already present
+#   no-auth             `gh auth status` fails
 #   no-remote           `gh repo view` fails
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
 mode="${GH_STUB_MODE:-ok}"
 branch=main
 [ "$mode" = default-branch-trunk ] && branch=trunk
+if [ "$1 $2" = "auth status" ]; then [ "$mode" = no-auth ] && exit 1; exit 0; fi
 case "$1 $2" in
   "repo view")
     if [ "$mode" = no-remote ]; then

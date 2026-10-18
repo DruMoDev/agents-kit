@@ -16,6 +16,7 @@ repo="$(cd "$1" && pwd)"
 git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: '$repo' no es un repositorio git" >&2; exit 2; }
 
 cd "$repo" || exit 2
+gh auth status >/dev/null 2>&1 || { echo "error: gh no autenticado (ejecuta 'gh auth login')" >&2; exit 2; }
 if ! gh repo view --json nameWithOwner,defaultBranchRef >/dev/null 2>&1; then
   echo "sin remoto de GitHub: este repo no tiene un remoto de GitHub accesible" >&2
   exit 1
