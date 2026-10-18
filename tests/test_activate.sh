@@ -77,6 +77,26 @@ echo '{"maxReviewRounds":3}' > "$r/.agents-kit.json"
 bash "$S" "$r" >/dev/null 2>&1
 [ "$(jq .maxReviewRounds "$r/.agents-kit.json")" = "3" ] || fail "marker overwritten"
 
+# 6b. CLAUDE.md symlink to another file: nothing written through it
+r="$(new_repo)"
+o="$(mktemp -d)"; dirs+=("$o")
+echo "ajeno" > "$o/other.md"
+ln -s "$o/other.md" "$r/CLAUDE.md"
+err="$(bash "$S" "$r" 2>&1 >/dev/null)" || fail "CLAUDE.md foreign symlink should exit 0"
+[ "$(cat "$o/other.md")" = "ajeno" ] || fail "wrote through CLAUDE.md symlink"
+[ -L "$r/CLAUDE.md" ] || fail "CLAUDE.md symlink replaced"
+grep -q "CLAUDE.md" <<<"$err" || fail "stderr should mention CLAUDE.md"
+
+# 6c. .claude and .agents symlinked outside: outside dirs untouched
+r="$(new_repo)"
+o1="$(mktemp -d)"; o2="$(mktemp -d)"; dirs+=("$o1" "$o2")
+ln -s "$o1" "$r/.claude"; ln -s "$o2" "$r/.agents"
+err="$(bash "$S" "$r" 2>&1 >/dev/null)" || fail "symlinked dirs should exit 0"
+[ -z "$(ls -A "$o1")" ] || fail "wrote into outside dir via .claude"
+[ -z "$(ls -A "$o2")" ] || fail "wrote into outside dir via .agents"
+grep -q "\.claude" <<<"$err" || fail "stderr should mention .claude"
+grep -q "\.agents" <<<"$err" || fail "stderr should mention .agents"
+
 # 7. environment errors exit 2
 bash "$S" "/nonexistent-dir-xyz" >/dev/null 2>&1; [ $? -eq 2 ] || fail "missing dir should exit 2"
 nd="$(mktemp -d)"; dirs+=("$nd")

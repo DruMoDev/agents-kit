@@ -42,8 +42,12 @@ copy_if_missing AGENTS.md AGENTS.md
 
 # CLAUDE.md: must import AGENTS.md
 claude="$repo/CLAUDE.md"
-if [ -L "$claude" ] && [ "$(readlink "$claude")" = "AGENTS.md" ]; then
-  : # symlink to AGENTS.md: already satisfied
+if [ -L "$claude" ]; then
+  if [ "$claude" -ef "$repo/AGENTS.md" ]; then
+    : # symlink resolving to AGENTS.md: already satisfied
+  else
+    echo "aviso: CLAUDE.md es un symlink que no apunta a AGENTS.md; no lo toco." >&2
+  fi
 elif [ ! -e "$claude" ] && [ ! -L "$claude" ]; then
   printf '@AGENTS.md\n' > "$claude" || exit 2
   created CLAUDE.md
@@ -55,14 +59,22 @@ elif ! grep -qx '@AGENTS.md' "$claude"; then
 fi
 
 # .agents/skills and the .claude/skills symlink
-if [ ! -d "$repo/.agents/skills" ]; then
+agents_ok=1
+if [ -L "$repo/.agents" ]; then
+  agents_ok=0
+  echo "aviso: .agents es un symlink; no creo .agents/skills." >&2
+elif [ ! -d "$repo/.agents/skills" ]; then
   mkdir -p "$repo/.agents/skills" || exit 2
   created .agents/skills
 fi
 
 link="$repo/.claude/skills"
 want="../.agents/skills"
-if [ -L "$link" ]; then
+if [ -L "$repo/.claude" ]; then
+  echo "aviso: .claude es un symlink; no creo .claude/skills." >&2
+elif [ "$agents_ok" = 0 ]; then
+  echo "aviso: sin .agents/skills válido; no creo .claude/skills." >&2
+elif [ -L "$link" ]; then
   if [ "$(readlink "$link")" != "$want" ]; then
     rm "$link" && ln -s "$want" "$link" || exit 2
     changed .claude/skills
