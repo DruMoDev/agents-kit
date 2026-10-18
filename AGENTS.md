@@ -1,5 +1,36 @@
 # AGENTS.md
 
+## Qué es
+
+Plugin personal `agents-kit` para Claude Code y Codex; el mismo repo es su marketplace en ambas herramientas.
+Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo tiene `.agents-kit.json`.
+
+## Mapa del repo
+
+- `.claude-plugin/`: manifiesto y marketplace de Claude Code.
+- `.codex-plugin/`: manifiesto de Codex.
+- `.agents/plugins/`: marketplace de Codex.
+- `hooks/`: `hooks.json` y el script `session-start`.
+- `rules/`: reglas inyectadas en las sesiones.
+- `skills/`: `kit-on` y `kit-off`.
+- `scripts/`: scripts mecánicos de las skills y `release.sh`.
+- `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
+- `tests/`: tests de bash con stubs.
+- `docs/`: specs y planes.
+
+## Comandos
+
+- `tests/run.sh`: ejecuta todos los tests.
+- `scripts/release.sh <semver>`: escribe la versión en los manifiestos y el marketplace.
+- `claude plugin validate .`: valida manifiestos y skills.
+
+## Convenciones de scripts
+
+- Scripts `kit-*`. Códigos de salida: 0 bien, 1 error de uso o rechazo, 2 error de entorno.
+- La última línea de la salida es `FIN: ...`.
+- Nunca recortar la salida propia con `head` ni `tail`.
+- Mensajes al usuario en español, sin rayas largas.
+
 ## Formatos verificados
 
 Verificado contra Claude Code 2.1.302 y codex-cli 0.162.1 con un plugin de prueba real (hook ejecutado y contexto recibido por el modelo en ambos).

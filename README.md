@@ -1,68 +1,46 @@
 # agents-kit
 
-Installs a reusable agent instruction set into any project, parameterized by framework. Distilled from real projects + [ponytail](https://github.com/DietrichGebert/ponytail)'s lazy-senior-dev ruleset.
+Plugin personal para Claude Code y Codex. Inyecta unas reglas de trabajo al arrancar cada sesión, solo en los repos donde el kit está activado, y trae dos skills para activarlo y desactivarlo. El mismo repo es el plugin y su propio marketplace en ambas herramientas.
 
-## Usage
+## Instalar
 
-```bash
-# in your project root
-npx github:DruMoDev/agents-kit init --framework next   # next | astro | react | node-backend | python | generic
-npx github:DruMoDev/agents-kit update                   # pull the latest kit rules into the project
-npx github:DruMoDev/agents-kit mcp <name...>            # configure MCP servers for Claude Code + opencode
-```
-
-If the repo is private, use `npx git+ssh://git@github.com/DruMoDev/agents-kit <cmd>`.
-
-## What it installs
+### Claude Code
 
 ```
-AGENTS.md              canonical instructions (header + your ## Project section)
-CLAUDE.md              one line: @AGENTS.md (Claude Code imports resolve recursively)
-docs/agent/
-  base.md              core engineering rules — always in context
-  <framework>.md       framework rules — always in context
-  testing.md           read before writing tests
-  docs-discipline.md   read before adding docs
+claude plugin marketplace add ~/Documents/programacion/agents-kit
+claude plugin install agents-kit@agents-kit
 ```
 
-- `AGENTS.md` is the single source of truth; every agent tool (Claude Code, Cursor, opencode, Codex, Warp) reads it. The header's `@` lines are real imports for Claude Code and plain references for everything else.
-- The kit owns `docs/agent/*`, the AGENTS.md header, and the CLAUDE.md line. Your `## Project` section and anything else you add are never touched.
-- `init` is idempotent; `update` rewrites only kit-owned files.
+### Codex
 
-## Framework knowledge vs project choices
-
-The kit deliberately does NOT maintain framework best practices — those live in official, vendor-maintained sources: [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) for React/Next, the [official Astro skill](https://github.com/astrolicious/agent-skills), FastAPI's in-repo skill, and Next.js's own bundled docs (`node_modules/next/dist/docs/`). The kit's `<framework>.md` files only pin *your fixed stack choices* (e.g. Tailwind-only, React Query over `useEffect+fetch`, zero-JS Astro).
-
-After installing the rules, `init` shows an interactive checkbox picker with the recommended skills and MCP servers for the framework (recommended ones pre-checked, conditional ones like Supabase unchecked) and installs your selection: skills via `npx skills add <source> --skill <name> -y`, MCPs via the dual-write `mcp` command below. In non-interactive contexts (CI, piped output) it prints one copy-pasteable command per skill/MCP instead. Edit `recommendations.json` to change the catalog.
-
-| Framework | Skills | MCP servers |
-|---|---|---|
-| next | vercel-react-best-practices + vercel-composition-patterns + web-design-guidelines (vercel-labs/agent-skills); frontend-design (anthropics/skills); react-doctor (millionco/react-doctor) | next-devtools + playwright |
-| react | same as next | playwright |
-| astro | astro (astrolicious/agent-skills); web-design-guidelines; frontend-design | astro-docs + playwright |
-| node-backend | none (no vendor-official skill exists for Express/Fastify/Nest/Hono) | — |
-| python | FastAPI ships its own official skill (`npx skills add fastapi/fastapi --skill fastapi`) | — |
-| all (notes) | Next task skills live in `vercel/next.js`; Supabase skills + MCP if using Supabase; deploy-to-vercel; find-skills to search the registry; ponytail plugin |
-
-## The `mcp` command
-
-One MCP server definition, two config syntaxes: `mcp` writes the same server into `.mcp.json` (Claude Code / Cursor format) and `opencode.json` (opencode format), always project-scoped, merging without touching your existing entries.
-
-```bash
-npx github:DruMoDev/agents-kit mcp next-devtools playwright
-npx github:DruMoDev/agents-kit mcp supabase --project-ref <your-ref>
+```
+codex plugin marketplace add ~/Documents/programacion/agents-kit
+codex plugin add agents-kit@agents-kit
 ```
 
-Catalog: `next-devtools`, `astro-docs`, `supabase`, `playwright` (edit `MCP_CATALOG` in `bin/cli.js` to add more).
+Después, aprueba el hook una vez con `/hooks` dentro de Codex interactivo. Codex omite en silencio los hooks de plugin que no son de confianza. Si el hook cambia, hay que aprobarlo otra vez.
 
-**Browser testing/debugging choice:** the kit blesses exactly one option — the official Playwright MCP. It works identically across Claude Code, opencode and Cursor, and covers both E2E testing and interactive debugging. `webapp-testing` (skill) and `agent-browser` (CLI) overlap with it; skip them unless you have a specific need.
+## Uso
 
-## Skills location
+El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 
-Skills live canonically in `.agents/skills/` (where the `skills` CLI installs them). `init` and `update` automatically create the symlink `.claude/skills -> ../.agents/skills` so Claude Code always sees the same skills as every other tool — update `.agents/` and everything stays in sync. A pre-existing real `.claude/skills` directory is never replaced (you'll get a hint to move its content into `.agents/skills`).
+- `kit-on`: activa el kit en el repo actual. Crea `.agents-kit.json`, `AGENTS.md`, `CLAUDE.md` y `CHANGELOG.md` si faltan, ordena un `AGENTS.md` existente, configura GitHub (etiquetas, issue de changelog, borrado de rama al fusionar) y lo envía todo por un PR que se fusiona. Si se interrumpe, se relanza y retoma.
+- `kit-off`: borra `.agents-kit.json` por PR. `AGENTS.md`, `CHANGELOG.md` y las skills del proyecto se quedan.
 
-## Development
+Desde la siguiente sesión en un repo activado, el hook `SessionStart` carga las reglas de `rules/`.
 
-```bash
-./tests/smoke.sh   # full CLI smoke test against temp dirs
+## Iterar
+
+1. Edita el repo.
+2. Sube la versión: `scripts/release.sh <version>`.
+3. Claude Code: `claude plugin update agents-kit@agents-kit` (hay que reiniciar la sesión para aplicarlo).
+4. Codex copia el plugin a una caché: `codex plugin remove agents-kit@agents-kit` y `codex plugin add agents-kit@agents-kit`, y volver a aprobar el hook con `/hooks`.
+
+## Tests
+
 ```
+tests/run.sh
+claude plugin validate .
+```
+
+Próximas fases: flujo de issues, changelog y avisos, web.
