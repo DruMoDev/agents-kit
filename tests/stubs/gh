@@ -1,7 +1,26 @@
 #!/usr/bin/env bash
-# Minimal gh stub. Logs args to $GH_LOG; behaviour chosen by $GH_STUB_MODE.
+# gh stub. Logs args to $GH_LOG; behaviour chosen by $GH_STUB_MODE:
+#   ok                  default branch main, no changelog issue yet
+#   default-branch-trunk  default branch trunk
+#   issue-exists        changelog issue already present
+#   no-remote           `gh repo view` fails
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
-case "${GH_STUB_MODE:-ok}" in
-  ok) exit 0 ;;
-  *) exit 0 ;;
+mode="${GH_STUB_MODE:-ok}"
+branch=main
+[ "$mode" = default-branch-trunk ] && branch=trunk
+case "$1 $2" in
+  "repo view")
+    if [ "$mode" = no-remote ]; then
+      echo "no git remotes found" >&2; exit 1
+    fi
+    printf '{"nameWithOwner":"dru/demo","defaultBranchRef":{"name":"%s"}}\n' "$branch" ;;
+  "issue list")
+    if [ "$mode" = issue-exists ]; then
+      echo '[{"number":7,"title":"📦 Changelog"},{"number":8,"title":"📦 Changelog extra"}]'
+    else
+      echo '[{"number":9,"title":"📦 Changelog extra"}]'
+    fi ;;
+  "issue create") echo "https://github.com/dru/demo/issues/7" ;;
+  "pr create") echo "https://github.com/dru/demo/pull/1" ;;
 esac
+exit 0
