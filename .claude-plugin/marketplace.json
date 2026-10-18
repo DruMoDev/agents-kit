@@ -1,0 +1,15 @@
+{
+  "name": "agents-kit",
+  "owner": {
+    "name": "Dru"
+  },
+  "plugins": [
+    {
+      "name": "agents-kit",
+      "source": "./",
+      "description": "Personal kit of skills, hooks and project docs conventions for Claude Code and Codex.",
+      "version": "2.0.0"
+    }
+  ],
+  "description": "Personal agents-kit marketplace"
+}

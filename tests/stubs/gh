@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Minimal gh stub. Logs args to $GH_LOG; behaviour chosen by $GH_STUB_MODE.
+[ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
+case "${GH_STUB_MODE:-ok}" in
+  ok) exit 0 ;;
+  *) exit 0 ;;
+esac

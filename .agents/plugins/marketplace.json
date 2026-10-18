@@ -1,0 +1,11 @@
+{
+  "name": "agents-kit",
+  "plugins": [
+    {
+      "name": "agents-kit",
+      "source": { "source": "local", "path": "./" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    }
+  ]
+}
