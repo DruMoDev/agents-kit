@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for kit-github-setup.sh and kit-ship-pr.sh (gh stubbed, git real).
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 setup="$REPO_ROOT/scripts/kit-github-setup.sh"
 ship="$REPO_ROOT/scripts/kit-ship-pr.sh"
 use_gh_stub

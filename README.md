@@ -1,6 +1,6 @@
 # agents-kit
 
-Plugin personal para Claude Code, Codex y OpenCode. Inyecta unas reglas de trabajo al arrancar cada sesión, solo en los repos donde el kit está activado, y trae dos skills para activarlo y desactivarlo. El mismo repo es el plugin y su propio marketplace en Claude Code y Codex.
+Plugin personal para Claude Code, Codex y OpenCode. Inyecta unas reglas de trabajo al arrancar cada sesión, solo en los repos donde el kit está activado. Trae skills para activarlo y desactivarlo y para llevar issues de GitHub hasta `main` con revisión de varios modelos. El mismo repo es el plugin y su propio marketplace en Claude Code y Codex.
 
 ## Instalar
 
@@ -27,7 +27,7 @@ mkdir -p ~/.config/opencode/plugins
 ln -s ~/Documents/programacion/agents-kit/.opencode/plugins/agents-kit.js ~/.config/opencode/plugins/agents-kit.js
 ```
 
-Es un enlace, así que OpenCode usa el código del repo: no hay caché ni aprobación de hooks. El plugin registra `kit-on` y `kit-off` en todos los repos (solo actúan si los pides). Solo en repos activados añade las reglas al primer mensaje de cada sesión y deja leer y ejecutar sin preguntar `scripts/`, `skills/`, `rules/` y `templates/` del plugin; en los demás, OpenCode pide permiso la primera vez que `kit-on` usa un script. OpenCode ya lee por su cuenta `AGENTS.md` y las skills de `.agents/skills/`.
+Es un enlace, así que OpenCode usa el código del repo: no hay caché ni aprobación de hooks. El plugin registra todas las skills del kit en todos los repos (solo actúan si las pides). Solo en repos activados añade las reglas al primer mensaje de cada sesión y deja leer y ejecutar sin preguntar `scripts/`, `skills/`, `rules/` y `templates/` del plugin; en los demás, OpenCode pide permiso la primera vez que `kit-on` usa un script. OpenCode ya lee por su cuenta `AGENTS.md` y las skills de `.agents/skills/`.
 
 ## Uso
 
@@ -35,11 +35,26 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 
 - `kit-on`: activa el kit en el repo actual. Crea `.agents-kit.json`, `AGENTS.md`, `CLAUDE.md` y `CHANGELOG.md` si faltan, ordena un `AGENTS.md` existente, configura GitHub (etiquetas, issue de changelog, borrado de rama al fusionar) y lo envía todo por un PR que se fusiona. Si se interrumpe, se relanza y retoma.
 - `kit-off`: borra `.agents-kit.json` por PR. `AGENTS.md`, `CHANGELOG.md` y las skills del proyecto se quedan.
+- `kit-plan <objetivo>`: acuerda contigo el comportamiento (una pregunta cada vez), propone el desglose y, cuando lo apruebas, crea los issues con la etiqueta `listo`.
+- `kit-scout`: busca bugs, tests que faltan, deuda y docs obsoletas, y abre como máximo 5 issues `propuesta`.
+- `kit-run`: coge los issues `listo` por orden y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (o gate local si no corre ningún check sobre la PR), rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza. Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
 
 Cómo se invocan:
 
-- Claude Code: `/agents-kit:kit-on` y `/agents-kit:kit-off`.
-- Codex y OpenCode: pídeselo por nombre (kit-on, kit-off).
+- Claude Code: `/agents-kit:kit-on`, `/agents-kit:kit-off`, `/agents-kit:kit-plan`, `/agents-kit:kit-run`, `/agents-kit:kit-scout`.
+- Codex y OpenCode: pídeselo por nombre (kit-on, kit-off, kit-plan, kit-run, kit-scout).
+
+### Issues que esperan a Dru
+
+- **Aprobar una propuesta:** cambia la etiqueta `propuesta` por `listo` (`gh issue edit <n> --remove-label propuesta --add-label listo`). Las que no quieras, ciérralas.
+- **`necesita-decision`:** el agente dejó una pregunta de producto en un comentario y la PR, si existía, en borrador. Responde en el issue y quita `necesita-decision` (`gh issue edit <n> --remove-label necesita-decision`); `listo` sigue puesto, no hay que volver a ponerlo. El siguiente `kit-run` lo retoma con tu respuesta.
+- **`bloqueado`:** el comentario explica qué falta (un check colgado, el límite de rondas...). Arréglalo, responde en el issue y quita `bloqueado`; `listo` sigue puesto, no hay que volver a ponerlo.
+- **PR sin fusionar (`autoMerge` falso):** revísala y fusiónala tú. El issue se cierra solo, pero conserva las etiquetas `listo` y `en-curso`: quítalas a mano (`gh issue edit <n> --remove-label listo --remove-label en-curso`).
+- **Reclamo colgado:** el resumen de `kit-run` lista los issues `listo` con `en-curso` que no reclamó esa ejecución, con el comando `kit-issue.sh soltar` exacto. Suéltalo solo si ningún agente lo está trabajando.
+
+### Revisores
+
+Los revisores de `.agents-kit.json` (`reviewers`) se ejecutan sin supervisión y con todos los permisos locales, cada uno en un clon aislado del head de la PR: sin credenciales de GitHub, con `gh` y `git push` bloqueados y sin la configuración de agente que traiga la PR. Aun así pueden ejecutar código del repo en tu máquina: es el mismo nivel de confianza que el agente que implementa.
 
 Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode).
 
@@ -58,4 +73,4 @@ tests/run.sh
 claude plugin validate .
 ```
 
-Próximas fases: flujo de issues, changelog y avisos, web.
+Próximas fases: changelog y avisos fuera de GitHub, web.

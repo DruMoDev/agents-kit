@@ -33,3 +33,33 @@ use_gh_stub() {
   export GH_LOG="${GH_LOG:-$(mktemp)}"
   export GH_STUB_MODE="${GH_STUB_MODE:-ok}"
 }
+
+# Use the stateful gh stub (tests/stubs/flow/gh): fresh $GH_STATE/state.json and $GH_LOG.
+use_flow_gh() {
+  export PATH="$TESTS_DIR/stubs/flow:$PATH"
+  export GH_STATE="$(mktemp -d)"
+  export GH_LOG="$(mktemp)"
+  unset GH_FAIL_ON
+  echo '{"issues":[],"prs":[]}' > "$GH_STATE/state.json"
+}
+
+# flow_add_issue <number> <title> [label...]: seed an open issue in the stub state.
+flow_add_issue() {
+  local n="$1" t="$2"; shift 2
+  local tmp; tmp="$(mktemp)"
+  jq --argjson n "$n" --arg t "$t" '.issues += [{number: $n, title: $t, body: "", state: "OPEN",
+      labels: [$ARGS.positional[] | {name: .}], assignees: [], comments: []}]' --args "$@" \
+    < "$GH_STATE/state.json" > "$tmp" && mv "$tmp" "$GH_STATE/state.json" || fail "flow_add_issue"
+}
+
+# flow_add_comment <number> <body>: append a comment to an issue in the stub state.
+flow_add_comment() {
+  local tmp; tmp="$(mktemp)"
+  jq --argjson n "$1" --arg b "$2" '(.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_seed\(length)", body: $b}]' \
+    "$GH_STATE/state.json" > "$tmp" && mv "$tmp" "$GH_STATE/state.json" || fail "flow_add_comment"
+}
+
+# flow_issue <number> <jq-filter>: query one issue of the stub state.
+flow_issue() {
+  jq -r --argjson n "$1" ".issues[] | select(.number == \$n) | $2" "$GH_STATE/state.json"
+}

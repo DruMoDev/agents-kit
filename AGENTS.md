@@ -13,12 +13,16 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `hooks/`: `hooks.json` y el script `session-start`.
 - `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso y reglas).
 - `rules/`: reglas inyectadas en las sesiones.
-- `skills/`: `kit-on` y `kit-off`.
-- `scripts/`: scripts mecánicos de las skills y `release.sh`.
-- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`).
+- `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout` y `kit-run` (con `references/`: plantilla de issue, prompt del revisor y formato de ronda).
+- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-review.sh`...) y `release.sh`.
+- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node).
 - `docs/`: specs y planes.
+
+## Flujo de issues
+
+`kit-plan` y `kit-scout` crean issues (`listo` o `propuesta`); `kit-run` los lleva hasta `main`. El estado vive en GitHub: etiquetas `listo`, `propuesta`, `en-curso`, `necesita-decision`, `bloqueado` y marcadores HTML en los comentarios de issues y PRs.
 
 ## Comandos
 
@@ -104,3 +108,11 @@ Verificado contra opencode 1.19.0 (V1) con `opencode run` en un repo activado y 
 - Hooks del plugin usados: `config` (añade `skills.paths` y, solo en repos activados, `permission.external_directory`) y `experimental.chat.messages.transform` (se ejecuta en cada paso con los mensajes recargados; hace falta una guarda para inyectar una sola vez). Mismo enfoque que superpowers.
 - Sin permiso `external_directory`, `opencode run` rechaza leer o ejecutar los scripts del plugin, que están fuera del proyecto.
 - OpenCode V2 (2.x) usa otra API (`default.setup`, `ctx.session.hook("context")`); sin soporte por ahora.
+
+### Flujo de issues (fase 2)
+
+Verificado de punta a punta el 2026-10-19 en un repo privado de pruebas, con `claude -p "/agents-kit:kit-run"` (Claude Code 2.1.302, opencode 1.19.0):
+- Issue `listo` → PR fusionada tras 2 rondas, con los tres revisores por defecto (`claude/opus`, `claude/sonnet`, `opencode/openai/gpt-6.1-sol`) publicando `kit-revision` y un `kit-ronda` por ronda; sin CI, se usó `kit-gate-local`; worktree y rama borrados al final.
+- Issue con producto sin definir → comentario `kit-decision` con opciones y propuesta, `necesita-decision`, asignado a Dru, reclamo soltado, sin rama ni PR.
+- Los revisores corren sin interfaz por CLI: `claude -p --permission-mode bypassPermissions --disallowedTools "Bash(git push:*)" "Bash(gh:*)"` y `opencode run` con `OPENCODE_CONFIG_CONTENT` que niega `gh *` y `git push*`; ambos respetan el bloqueo.
+- `claude -p` espera 3 s a stdin si no se le pasa `</dev/null`. La salida de `opencode run` lleva códigos ANSI.

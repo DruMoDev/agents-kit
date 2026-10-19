@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Reviewer stub (claude and opencode share it). Dumps argv, cwd and OPENCODE_CONFIG_CONTENT, then replies per REVIEW_STUB_MODE.
+# Env:
+#   REVIEW_DUMP       directory; writes <tool>.args (one argument per NUL), <tool>.env (OPENCODE_CONFIG_CONTENT),
+#                     <tool>.gh (GitHub env), <tool>.genv (GH_/GITHUB_/GIT_ vars), <tool>.ls/.lsclaude (ls -a), <tool>.pwd, <tool>.git (HEAD, git dir, remotes of the cwd)
+#   REVIEW_STUB_MODE  ok (2 findings), cero (HALLAZGOS: 0), mudo (no HALLAZGOS line), lento (sleeps), falla (exit 3),
+#                     negrita (finding in markdown), envuelto (HALLAZGOS line in backticks/asterisks),
+#                     hijo (background child writing its PID to $REVIEW_DUMP/hijo.pid, then waits)
+tool="$(basename "$0")"
+if [ -n "${REVIEW_DUMP:-}" ]; then
+  printf '%s\0' "$@" > "$REVIEW_DUMP/$tool.args"
+  printf '%s' "${OPENCODE_CONFIG_CONTENT:-}" > "$REVIEW_DUMP/$tool.env"
+  pwd -P > "$REVIEW_DUMP/$tool.pwd"
+  printf 'GH_TOKEN=%s\nGITHUB_TOKEN=%s\nGH_CONFIG_DIR=%s\n' "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" "${GH_CONFIG_DIR-}" \
+    > "$REVIEW_DUMP/$tool.gh"
+  ls -a > "$REVIEW_DUMP/$tool.ls"; ls -a .claude > "$REVIEW_DUMP/$tool.lsclaude" 2>/dev/null
+  env | grep -E '^(GH_|GITHUB_|GIT_)' | sort > "$REVIEW_DUMP/$tool.genv"
+  { git rev-parse HEAD; git rev-parse --absolute-git-dir; git remote; } > "$REVIEW_DUMP/$tool.git" 2>&1
+fi
+e=$'\x1b'
+case "${REVIEW_STUB_MODE:-ok}" in
+  ok)
+    [ "$tool" = opencode ] && printf '%s[0m> build · gpt%s[0m\n| Bash  git diff origin/main...HEAD\n' "$e" "$e"
+    echo "Revisé el diff y el issue."
+    echo "Formato: termino con HALLAZGOS: <n>"; echo "HALLAZGOS: 5"
+    printf '1. [grave] a.txt:1: %sfalla%s con vacío. Escenario: fichero vacío. Arreglo: comprobarlo\n' "$e[1m" "$e[0m"
+    echo "2. [menor] b.txt:2: nombre confuso. Escenario: lectura. Arreglo: renombrar"
+    echo "HALLAZGOS: 2"
+    ;;
+  cero) echo "Nada que objetar."; echo "HALLAZGOS: 0" ;;
+  mudo) echo "1. [grave] a.txt:1: algo. Escenario: x. Arreglo: y" ;;
+  lento) exec sleep 20 ;;
+  falla) echo "HALLAZGOS: 0"; exit 3 ;;
+  negrita) echo "Informe:"; echo "1. **[grave]** a:1: x"; echo "HALLAZGOS: 1" ;;
+  envuelto) echo "1. [medio] a.txt:1: y. Escenario: z. Arreglo: w"; echo '**`HALLAZGOS: 1`**' ;;
+  hijo) sleep 30 & echo $! > "$REVIEW_DUMP/hijo.pid"; wait ;;
+esac

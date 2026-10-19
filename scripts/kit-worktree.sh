@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Usage: scripts/kit-worktree.sh <subcomando> <root> [args...]
+#   abrir   <root> <N> <slug>
+#   limpiar <root> <N>
+# Worktree per issue: ${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/<repo>/issue-<N>-<slug>.
+# Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error.
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$here/lib/github-slug.sh"
+source "$here/lib/config.sh"
+source "$here/lib/default-branch.sh"
+
+usage() {
+  echo "uso: $0 abrir <root> <N> <slug> | limpiar <root> <N>" >&2
+  exit 1
+}
+
+[ $# -ge 2 ] && [ -n "$2" ] || usage
+sub="$1"; shift
+case "$sub" in abrir|limpiar) ;; *) usage ;; esac
+[ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
+root="$(cd "$1" && pwd)"; shift
+kit_require_marker "$root" || exit $?
+case "$sub" in
+  abrir) [ $# -eq 2 ] || usage ;;
+  limpiar) [ $# -eq 1 ] || usage ;;
+esac
+n="$1"
+[[ $n =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $n" >&2; exit 1; }
+if [ "$sub" = abrir ]; then
+  [[ $2 =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || { echo "slug inválido: $2" >&2; exit 1; }
+fi
+
+for c in git jq; do
+  command -v "$c" >/dev/null 2>&1 || { echo "error: falta '$c' en el PATH" >&2; exit 2; }
+done
+cd "$root" || exit 2
+
+# wt_of <branch>: print the worktree path where the branch is checked out (empty if none).
+wt_of() {
+  git worktree list --porcelain | awk -v b="refs/heads/$1" '
+    /^worktree / { p = substr($0, 10) }
+    $0 == "branch " b { print p; exit }'
+}
+
+if [ "$sub" = abrir ]; then
+  branch="issue-$n-$2"
+  path="${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/$(basename "$root")/$branch"
+  base="$(kit_default_branch)"
+  [ -n "$base" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
+  git fetch -q origin "$base" || { echo "error: git fetch falló" >&2; exit 2; }
+
+  existing="$(wt_of "$branch")"
+  if [ -n "$existing" ]; then
+    echo "ya existía"
+    # keep the canonical spelling when git reports the same directory through a symlink
+    [ "$(cd "$existing" && pwd -P)" = "$(cd "$path" 2>/dev/null && pwd -P)" ] || path="$existing"
+  elif [ -e "$path" ]; then
+    echo "la ruta $path ya existe y no es el worktree de $branch" >&2
+    exit 1
+  else
+    mkdir -p "$(dirname "$path")" || exit 2
+    if git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
+      git worktree add -q "$path" "$branch" || exit 2
+    else
+      # a branch that only exists on origin (issue resumed elsewhere) is the start point; else origin/<default>
+      start="origin/$base"
+      git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; rc=$?
+      case $rc in
+        0) git fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+             || { echo "error: git fetch de $branch falló" >&2; exit 2; }
+           start="origin/$branch" ;;
+        2) ;;
+        *) echo "error: git ls-remote falló" >&2; exit 2 ;;
+      esac
+      git worktree add -q -b "$branch" --no-track "$path" "$start" || exit 2
+    fi
+  fi
+  echo "worktree: $path"
+  echo "rama: $branch"
+  echo "FIN: $path"
+  exit 0
+fi
+
+# limpiar
+branch="$(git worktree list --porcelain | sed -n "s|^branch refs/heads/\\(issue-$n-.*\\)\$|\\1|p")"
+[ -n "$branch" ] || { echo "no hay worktree para el issue $n" >&2; exit 1; }
+[ "$(printf '%s\n' "$branch" | wc -l)" -eq 1 ] || { echo "hay varios worktrees para el issue $n" >&2; exit 1; }
+path="$(wt_of "$branch")"
+command -v gh >/dev/null 2>&1 || { echo "error: falta 'gh' en el PATH" >&2; exit 2; }
+slug="$(kit_origin_slug)"
+[ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
+prs="$(gh pr list --repo "$slug" --head "$branch" --state all --json number,state,headRefOid)" \
+  || { echo "error: gh pr list falló" >&2; exit 2; }
+printf '%s' "$prs" | jq -e 'any(.[]; .state == "MERGED")' >/dev/null 2>&1 \
+  || { echo "la PR de $branch no está fusionada" >&2; exit 1; }
+# the merged PR must contain the branch tip, else local commits would be lost
+tip="$(git rev-parse "refs/heads/$branch")" || exit 2
+printf '%s' "$prs" | jq -e --arg t "$tip" 'any(.[]; .state == "MERGED" and .headRefOid == $t)' >/dev/null 2>&1 \
+  || { echo "la rama tiene commits que no están en la PR fusionada; no se borra nada" >&2; exit 1; }
+status="$(git -C "$path" status --porcelain)" || exit 2
+[ -z "$status" ] || { echo "el worktree tiene cambios; no se borra nada" >&2; exit 1; }
+git worktree remove "$path" || exit 2
+git branch -D "$branch" >/dev/null || exit 2
+git fetch -q --prune origin || echo "aviso: git fetch --prune falló; ya se borraron el worktree y la rama" >&2
+echo "FIN: limpio"
