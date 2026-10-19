@@ -56,4 +56,8 @@ for sk in "$on" "$off"; do
   grep -q 'sin el prefijo `origin/`' "$sk" || fail "$sk: falta aclarar que la rama por defecto va sin origin/"
 done
 grep -q 'interrumpida: haz solo la comprobación de al día' "$off" || fail "kit-off retomado debe comprobar al día"
+for sk in "$on" "$off"; do
+  grep -q 'el árbol NO quedó limpio' "$sk" || fail "$sk: debe retransmitir el estado real del árbol"
+  grep -q 'a salvo ahí y el árbol quedó limpio' "$sk" && fail "$sk: afirma árbol limpio sin condición"
+done
 echo "ok"
