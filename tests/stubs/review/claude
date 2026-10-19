@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Reviewer stub (claude and opencode share it). Dumps argv, cwd and OPENCODE_CONFIG_CONTENT, then replies per REVIEW_STUB_MODE.
+# Env:
+#   REVIEW_DUMP       directory; writes <tool>.args (one argument per NUL), <tool>.env, <tool>.pwd
+#   REVIEW_STUB_MODE  ok (2 findings), cero (HALLAZGOS: 0), mudo (no HALLAZGOS line), lento (sleeps), falla (exit 3)
+tool="$(basename "$0")"
+if [ -n "${REVIEW_DUMP:-}" ]; then
+  printf '%s\0' "$@" > "$REVIEW_DUMP/$tool.args"
+  printf '%s' "${OPENCODE_CONFIG_CONTENT:-}" > "$REVIEW_DUMP/$tool.env"
+  pwd > "$REVIEW_DUMP/$tool.pwd"
+fi
+e=$'\x1b'
+case "${REVIEW_STUB_MODE:-ok}" in
+  ok)
+    [ "$tool" = opencode ] && printf '%s[0m> build · gpt%s[0m\n| Bash  git diff origin/main...HEAD\n' "$e" "$e"
+    echo "Revisé el diff y el issue."
+    echo "Formato: termino con HALLAZGOS: <n>"; echo "HALLAZGOS: 5"
+    printf '1. [grave] a.txt:1: %sfalla%s con vacío. Escenario: fichero vacío. Arreglo: comprobarlo\n' "$e[1m" "$e[0m"
+    echo "2. [menor] b.txt:2: nombre confuso. Escenario: lectura. Arreglo: renombrar"
+    echo "HALLAZGOS: 2"
+    ;;
+  cero) echo "Nada que objetar."; echo "HALLAZGOS: 0" ;;
+  mudo) echo "1. [grave] a.txt:1: algo. Escenario: x. Arreglo: y" ;;
+  lento) exec sleep 20 ;;
+  falla) echo "HALLAZGOS: 0"; exit 3 ;;
+esac
