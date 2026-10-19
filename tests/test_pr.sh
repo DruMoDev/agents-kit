@@ -73,6 +73,13 @@ st '.workflows = 1'
 seq_checks "$IP" "$OK"
 out="$(bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "verde: $out"
 [ "$(last_line "$out")" = "FIN: verde" ] || fail "verde FIN: $out"
+grep -q "commits/$(git -C "$wt" rev-parse HEAD)/check-runs" "$GH_LOG" || fail "esperar-ci no consulta el SHA de HEAD"
+# a failed attempt re-run successfully: latest id per check name wins, whatever the array order
+seq_checks '[{"name":"ci","id":2,"status":"completed","conclusion":"success"},{"name":"ci","id":1,"status":"completed","conclusion":"failure"}]'
+out="$(bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "re-run: $out"
+[ "$(last_line "$out")" = "FIN: verde" ] || fail "re-run FIN: $out"
+seq_checks '[{"name":"ci","id":1,"status":"completed","conclusion":"success"},{"name":"ci","id":2,"status":"completed","conclusion":"failure"}]'
+bash "$pr" esperar-ci "$wt" $p >/dev/null 2>&1; [ $? -eq 1 ] || fail "re-run fallido debe dar 1"
 # Review Focus 2: no checks yet right after the push, then success
 seq_checks '[]' '[]' "$OK"
 out="$(bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "lag: $out"
@@ -145,7 +152,7 @@ st '.prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | n
 
 # fusionar: kit-revision after the last kit-ronda (Review Focus 4), CI green
 st '.workflows = 1 | .checks = [{"status":"completed","conclusion":"success"}]'
-st '.prs[0].comments += [{"id": 90, "body": "<!-- kit-revision: claude/opus ronda 3 -->\nnuevo"}]'
+st '.prs[0].comments += [{"id": 90, "body": "\n  <!-- kit-revision: claude/opus ronda 3 -->\nnuevo"}]'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "revisión posterior: exit $rc"
 case "$err" in "no se puede fusionar:"*"  - "*"posterior"*) ;; *) fail "revisión msg: $err";; esac
@@ -198,8 +205,18 @@ case "$err" in *"conflicto con main: resuélvelo"*) ;; *) fail "conflicto msg: $
 [ ! -d "$(git -C "$wt" rev-parse --git-path rebase-merge)" ] || fail "rebase a medias"
 (cd "$r" && git reset -q --hard HEAD~1 && git push -q -f origin main) 2>/dev/null || fail "deshacer conflicto"
 
-# fusionar: everything fine -> merge and close the issue
+# fusionar: a push lands between the gates and the merge -> merge refused
+GH_RACE_OID=0123456789abcdef0123456789abcdef01234567 bash "$pr" fusionar "$wt" $p 3 >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] || fail "carrera: exit $rc"
+[ "$(pr_q .state)" = OPEN ] || fail "fusionó otro head"
+grep -q -- "--match-head-commit $sha" "$GH_LOG" || fail "merge sin --match-head-commit"
+
+# fusionar: everything fine with green CI (no gate-local) -> merge and close the issue
+st '.workflows = 1 | .checks = [{"name":"ci","id":7,"status":"completed","conclusion":"success"}]
+  | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))'
+: > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar: $out"
+grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA de la PR"
 [ "$(last_line "$out")" = "FIN: ok" ] || fail "fusionar FIN: $out"
 case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac
 [ "$(pr_q .state)" = MERGED ] || fail "no fusionó"

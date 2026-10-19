@@ -19,6 +19,7 @@
 #   GH_CHECKS_SEQ  file with one JSON array of check runs per line; each check-runs call consumes the next line
 #                  (the last one repeats). Overrides state.checks. Position kept in $GH_STATE/.checks_idx
 #                  (delete it to restart the sequence).
+#   GH_RACE_OID    `pr merge` sees this as the live head (simulates a push landing just before the merge)
 # Supported: issue list/view/create/comment/edit/close, pr list/create/view/comment/merge,
 # api (workflows, check-runs; no --repo, the slug goes in the path). Add one case per subcommand as tests need it.
 set -u
@@ -32,7 +33,7 @@ fi
 
 cmd="${1:-} ${2:-}"; shift 2 2>/dev/null
 apipath=""; [ "${cmd%% *}" = api ] && { apipath="${cmd#api }"; cmd=api; }
-repo="" head="" json="" jqf="" title="" body="" st=open base="" draft=false comment=""
+match="" repo="" head="" json="" jqf="" title="" body="" st=open base="" draft=false comment=""
 pos=() labels=() addl=() reml=() adda=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -47,6 +48,7 @@ while [ $# -gt 0 ]; do
     --base|-B) base="$2"; shift 2 ;;
     --draft|-d) draft=true; shift ;;
     --squash|--delete-branch) shift ;;
+    --match-head-commit) match="$2"; shift 2 ;;
     --comment|-c) comment="$2"; shift 2 ;;
     --limit|-L) shift 2 ;;
     --label|-l) labels+=("$2"); shift 2 ;;
@@ -151,6 +153,10 @@ case "$cmd" in
     echo "https://github.com/$repo/pull/${pos[0]}#issuecomment-1" ;;
   "pr merge")
     pr_exists "${pos[0]}"
+    live="${GH_RACE_OID:-$(pr_json "${pos[0]}" | jq -r .headRefOid)}"
+    if [ -n "$match" ] && [ "$match" != "$live" ]; then
+      echo "stub: head $live no coincide con --match-head-commit $match" >&2; exit 1
+    fi
     save '(.prs[] | select(.number == $n)) |= (.headRefOid = (.headRefOid // $o) | .state = "MERGED")' \
       --argjson n "${pos[0]}" --arg o "$(pr_json "${pos[0]}" | jq -r .headRefOid)" || exit 1 ;;
   api)

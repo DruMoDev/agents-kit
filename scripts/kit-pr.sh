@@ -85,12 +85,13 @@ ci_has_workflows() {
   [[ $c =~ ^[0-9]+$ ]] || return 2
   if [ "$c" -gt 0 ]; then echo true; else echo false; fi
 }
-# ci_state <sha>: one read of the check runs; prints esperando | verde | rojo <conclusion>; return 2 if unreadable.
+# ci_state <sha>: one read of the check runs (latest attempt per check name, by id); prints esperando | verde | rojo <conclusion>; return 2 if unreadable.
 ci_state() {
   local r
   r="$(gh api "repos/$slug/commits/$1/check-runs?filter=all&per_page=100")" || return 2
   printf '%s' "$r" | jq -r '
     if (.check_runs | type) != "array" then error("sin check_runs") else .check_runs end
+    | group_by(.name) | map(max_by(.id))
     | if length == 0 or any(.[]; .status != "completed") then "esperando"
       else ([.[] | .conclusion // "sin conclusión" | select(. as $x | ["success", "skipped", "neutral"] | index($x) | not)]
         | first) as $bad
@@ -100,7 +101,13 @@ ci_state() {
 ci_unreadable() { echo "error: no se pudo leer el estado del CI" >&2; exit 2; }
 
 # marker bodies of the PR comments, in chronological (array) order
-RONDAS_JQ='[.comments[].body | select(test("^<!-- kit-ronda: [0-9]+ -->"))]'
+RONDAS_JQ='[.comments[].body | select(test("^\\s*<!-- kit-ronda: [0-9]+ -->"))]'
+# review state: sin-ronda | pendiente (a kit-revision after the last kit-ronda, by position) | ok
+REVIEW_JQ='[.comments[].body] as $b
+  | ([range(0; $b | length) | select($b[.] | test("^\\s*<!-- kit-ronda: [0-9]+ -->"))] | last // -1) as $r
+  | if $r < 0 then "sin-ronda"
+    elif any(range($r + 1; $b | length); $b[.] | test("^\\s*<!-- kit-revision: ")) then "pendiente"
+    else "ok" end'
 
 case "$sub" in
   abrir)
@@ -247,25 +254,33 @@ Cierra #$n"
     fi
 
     # review: at least one kit-ronda and no kit-revision after the last one (by position)
-    rev="$(printf '%s' "$pj" | jq -r '[.comments[].body] as $b
-      | ([range(0; $b | length) | select($b[.] | test("^<!-- kit-ronda: [0-9]+ -->"))] | last // -1) as $r
-      | if $r < 0 then "sin-ronda"
-        elif any(range($r + 1; $b | length); $b[.] | test("^<!-- kit-revision: ")) then "pendiente"
-        else "ok" end')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
-    case "$rev" in
-      sin-ronda) reasons+=("no hay ninguna ronda de revisión (kit-ronda)") ;;
-      pendiente) reasons+=("hay una revisión posterior a la última ronda sin decisiones escritas") ;;
-    esac
-
-    if [ ${#reasons[@]} -gt 0 ]; then
+    review_reason() { # <pr-json>: append the review reason, if any
+      local rev
+      rev="$(printf '%s' "$1" | jq -r "$REVIEW_JQ")" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+      case "$rev" in
+        sin-ronda) reasons+=("no hay ninguna ronda de revisión (kit-ronda)") ;;
+        pendiente) reasons+=("hay una revisión posterior a la última ronda sin decisiones escritas") ;;
+      esac
+    }
+    report() {
+      [ ${#reasons[@]} -gt 0 ] || return 0
       {
         echo "no se puede fusionar:"
         printf '  - %s\n' "${reasons[@]}"
       } >&2
       exit 1
-    fi
+    }
+    review_reason "$pj"
 
-    gh pr merge "$p" --repo "$slug" --squash >/dev/null || { echo "error: gh pr merge falló" >&2; exit 2; }
+    report
+    # a review may have landed while the gates ran: re-read just before merging
+    late="$(pr_json comments)" || exit 2
+    review_reason "$late"
+    report
+
+    # --match-head-commit: never merge a SHA pushed after the gates were checked
+    gh pr merge "$p" --repo "$slug" --squash --match-head-commit "$oid" >/dev/null \
+      || { echo "error: gh pr merge falló (¿la PR cambió de head tras las comprobaciones?)" >&2; exit 2; }
     after="$(pr_json state,url)" || exit 2
     [ "$(printf '%s' "$after" | jq -r .state)" = MERGED ] \
       || { echo "error: la PR #$p no aparece como fusionada tras gh pr merge" >&2; exit 2; }
