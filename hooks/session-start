@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart hook (Claude Code and Codex). Injects rules/core.md only when the
+# SessionStart hook (Claude Code and Codex; the OpenCode plugin runs it too). Injects rules/core.md only when the
 # session's repo has .agents-kit.json at its root; otherwise silent, exit 0.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"

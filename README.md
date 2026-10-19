@@ -23,10 +23,11 @@ Después, aprueba el hook una vez con `/hooks` dentro de Codex interactivo. Code
 ### OpenCode
 
 ```
+mkdir -p ~/.config/opencode/plugins
 ln -s ~/Documents/programacion/agents-kit/.opencode/plugins/agents-kit.js ~/.config/opencode/plugins/agents-kit.js
 ```
 
-Es un enlace, así que OpenCode usa siempre el código del repo: no hay caché ni aprobación de hooks. El plugin registra `kit-on` y `kit-off`, permite a OpenCode leer y ejecutar ficheros del plugin y, solo en repos activados, añade las reglas al primer mensaje de cada sesión. OpenCode ya lee por su cuenta `AGENTS.md` y las skills de `.agents/skills/`.
+Es un enlace, así que OpenCode usa el código del repo: no hay caché ni aprobación de hooks. El plugin registra `kit-on` y `kit-off` en todos los repos (solo actúan si los pides). Solo en repos activados añade las reglas al primer mensaje de cada sesión y deja leer y ejecutar sin preguntar `scripts/`, `skills/`, `rules/` y `templates/` del plugin; en los demás, OpenCode pide permiso la primera vez que `kit-on` usa un script. OpenCode ya lee por su cuenta `AGENTS.md` y las skills de `.agents/skills/`.
 
 ## Uso
 
@@ -48,7 +49,7 @@ Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/`
 2. Sube la versión: `scripts/release.sh <version>`.
 3. Claude Code: `claude plugin update agents-kit@agents-kit` (hay que reiniciar la sesión para aplicarlo).
 4. Codex copia el plugin a una caché: `codex plugin remove agents-kit@agents-kit` y `codex plugin add agents-kit@agents-kit`, y volver a aprobar el hook con `/hooks`.
-5. OpenCode: nada, basta con abrir una sesión nueva.
+5. OpenCode: reinicia `opencode` (carga el plugin al arrancar).
 
 ## Tests
 

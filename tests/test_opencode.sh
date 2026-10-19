@@ -4,23 +4,54 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 command -v node >/dev/null || fail "node no está instalado"
 plugin="$REPO_ROOT/.opencode/plugins/agents-kit.js"
 [ -f "$plugin" ] || fail ".opencode/plugins/agents-kit.js missing"
-run() { node "$TESTS_DIR/opencode_harness.mjs" "$@"; }
+NODE="$(command -v node)"
+run() { "$NODE" --no-warnings "$TESTS_DIR/opencode_harness.mjs" "$@"; }
+allowed='["scripts","skills","rules","templates"] | map($r + "/" + . + "/**")'
 
 repo="$(mk_repo)"
 
-# repo without marker: skills registered, nothing injected
+# repo without marker: skills registered, no permission rule, nothing injected
 out="$(run "$plugin" "$repo")" || fail "harness failed: $out"
-printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '.skills == [$s] and .texts == ["hola"]' >/dev/null \
+printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '.skills == [$s] and .permission == null and .texts == ["hola"]' >/dev/null \
   || fail "unmarked repo must only register skills: $out"
 
-# repo with marker, from a subdir: rules injected once, before the user text
-echo '{}' > "$repo/.agents-kit.json"
+# outside git: same as unmarked
+nogit="$(mktemp -d)"
+out="$(run "$plugin" "$nogit")" || fail "harness failed outside git: $out"
+printf '%s' "$out" | jq -e '.permission == null and .texts == ["hola"]' >/dev/null \
+  || fail "non-git dir must be inert: $out"
+
+# kit-on mid-process: rules load on the next session without restarting
+out="$(run "$plugin" "$repo" '{}' "$repo/.agents-kit.json")" || fail "harness failed: $out"
+printf '%s' "$out" | jq -e '.texts == ["hola"] and (.textsAfter | length) == 2 and .textsAfter[1] == "hola"' >/dev/null \
+  || fail "marker created mid-process must take effect: $out"
+
+# repo with marker, from a subdir: rules injected once, before the user text,
+# and only the plugin's scripts/skills/rules/templates are allowed
 mkdir -p "$repo/src"
 out="$(run "$plugin" "$repo/src")" || fail "harness failed: $out"
 printf '%s' "$out" | jq -e '(.texts | length) == 2 and .texts[1] == "hola"
   and (.texts[0] | contains("agents-kit está activo"))
   and (.texts[0] | contains("## Escribe menos código"))' >/dev/null \
   || fail "marked repo must inject rules once: $out"
+printf '%s' "$out" | jq -e --arg r "$REPO_ROOT" "(.permission.external_directory | keys | sort) == ($allowed | sort)
+  and ([.permission.external_directory[]] | all(. == \"allow\"))" >/dev/null \
+  || fail "marked repo must allow only the plugin's scripts/skills/rules/templates: $out"
+
+# a user rule wins; a global string rule is left alone
+out="$(run "$plugin" "$repo" "{\"permission\":{\"external_directory\":{\"$REPO_ROOT/scripts/**\":\"deny\"}}}")" || fail "harness failed: $out"
+printf '%s' "$out" | jq -e --arg p "$REPO_ROOT/scripts/**" '.permission.external_directory[$p] == "deny"' >/dev/null \
+  || fail "user rule for a plugin dir must win: $out"
+out="$(run "$plugin" "$repo" '{"permission":{"external_directory":"ask"}}')" || fail "harness failed: $out"
+printf '%s' "$out" | jq -e '.permission.external_directory == "ask"' >/dev/null \
+  || fail "a global external_directory rule must be left alone: $out"
+
+# hook without jq: no injection, a Spanish warning, no crash
+nojq="$(mktemp -d)"
+for b in git bash cat dirname env; do ln -s "$(command -v $b)" "$nojq/$b"; done
+out="$(PATH="$nojq" run "$plugin" "$repo" 2>"$nojq/err")" || fail "harness failed without jq: $out"
+printf '%s' "$out" | jq -e '.texts == ["hola"]' >/dev/null || fail "missing jq must not inject: $out"
+grep -q "falta jq" "$nojq/err" || fail "missing jq must warn in Spanish: $(cat "$nojq/err")"
 
 # loaded through a symlink (how it is installed): paths resolve to the real repo
 link="$(mktemp -d)/agents-kit.js"
@@ -28,16 +59,5 @@ ln -s "$plugin" "$link"
 out="$(run "$link" "$repo")" || fail "harness failed via symlink: $out"
 printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '.skills == [$s] and (.texts | length) == 2' >/dev/null \
   || fail "symlinked plugin must resolve the real plugin root: $out"
-
-# the plugin root is allowed as an external directory, without overriding the user
-out="$(run "$plugin" "$repo")" || fail "harness failed: $out"
-printf '%s' "$out" | jq -e --arg p "$REPO_ROOT/**" '.permission.external_directory[$p] == "allow"' >/dev/null \
-  || fail "plugin root must be an allowed external directory: $out"
-out="$(run "$plugin" "$repo" "{\"permission\":{\"external_directory\":{\"$REPO_ROOT/**\":\"deny\",\"/x/**\":\"allow\"}}}")" || fail "harness failed: $out"
-printf '%s' "$out" | jq -e --arg p "$REPO_ROOT/**" '.permission.external_directory == {($p): "deny", "/x/**": "allow"}' >/dev/null \
-  || fail "user rule for the plugin root must win: $out"
-out="$(run "$plugin" "$repo" '{"permission":{"external_directory":"ask"}}')" || fail "harness failed: $out"
-printf '%s' "$out" | jq -e '.permission.external_directory == "ask"' >/dev/null \
-  || fail "a global external_directory rule must be left alone: $out"
 
 echo ok
