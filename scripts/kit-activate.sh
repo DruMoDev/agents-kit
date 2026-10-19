@@ -67,6 +67,11 @@ elif [ ! -d "$repo/.agents/skills" ]; then
   mkdir -p "$repo/.agents/skills" || exit 2
   created .agents/skills
 fi
+# git does not track empty directories: keep .agents/skills alive with a .gitkeep
+if [ "$agents_ok" = 1 ] && [ -d "$repo/.agents/skills" ] && [ -z "$(ls -A "$repo/.agents/skills")" ]; then
+  : > "$repo/.agents/skills/.gitkeep" || exit 2
+  created .agents/skills/.gitkeep
+fi
 
 link="$repo/.claude/skills"
 want="../.agents/skills"

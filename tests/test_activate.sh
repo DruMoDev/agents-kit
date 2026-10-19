@@ -12,13 +12,15 @@ r="$(new_repo)"
 out="$(bash "$S" "$r" 2>/dev/null)" || fail "activate on empty repo should exit 0"
 for f in .agents-kit.json CHANGELOG.md AGENTS.md CLAUDE.md; do [ -f "$r/$f" ] || fail "missing $f"; done
 [ -d "$r/.agents/skills" ] || fail "missing .agents/skills"
+[ -f "$r/.agents/skills/.gitkeep" ] || fail "missing .agents/skills/.gitkeep"
+git -C "$r" status --porcelain -uall | grep -q '\.agents/skills/\.gitkeep' || fail ".gitkeep must be visible to git"
 [ -L "$r/.claude/skills" ] || fail "missing .claude/skills symlink"
 [ "$(cat "$r/CLAUDE.md")" = "@AGENTS.md" ] || fail "CLAUDE.md should be exactly @AGENTS.md"
 [ "$(readlink "$r/.claude/skills")" = "../.agents/skills" ] || fail "wrong symlink target"
 [ "$(jq .maxReviewRounds "$r/.agents-kit.json")" = "10" ] || fail "maxReviewRounds != 10"
 [ "$(jq -r .notify "$r/.agents-kit.json")" = "claude-push" ] || fail "notify"
 [ "$(jq -r '.reviewers.claude | length' "$r/.agents-kit.json")" = "2" ] || fail "reviewers.claude"
-[ "$(last_line "$out")" = "FIN: 6" ] || fail "expected FIN: 6, got: $(last_line "$out")"
+[ "$(last_line "$out")" = "FIN: 7" ] || fail "expected FIN: 7, got: $(last_line "$out")"
 grep -q "^# Changelog" "$r/CHANGELOG.md" || fail "CHANGELOG title"
 grep -qi "regla" "$r/AGENTS.md" && fail "AGENTS.md template must not contain kit rules"
 
@@ -28,6 +30,12 @@ out="$(bash "$S" "$r" 2>/dev/null)" || fail "second run should exit 0"
 [ "$(last_line "$out")" = "FIN: 0" ] || fail "second run expected FIN: 0, got: $(last_line "$out")"
 after="$(cd "$r" && cat .agents-kit.json CHANGELOG.md AGENTS.md CLAUDE.md | shasum)"
 [ "$before" = "$after" ] || fail "files changed on second run"
+
+# 2b. existing empty .agents/skills dir gets a .gitkeep; non-empty dir does not
+r="$(new_repo)"; mkdir -p "$r/.agents/skills"
+bash "$S" "$r" >/dev/null 2>&1; [ -f "$r/.agents/skills/.gitkeep" ] || fail "empty dir should get .gitkeep"
+r="$(new_repo)"; mkdir -p "$r/.agents/skills/x"; echo s > "$r/.agents/skills/x/SKILL.md"
+bash "$S" "$r" >/dev/null 2>&1; [ ! -e "$r/.agents/skills/.gitkeep" ] || fail "non-empty dir must not get .gitkeep"
 
 # 3. existing AGENTS.md and CLAUDE.md preserved
 r="$(new_repo)"

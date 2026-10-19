@@ -38,4 +38,4 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
 6. **PR.** `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-ship-pr.sh" <raíz> kit-on "chore: activar agents-kit" "<cuerpo>"`. Justo antes, saca el cuerpo de `git status --porcelain`: una lista con cada fichero creado o cambiado, más `AGENTS.md ordenado` si el paso 4 tocó.
    - Exit 1: rechazo (nada que enviar, la rama `kit-on` ya existe, commits sin publicar en la rama de partida). Explica el motivo exacto y qué hacer (por ejemplo, borrar la rama vieja o publicar esos commits).
    - Exit 2: error de entorno. Si menciona un stash, dale a Dru el SHA y dile que sus cambios están ahí para aplicarlos a mano. Si el PR quedó abierto, dale la URL.
-7. **Resumen.** Dile a Dru qué se creó o cambió, la URL del PR (línea `PR:`) y que a partir de la próxima sesión en este repo se cargan las reglas del kit.
+7. **Resumen.** Dile a Dru qué se creó o cambió, el PR ya fusionado (línea `PR fusionado:` con la URL; el cambio ya está en la rama por defecto, no hay nada pendiente de fusionar) y que la próxima sesión en este repo ya carga las reglas del kit.

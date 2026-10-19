@@ -32,7 +32,7 @@ git check-ref-format --branch "$branch" >/dev/null 2>&1 || { echo "nombre de ram
 if git show-ref --verify -q "refs/heads/$branch"; then
   echo "la rama '$branch' ya existe en local; no se toca" >&2; exit 1
 fi
-git fetch -q origin 2>/dev/null || { echo "error: git fetch origin falló" >&2; exit 2; }
+git fetch -q --prune origin 2>/dev/null || { echo "error: git fetch origin falló" >&2; exit 2; }
 if git show-ref --verify -q "refs/remotes/origin/$branch"; then
   echo "la rama '$branch' ya existe en origin; no se toca" >&2; exit 1
 fi
@@ -100,8 +100,17 @@ url="$(gh pr create --base "$base" --head "$branch" --title "$title" --body "$bo
 gh pr merge "$url" --squash --delete-branch >/dev/null \
   || abort "error: gh pr merge falló; el PR sigue abierto: $url"
 
+state="$(gh pr view "$url" --json state -q .state 2>/dev/null)"
+if [ "$state" != "MERGED" ]; then
+  git checkout -q "$base" 2>/dev/null
+  echo "el PR sigue abierto (estado: ${state:-desconocido}): $url" >&2
+  echo "FIN: PR abierto"
+  exit 2
+fi
+
 git checkout -q "$base" || exit 2
 git pull -q --ff-only origin "$base" 2>/dev/null || echo "aviso: no se pudo hacer pull de $base" >&2
 git branch -D "$branch" >/dev/null 2>&1 || true
-echo "PR: $url"
+git fetch -q --prune origin 2>/dev/null || true
+echo "PR fusionado: $url"
 echo "FIN: ok"

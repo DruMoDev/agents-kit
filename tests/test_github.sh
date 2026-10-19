@@ -48,10 +48,9 @@ grep -q '^pr create .*--base trunk' "$GH_LOG" || fail "pr create sin --base trun
 grep -q '^pr merge .*--squash' "$GH_LOG" || fail "pr merge sin --squash"
 [ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = trunk ] || fail "no termina en trunk"
 git -C "$r" show-ref --verify -q refs/heads/kit/cambio && fail "rama local no borrada"
-git -C "$r" ls-remote --exit-code --heads origin kit/cambio >/dev/null 2>&1 || fail "rama no se subió"
-git -C "$r" ls-tree -r --name-only origin/kit/cambio | grep -qx new.txt || fail "el commit de la rama no incluye new.txt"
-[ "$(git -C "$r" log -1 --format=%s origin/kit/cambio)" = "feat: algo" ] || fail "título de commit incorrecto"
-case "$out" in *"github.com/dru/demo/pull/1"*"FIN: ok"*) ;; *) fail "salida sin URL/FIN: $out";; esac
+git -C "$r" ls-remote --exit-code --heads origin kit/cambio >/dev/null 2>&1 && fail "rama remota no borrada tras el merge"
+git -C "$r" show-ref --verify -q refs/remotes/origin/kit/cambio && fail "queda ref de seguimiento obsoleto"
+case "$out" in *"PR fusionado: https://github.com/dru/demo/pull/1"*"FIN: ok"*) ;; *) fail "salida sin URL/FIN: $out";; esac
 
 # --- ship: nothing to ship
 r="$(mk_with_origin main)"
@@ -72,6 +71,21 @@ err="$(bash "$ship" "$r" kit/rem t b 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "rama remota existente: exit $rc"
 case "$err" in *origin*) ;; *) fail "rama remota: stderr '$err'";; esac
 [ -f "$r/f.txt" ] || fail "rama remota: cambios perdidos"
+
+# --- ship: stale tracking ref (branch deleted on remote) -> not refused
+r="$(mk_with_origin main)"; echo c > "$r/f.txt"
+(cd "$r" && git branch kit/old && git push -q origin kit/old && git branch -q -D kit/old) >/dev/null 2>&1
+git -C "$r" show-ref --verify -q refs/remotes/origin/kit/old || fail "stale: falta el ref de seguimiento"
+git -C "$(git -C "$r" remote get-url origin)" branch -q -D kit/old 2>/dev/null || git --git-dir="$(git -C "$r" remote get-url origin)" branch -q -D kit/old || fail "stale: no se pudo borrar en el remoto"
+out="$(bash "$ship" "$r" kit/old t b 2>&1)" || fail "stale: debe aceptarse (exit $?, $out)"
+git -C "$r" show-ref --verify -q refs/remotes/origin/kit/old && fail "stale: queda ref de seguimiento tras el merge"
+
+# --- ship: PR not merged -> exit 2, says it remains open
+r="$(mk_with_origin main)"; echo c > "$r/f.txt"
+out="$(GH_STUB_MODE=merge-open bash "$ship" "$r" kit/open t b 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "no fusionado: exit $rc"
+case "$out" in *"sigue abierto"*"github.com/dru/demo/pull/1"*) ;; *) fail "no fusionado: salida '$out'";; esac
+case "$out" in *"PR fusionado"*) fail "no fusionado: no debe decir fusionado";; esac
 
 # --- ship: diverged local default -> exit 1
 r="$(mk_with_origin main)"

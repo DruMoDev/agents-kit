@@ -22,4 +22,4 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
 4. **PR.** `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-ship-pr.sh" <raíz> kit-off "chore: desactivar agents-kit" "Borra .agents-kit.json. AGENTS.md, CHANGELOG.md y las skills del proyecto se quedan."`
    - Exit 1: rechazo (nada que enviar, la rama `kit-off` ya existe, commits sin publicar en la rama de partida, sin remoto de GitHub). Explica el motivo exacto y qué hacer.
    - Exit 2: error de entorno (por ejemplo `gh no autenticado`: que ejecute `gh auth login`). Si menciona un stash, dale a Dru el SHA. Si el PR quedó abierto, dale la URL.
-5. **Resumen.** Dile a Dru la URL del PR (línea `PR:`), que la próxima sesión ya no carga las reglas del kit, y que `AGENTS.md`, `CHANGELOG.md` y las skills de `.agents/skills` se quedan porque son del proyecto.
+5. **Resumen.** Dile a Dru el PR ya fusionado (línea `PR fusionado:` con la URL; el cambio ya está en la rama por defecto), que la próxima sesión en este repo ya no carga las reglas del kit, y que `AGENTS.md`, `CHANGELOG.md` y las skills de `.agents/skills` se quedan porque son del proyecto.
