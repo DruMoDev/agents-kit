@@ -5,6 +5,7 @@ rv="$REPO_ROOT/scripts/kit-review.sh"
 use_flow_gh
 export PATH="$TESTS_DIR/stubs/review:$PATH"
 export REVIEW_DUMP="$(mktemp -d)"
+export GH_TOKEN=secreto GITHUB_TOKEN=secreto
 unset KIT_REVIEW_TIMEOUT REVIEW_STUB_MODE
 last_line() { printf '%s\n' "$1" | sed -n '$p'; }
 
@@ -19,7 +20,15 @@ echo '{}' > "$r/.agents-kit.json"
 git -C "$o" symbolic-ref HEAD refs/heads/main
 wt="$(mktemp -d)/wt"
 git -C "$r" worktree add -q -b issue-3-foo --no-track "$wt" origin/main || fail "setup worktree"
-(cd "$wt" && echo a > a.txt && git add a.txt && git commit -q -m a) || fail "commit a"
+(cd "$wt" && echo a > a.txt && git add a.txt && git commit -q -m a && git push -q origin HEAD) >/dev/null 2>&1 \
+  || fail "commit a"
+base="$(git -C "$r" rev-parse main)"
+head="$(git -C "$wt" rev-parse HEAD)"
+# main moves on after the branch: the base is the merge-base, not origin/main
+(cd "$r" && echo m > m.txt && git add m.txt && git commit -q -m m && git push -q origin main) >/dev/null 2>&1 \
+  || fail "avanza main"
+# an unpushed local commit: the reviewer must see the PR head, not the worktree HEAD
+(cd "$wt" && echo l > local.txt && git add local.txt && git commit -q -m local) || fail "commit local"
 flow_add_issue 3 "Foo roto" en-curso
 t="$(mktemp)"
 jq '.issues[0].body = "Cuerpo del issue con & y \\1"
@@ -27,8 +36,8 @@ jq '.issues[0].body = "Cuerpo del issue con & y \\1"
       comments: [{id: 1, body: "<!-- kit-ronda: 1 -->\n- [R1.1] (claude/opus) PREVIO → rechazado: no aplica {{FOCO}}"}]}]' \
   "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json" || fail "setup estado"
 ncom() { jq '.prs[0].comments | length' "$GH_STATE/state.json"; }
-wts() { git -C "$r" worktree list | wc -l | tr -d ' '; }
-[ "$(wts)" = 2 ] || fail "setup: worktrees"
+wtl0="$(git -C "$wt" worktree list --porcelain)"
+wts() { if [ "$(git -C "$wt" worktree list --porcelain)" = "$wtl0" ]; then echo 2; else echo cambió; fi; }
 args() { tr '\0' '\n' < "$REVIEW_DUMP/$1.args"; }
 prompt() { # last argument of the dumped argv
   perl -0 -ne '$p = $_; END { chop $p; print $p }' "$REVIEW_DUMP/$1.args"
@@ -62,16 +71,25 @@ for x in -p --model sonnet --permission-mode bypassPermissions --disallowedTools
 done
 # prompt: focus, round, issue, base, history; no placeholder left; history taken literally
 p="$(prompt claude)"
-for x in "bordes y errores" "Foo roto" 'Cuerpo del issue con & y \1' "origin/main" "PREVIO → rechazado: no aplica {{FOCO}}" \
-    "git diff origin/main...HEAD" "ronda 2"; do
+for x in "bordes y errores" "Foo roto" 'Cuerpo del issue con & y \1' "PREVIO → rechazado: no aplica {{FOCO}}" \
+    "git diff $base...HEAD" "ronda 2"; do
   case "$p" in *"$x"*) ;; *) fail "el prompt no contiene '$x'";; esac
 done
 case "$p" in *"FIN: "*) fail "el prompt incluye la línea FIN del historial";; esac
 printf '%s' "$p" | grep -Eq '\{\{(RONDA|ISSUE|BASE|HISTORIAL)\}\}' && fail "quedan marcadores sin sustituir"
-# ran in a throwaway checkout of the same HEAD, not in the worktree
+case "$p" in *origin/*) fail "el prompt nombra origin/: la copia no tiene remoto";; esac
+# ran in an independent clone at the PR head: own .git, no remote, no GitHub credentials
 d="$(cat "$REVIEW_DUMP/claude.pwd")"
 [ "$d" != "$(cd "$wt" && pwd -P)" ] && [ "$d" != "$(cd "$wt" && pwd)" ] || fail "el revisor corrió en el worktree"
-[ ! -e "$d" ] || fail "el worktree desechable sigue en disco: $d"
+[ ! -e "$d" ] || fail "la copia desechable sigue en disco: $d"
+g="$(cat "$REVIEW_DUMP/claude.git")"
+[ "$(printf '%s\n' "$g" | sed -n 1p)" = "$head" ] || fail "la copia no está en el head de la PR: $g"
+case "$(printf '%s\n' "$g" | sed -n 2p)" in "$d"/.git) ;; *) fail "la copia comparte .git: $g";; esac
+[ "$(printf '%s\n' "$g" | sed -n '3,$p')" = "" ] || fail "la copia tiene remotos: $g"
+case "$(cat "$REVIEW_DUMP/claude.gh")" in "GH_TOKEN=unset
+GITHUB_TOKEN=unset
+GH_CONFIG_DIR=/"*"/$(basename "$(dirname "$d")")/gh") ;; *) fail "credenciales de GitHub visibles: $(cat "$REVIEW_DUMP/claude.gh")";; esac
+[ -z "$(ls -A "$r/.git/worktrees" | grep -vx wt)" ] || fail "quedó un registro de worktree"
 grep -q "^pr comment 4 " "$GH_LOG" || fail "no comentó con gh pr comment"
 [ "$(grep -cE '^(pr (comment|create|merge|edit)|issue (comment|edit|close|create))' "$GH_LOG")" = 1 ] \
   || fail "escrituras de más en GitHub: $(cat "$GH_LOG")"
@@ -95,6 +113,16 @@ out="$(REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 claude opus foco 3 3 2>&1)" || f
 [ "$(last_line "$out")" = "FIN: 0 hallazgos" ] || fail "cero FIN: $out"
 [ "$(jq -r '.prs[0].comments[3].body' "$GH_STATE/state.json")" = "<!-- kit-revision: claude/opus ronda 3 -->
 HALLAZGOS: 0" ] || fail "cero comentario"
+lastc() { jq -r '.prs[0].comments[-1].body' "$GH_STATE/state.json"; }
+
+# a total > 0 with no recognisable finding keeps everything before HALLAZGOS
+out="$(REVIEW_STUB_MODE=negrita bash "$rv" "$wt" 4 claude opus foco 3 3 2>&1)" || fail "negrita: $out"
+[ "$(last_line "$out")" = "FIN: 1 hallazgos" ] || fail "negrita FIN: $out"
+case "$(lastc)" in *"1. **[grave]** a:1: x"*"HALLAZGOS: 1") ;; *) fail "negrita perdió el hallazgo: $(lastc)";; esac
+# HALLAZGOS line wrapped in markdown still delivers
+out="$(REVIEW_STUB_MODE=envuelto bash "$rv" "$wt" 4 claude opus foco 3 3 2>&1)" || fail "envuelto: $out"
+[ "$(last_line "$out")" = "FIN: 1 hallazgos" ] || fail "envuelto FIN: $out"
+case "$(lastc)" in *"1. [medio] a.txt:1: y."*'HALLAZGOS: 1`**') ;; *) fail "envuelto comentario: $(lastc)";; esac
 n0="$(ncom)"
 
 # failures: exit 2, nothing posted, no worktree left
@@ -111,6 +139,22 @@ expect_fail falla opencode "el revisor opencode/mod no entregó: "
 start=$SECONDS
 expect_fail lento claude "el revisor claude/mod no entregó: " KIT_REVIEW_TIMEOUT=1
 [ $((SECONDS - start)) -lt 10 ] || fail "el tope de tiempo no cortó al revisor"
+# the timeout kills the reviewer's whole process group, children included
+rm -f "$REVIEW_DUMP/hijo.pid"
+expect_fail hijo claude "agotó el tiempo (1s)" KIT_REVIEW_TIMEOUT=1
+hp="$(cat "$REVIEW_DUMP/hijo.pid")" || fail "hijo sin pid"
+kill -0 "$hp" 2>/dev/null && { kill "$hp"; fail "el hijo del revisor sigue vivo tras el tope"; }
+# INT on kit-review stops the reviewer group too
+rm -f "$REVIEW_DUMP/hijo.pid"
+REVIEW_STUB_MODE=hijo bash "$rv" "$wt" 4 claude mod foco 4 3 >/dev/null 2>&1 &
+kp=$!
+for _ in $(seq 50); do [ -s "$REVIEW_DUMP/hijo.pid" ] && break; sleep 0.1; done
+hp="$(cat "$REVIEW_DUMP/hijo.pid")" || fail "hijo sin pid (INT)"
+kill -TERM "$kp"; wait "$kp"; rc=$?
+[ $rc -ne 0 ] || fail "TERM: exit 0"
+kill -0 "$hp" 2>/dev/null && { kill "$hp"; fail "el hijo del revisor sigue vivo tras TERM"; }
+[ "$(ncom)" = "$n0" ] || fail "TERM publicó un comentario"
+[ "$(wts)" = 2 ] || fail "TERM dejó el worktree desechable"
 expect_fail ok foo "revisor no disponible: foo"
 GH_FAIL_ON="pr comment" expect_fail ok claude "no se pudo comentar"
 [ "$(wts)" = 2 ] || fail "worktrees al final"

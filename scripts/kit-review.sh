@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-review.sh <wt> <pr> <herramienta> <modelo> <foco> <ronda> <N>
-# Runs one reviewer CLI (claude, opencode, codex) headless in a throwaway detached worktree of <wt>'s HEAD,
-# with gh and git push blocked, and posts its report on PR <pr> as a kit-revision comment.
+# Runs one reviewer CLI (claude, opencode, codex) headless in a throwaway independent clone of the PR head,
+# with gh and git push blocked and no GitHub credentials, and posts its report on PR <pr> as a kit-revision comment.
 # Env: KIT_REVIEW_TIMEOUT (s, default 1800).
 # Exit: 0 ok, 1 usage or rejected, 2 environment error or the reviewer did not deliver.
 set -uo pipefail
@@ -38,10 +38,14 @@ slug="$(kit_origin_slug)"
 [ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
 
 tmpd="$(mktemp -d)" || exit 2
-scratch="$tmpd/wt"
+scratch="$tmpd/clon"
+rpid=""
 cleanup() {
-  # the throwaway worktree is ours alone: force-remove it, then the directory as a fallback
-  [ -e "$scratch" ] && git -C "$wt" worktree remove --force "$scratch" >/dev/null 2>&1
+  # stop the reviewer's process group (the runner forwards TERM to it), then drop every temp copy
+  if [ -n "$rpid" ]; then
+    kill -TERM "$rpid" 2>/dev/null
+    wait "$rpid" 2>/dev/null
+  fi
   rm -rf "$tmpd"
 }
 trap cleanup EXIT
@@ -50,34 +54,66 @@ trap 'exit 130' INT TERM HUP
 # prompt inputs
 issue="$(gh issue view "$n" --repo "$slug" --json title,body | jq -r '"# \(.title)\n\n\(.body // "")"')" \
   || { echo "error: no se pudo leer el issue #$n" >&2; exit 2; }
+oid="$(gh pr view "$p" --repo "$slug" --json headRefOid --jq '.headRefOid // ""')" \
+  || { echo "error: no se pudo leer la PR #$p" >&2; exit 2; }
+[[ $oid =~ ^[0-9a-f]{40}$ ]] || { echo "error: la PR #$p no tiene un head legible" >&2; exit 2; }
+git cat-file -e "$oid^{commit}" 2>/dev/null \
+  || { echo "error: el head de la PR ($oid) no está en el worktree: haz fetch o push" >&2; exit 2; }
 b="$(kit_default_branch)"
 [ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
 git fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || { echo "error: git fetch falló" >&2; exit 2; }
+base="$(git merge-base "origin/$b" "$oid")" || { echo "error: no hay merge-base entre origin/$b y la PR" >&2; exit 2; }
 hist="$(bash "$here/kit-pr.sh" historial "$wt" "$p")" || { echo "error: no se pudo leer el historial de la PR #$p" >&2; exit 2; }
 hist="$(printf '%s\n' "$hist" | sed '${/^FIN: /d;}')"
 # single pass, so text inside the substituted values is never re-expanded
-prompt="$(jq -Rrs --arg FOCO "$focus" --arg RONDA "$round" --arg ISSUE "$issue" --arg BASE "origin/$b" --arg HISTORIAL "$hist" \
+prompt="$(jq -Rrs --arg FOCO "$focus" --arg RONDA "$round" --arg ISSUE "$issue" --arg BASE "$base" --arg HISTORIAL "$hist" \
   '$ARGS.named as $m | gsub("\\{\\{(?<k>FOCO|RONDA|ISSUE|BASE|HISTORIAL)\\}\\}"; $m[.k])' "$template")" \
   || { echo "error: no se pudo construir el prompt" >&2; exit 2; }
 
-git worktree add -q --detach "$scratch" HEAD >/dev/null 2>&1 \
-  || { echo "error: no se pudo crear el worktree desechable" >&2; exit 2; }
+# independent clone (own .git, no hooks, config or remote of the real repo) at the PR head
+{ git clone -q --no-hardlinks "$wt" "$scratch" && git -C "$scratch" checkout -q --detach "$oid" \
+    && git -C "$scratch" remote remove origin; } >/dev/null 2>&1 \
+  || { echo "error: no se pudo crear la copia desechable" >&2; exit 2; }
+mkdir "$tmpd/gh" || exit 2
 
-limit=(perl -e 'alarm shift; exec @ARGV or exit 127' "$timeout")
+# runner: reviewer in its own process group; on timeout or TERM/INT/HUP the whole group gets TERM, then KILL.
+# Exit: the reviewer's code (128+signal if killed), 142 on timeout.
+runner='
+  my ($t, @cmd) = @ARGV;
+  my $pid = fork;
+  defined $pid or exit 126;
+  if (!$pid) { setpgrp(0, 0); exec @cmd or exit 127; }
+  setpgrp($pid, $pid);
+  my $stop = sub { kill "TERM", -$pid; sleep 2; kill "KILL", -$pid; };
+  $SIG{ALRM} = sub { $stop->(); exit 142 };
+  $SIG{$_} = sub { $stop->(); exit 143 } for qw(TERM INT HUP);
+  alarm $t;
+  waitpid($pid, 0);
+  my $st = $?;
+  alarm 0;
+  kill "KILL", -$pid;
+  exit($st & 127 ? 128 + ($st & 127) : $st >> 8);
+'
 oc_cfg='{"permission":{"bash":{"*":"allow","gh *":"deny","git push*":"deny"},"edit":"allow","external_directory":"deny"}}'
-# outer 2>/dev/null only silences the shell's own "Alarm clock" job notice; the reviewer's stderr goes to err
-{ (
+(
   cd "$scratch" || exit 2
+  unset GH_TOKEN GITHUB_TOKEN
+  export GH_CONFIG_DIR="$tmpd/gh"
+  run=(perl -e "$runner" "$timeout")
   case "$tool" in
     claude)
-      exec "${limit[@]}" claude -p --model "$model" --permission-mode bypassPermissions \
+      exec "${run[@]}" claude -p --model "$model" --permission-mode bypassPermissions \
         --disallowedTools "Bash(git push:*)" "Bash(gh:*)" --output-format text "$prompt" ;;
     opencode)
-      OPENCODE_CONFIG_CONTENT="$oc_cfg" exec "${limit[@]}" opencode run -m "$model" "$prompt" ;;
+      OPENCODE_CONFIG_CONTENT="$oc_cfg" exec "${run[@]}" opencode run -m "$model" "$prompt" ;;
     codex)
-      exec "${limit[@]}" codex exec -m "$model" --sandbox workspace-write "$prompt" ;;
+      exec "${run[@]}" codex exec -m "$model" --sandbox workspace-write "$prompt" ;;
   esac
-) </dev/null >"$tmpd/out" 2>"$tmpd/err"; rc=$?; } 2>/dev/null
+) </dev/null >"$tmpd/out" 2>"$tmpd/err" &
+rpid=$!
+# wait in the background job so INT/TERM traps fire at once
+wait "$rpid"; rc=$?
+rpid=""
 
 strip() { sed $'s/\x1b\\[[0-9;?]*[A-Za-z]//g; s/\r$//' "$1"; }
 undelivered() {
@@ -91,17 +127,20 @@ undelivered() {
 if [ $rc -eq 142 ]; then undelivered "agotó el tiempo (${timeout}s)"; fi
 [ $rc -eq 0 ] || undelivered "terminó con código $rc"
 strip "$tmpd/out" > "$tmpd/clean"
-# report: from the first finding after the previous HALLAZGOS line (if any) through the last HALLAZGOS line
+# report: the last HALLAZGOS line (bare, or wrapped in backticks or asterisks) is authoritative. It starts at the
+# first finding after the previous HALLAZGOS line; with a total > 0 and no recognisable finding, everything
+# after that previous line is kept so findings are never dropped.
 awk '
   { line[NR] = $0 }
-  /^[[:space:]]*HALLAZGOS: [0-9]+[[:space:]]*$/ { prev = last; last = NR }
+  /^[[:space:]]*[`*]*HALLAZGOS: [0-9]+[`*]*[[:space:]]*$/ { prev = last; last = NR }
   END {
     if (!last) exit 3
-    s = last
+    t = line[last]; gsub(/[^0-9]/, "", t)
+    s = (t + 0 > 0) ? prev + 1 : last
     for (i = prev + 1; i < last; i++) if (line[i] ~ /^[[:space:]]*[0-9]+\. \[(grave|medio|menor)\]/) { s = i; break }
     for (i = s; i <= last; i++) print line[i]
   }' "$tmpd/clean" > "$tmpd/report" || undelivered "la salida no tiene una línea HALLAZGOS: <n>"
-total="$(sed -n '$s/^[[:space:]]*HALLAZGOS: \([0-9]*\).*/\1/p' "$tmpd/report")"
+total="$(sed -n '$s/^[^0-9]*\([0-9][0-9]*\).*/\1/p' "$tmpd/report")"
 [ -n "$total" ] || undelivered "la salida no tiene una línea HALLAZGOS: <n>"
 
 {

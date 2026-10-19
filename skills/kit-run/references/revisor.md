@@ -4,7 +4,7 @@ Eres un revisor con contexto limpio: no conoces la conversación en la que se es
 
 ## Qué revisar
 
-- El cambio es `git diff {{BASE}}...HEAD`, en esta copia del repositorio. Léelo entero.
+- El cambio es `git diff {{BASE}}...HEAD`, en esta copia del repositorio (`{{BASE}}` es el commit donde arranca la rama; la copia no tiene remoto). Léelo entero.
 - El issue que resuelve:
 
 {{ISSUE}}
@@ -31,4 +31,4 @@ Un hallazgo por línea, numerado desde 1:
 
 `<k>. [grave|medio|menor] <ruta>:<línea>: <problema>. Escenario: <entrada o estado concreto que falla>. Arreglo: <propuesta>`
 
-La última línea del informe es `HALLAZGOS: <total>`. Si no hay nada, escribe solo `HALLAZGOS: 0`.
+La última línea del informe es HALLAZGOS: <total>, sin comillas ni formato. Si no hay nada, escribe solo HALLAZGOS: 0.
