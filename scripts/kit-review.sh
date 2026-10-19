@@ -74,6 +74,9 @@ prompt="$(jq -Rrs --arg FOCO "$focus" --arg RONDA "$round" --arg ISSUE "$issue" 
 { git clone -q --no-hardlinks "$wt" "$scratch" && git -C "$scratch" checkout -q --detach "$oid" \
     && git -C "$scratch" remote remove origin; } >/dev/null 2>&1 \
   || { echo "error: no se pudo crear la copia desechable" >&2; exit 2; }
+# agent config committed in the PR is untrusted: drop it from the copy (it stays reviewable via git diff)
+( cd "$scratch" && rm -rf .claude/settings.json .claude/settings.local.json .claude/hooks .mcp.json \
+    .opencode opencode.json opencode.jsonc .codex ) || { echo "error: no se pudo limpiar la copia desechable" >&2; exit 2; }
 mkdir "$tmpd/gh" || exit 2
 
 # runner: reviewer in its own process group; on timeout or TERM/INT/HUP the whole group gets TERM, then KILL.
@@ -84,7 +87,15 @@ runner='
   defined $pid or exit 126;
   if (!$pid) { setpgrp(0, 0); exec @cmd or exit 127; }
   setpgrp($pid, $pid);
-  my $stop = sub { kill "TERM", -$pid; sleep 2; kill "KILL", -$pid; };
+  my $stop = sub {
+    kill "TERM", -$pid;
+    for (1 .. 20) {
+      waitpid($pid, 1);  # WNOHANG: reap the leader so a zombie does not keep the group alive
+      last unless kill 0, -$pid;
+      select(undef, undef, undef, 0.1);
+    }
+    kill "KILL", -$pid;
+  };
   $SIG{ALRM} = sub { $stop->(); exit 142 };
   $SIG{$_} = sub { $stop->(); exit 143 } for qw(TERM INT HUP);
   alarm $t;
@@ -97,12 +108,14 @@ runner='
 oc_cfg='{"permission":{"bash":{"*":"allow","gh *":"deny","git push*":"deny"},"edit":"allow","external_directory":"deny"}}'
 (
   cd "$scratch" || exit 2
-  unset GH_TOKEN GITHUB_TOKEN
-  export GH_CONFIG_DIR="$tmpd/gh"
+  unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+  export GH_CONFIG_DIR="$tmpd/gh" GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
+  export GIT_AUTHOR_NAME=kit-revisor GIT_AUTHOR_EMAIL=kit-revisor@localhost \
+    GIT_COMMITTER_NAME=kit-revisor GIT_COMMITTER_EMAIL=kit-revisor@localhost
   run=(perl -e "$runner" "$timeout")
   case "$tool" in
     claude)
-      exec "${run[@]}" claude -p --model "$model" --permission-mode bypassPermissions \
+      exec "${run[@]}" claude -p --model "$model" --permission-mode bypassPermissions --setting-sources user --strict-mcp-config \
         --disallowedTools "Bash(git push:*)" "Bash(gh:*)" --output-format text "$prompt" ;;
     opencode)
       OPENCODE_CONFIG_CONTENT="$oc_cfg" exec "${run[@]}" opencode run -m "$model" "$prompt" ;;

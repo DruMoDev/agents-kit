@@ -2,7 +2,7 @@
 # Reviewer stub (claude and opencode share it). Dumps argv, cwd and OPENCODE_CONFIG_CONTENT, then replies per REVIEW_STUB_MODE.
 # Env:
 #   REVIEW_DUMP       directory; writes <tool>.args (one argument per NUL), <tool>.env (OPENCODE_CONFIG_CONTENT),
-#                     <tool>.gh (GitHub env), <tool>.pwd, <tool>.git (HEAD, git dir, remotes of the cwd)
+#                     <tool>.gh (GitHub env), <tool>.genv (GH_/GITHUB_/GIT_ vars), <tool>.ls/.lsclaude (ls -a), <tool>.pwd, <tool>.git (HEAD, git dir, remotes of the cwd)
 #   REVIEW_STUB_MODE  ok (2 findings), cero (HALLAZGOS: 0), mudo (no HALLAZGOS line), lento (sleeps), falla (exit 3),
 #                     negrita (finding in markdown), envuelto (HALLAZGOS line in backticks/asterisks),
 #                     hijo (background child writing its PID to $REVIEW_DUMP/hijo.pid, then waits)
@@ -13,6 +13,8 @@ if [ -n "${REVIEW_DUMP:-}" ]; then
   pwd -P > "$REVIEW_DUMP/$tool.pwd"
   printf 'GH_TOKEN=%s\nGITHUB_TOKEN=%s\nGH_CONFIG_DIR=%s\n' "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" "${GH_CONFIG_DIR-}" \
     > "$REVIEW_DUMP/$tool.gh"
+  ls -a > "$REVIEW_DUMP/$tool.ls"; ls -a .claude > "$REVIEW_DUMP/$tool.lsclaude" 2>/dev/null
+  env | grep -E '^(GH_|GITHUB_|GIT_)' | sort > "$REVIEW_DUMP/$tool.genv"
   { git rev-parse HEAD; git rev-parse --absolute-git-dir; git remote; } > "$REVIEW_DUMP/$tool.git" 2>&1
 fi
 e=$'\x1b'

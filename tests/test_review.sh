@@ -5,7 +5,7 @@ rv="$REPO_ROOT/scripts/kit-review.sh"
 use_flow_gh
 export PATH="$TESTS_DIR/stubs/review:$PATH"
 export REVIEW_DUMP="$(mktemp -d)"
-export GH_TOKEN=secreto GITHUB_TOKEN=secreto
+export GH_TOKEN=secreto GITHUB_TOKEN=secreto GH_ENTERPRISE_TOKEN=secreto GITHUB_ENTERPRISE_TOKEN=secreto
 unset KIT_REVIEW_TIMEOUT REVIEW_STUB_MODE
 last_line() { printf '%s\n' "$1" | sed -n '$p'; }
 
@@ -20,7 +20,11 @@ echo '{}' > "$r/.agents-kit.json"
 git -C "$o" symbolic-ref HEAD refs/heads/main
 wt="$(mktemp -d)/wt"
 git -C "$r" worktree add -q -b issue-3-foo --no-track "$wt" origin/main || fail "setup worktree"
-(cd "$wt" && echo a > a.txt && git add a.txt && git commit -q -m a && git push -q origin HEAD) >/dev/null 2>&1 \
+# the PR also commits agent config, which must not load in the reviewer's copy
+(cd "$wt" && echo a > a.txt && mkdir -p .claude/hooks .opencode .codex && echo '{}' > .claude/settings.json \
+  && echo '{}' > .claude/settings.local.json && echo x > .claude/hooks/h.sh && echo nota > .claude/nota.md \
+  && echo x > .opencode/x && echo x > .codex/x && echo '{}' > .mcp.json && echo '{}' > opencode.json \
+  && echo '{}' > opencode.jsonc && git add -A && git commit -q -m a && git push -q origin HEAD) >/dev/null 2>&1 \
   || fail "commit a"
 base="$(git -C "$r" rev-parse main)"
 head="$(git -C "$wt" rev-parse HEAD)"
@@ -65,8 +69,8 @@ printf '%s\n' "$out" | grep -q "Revisé el diff" && fail "ok imprime el preámbu
 [ "$(wts)" = 2 ] || fail "ok dejó el worktree desechable"
 # argv of claude: block flags, model, stdin-free headless mode
 a="$(args claude)"
-for x in -p --model sonnet --permission-mode bypassPermissions --disallowedTools "Bash(git push:*)" "Bash(gh:*)" \
-    --output-format text; do
+for x in -p --model sonnet --permission-mode bypassPermissions --setting-sources user --strict-mcp-config \
+    --disallowedTools "Bash(git push:*)" "Bash(gh:*)" --output-format text; do
   printf '%s\n' "$a" | grep -qxF -- "$x" || fail "claude sin argumento '$x': $a"
 done
 # prompt: focus, round, issue, base, history; no placeholder left; history taken literally
@@ -89,6 +93,20 @@ case "$(printf '%s\n' "$g" | sed -n 2p)" in "$d"/.git) ;; *) fail "la copia comp
 case "$(cat "$REVIEW_DUMP/claude.gh")" in "GH_TOKEN=unset
 GITHUB_TOKEN=unset
 GH_CONFIG_DIR=/"*"/$(basename "$(dirname "$d")")/gh") ;; *) fail "credenciales de GitHub visibles: $(cat "$REVIEW_DUMP/claude.gh")";; esac
+for f in .mcp.json .opencode opencode.json opencode.jsonc .codex; do
+  grep -qxF "$f" "$REVIEW_DUMP/claude.ls" && fail "la copia conserva $f"
+done
+grep -qx a.txt "$REVIEW_DUMP/claude.ls" || fail "la copia no tiene el código de la PR"
+for f in settings.json settings.local.json hooks; do
+  grep -qxF "$f" "$REVIEW_DUMP/claude.lsclaude" && fail "la copia conserva .claude/$f"
+done
+grep -qx nota.md "$REVIEW_DUMP/claude.lsclaude" || fail "la limpieza borró de más en .claude"
+[ -f "$wt/.claude/settings.json" ] && [ -d "$wt/.opencode" ] || fail "la limpieza tocó el worktree"
+ge="$(cat "$REVIEW_DUMP/claude.genv")"
+printf '%s\n' "$ge" | grep -q 'TOKEN=' && fail "tokens visibles: $ge"
+for x in GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_AUTHOR_NAME=kit-revisor GIT_COMMITTER_NAME=kit-revisor; do
+  printf '%s\n' "$ge" | grep -qxF "$x" || fail "falta $x: $ge"
+done
 [ -z "$(ls -A "$r/.git/worktrees" | grep -vx wt)" ] || fail "quedó un registro de worktree"
 grep -q "^pr comment 4 " "$GH_LOG" || fail "no comentó con gh pr comment"
 [ "$(grep -cE '^(pr (comment|create|merge|edit)|issue (comment|edit|close|create))' "$GH_LOG")" = 1 ] \
