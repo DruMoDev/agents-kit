@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/lib/config.sh.
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 source "$REPO_ROOT/scripts/lib/config.sh"
 
 d="$(mktemp -d)"

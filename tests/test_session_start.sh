@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 hook="$REPO_ROOT/hooks/session-start"
 [ -x "$hook" ] || fail "hooks/session-start missing or not executable"

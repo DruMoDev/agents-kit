@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/kit-pr.sh (local bare origin, stateful gh stub).
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 pr="$REPO_ROOT/scripts/kit-pr.sh"
 use_flow_gh
 export KIT_CI_POLL=0

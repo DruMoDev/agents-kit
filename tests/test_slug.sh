@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Table-driven tests for scripts/lib/github-slug.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 source "$REPO_ROOT/scripts/lib/github-slug.sh"
 
 check() { # url expected ("" = rejected)

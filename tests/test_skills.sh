@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 # Value of a frontmatter key (first --- block) in a SKILL.md.
 fm() { awk -v k="$2" 'NR==1&&$0!="---"{exit} NR>1&&$0=="---"{exit} NR>1&&index($0,k": ")==1{print substr($0,length(k)+3); exit}' "$1"; }
@@ -104,4 +104,8 @@ grep -q 'kit_origin_slug' "$run" || fail "kit-run must take the repo slug from o
 grep -q 'kit-pr.sh" historial' "$run" || fail "kit-run must continue round numbering from historial"
 grep -q 'ninguno aplicado' "$REPO_ROOT/skills/kit-run/references/ronda.md" || fail "ronda.md must stop when nothing was applied"
 grep -q 'gh issue list --repo <slug>' "$scout" || fail "kit-scout gh calls need --repo"
+# every suite stops if lib.sh cannot be sourced, never falling back to the real repo
+for t in "$TESTS_DIR"/test_*.sh; do
+  grep -qxF 'source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1' "$t" || fail "$(basename "$t") must guard its source of lib.sh"
+done
 echo "ok"

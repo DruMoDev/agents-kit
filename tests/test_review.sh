@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/kit-review.sh (local bare origin, stateful gh stub, reviewer stubs).
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 rv="$REPO_ROOT/scripts/kit-review.sh"
 use_flow_gh
 export PATH="$TESTS_DIR/stubs/review:$PATH"

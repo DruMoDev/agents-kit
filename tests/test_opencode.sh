@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 command -v node >/dev/null || fail "node no está instalado"
 plugin="$REPO_ROOT/.opencode/plugins/agents-kit.js"

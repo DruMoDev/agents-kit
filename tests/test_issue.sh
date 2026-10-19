@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/kit-issue.sh (stateful gh stub, git real).
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 issue="$REPO_ROOT/scripts/kit-issue.sh"
 
 mk_kit_repo() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/kit-worktree.sh (local bare origin, stateful gh stub).
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 wt="$REPO_ROOT/scripts/kit-worktree.sh"
 use_flow_gh
 export KIT_WORKTREES; KIT_WORKTREES="$(mktemp -d)"
