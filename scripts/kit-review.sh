@@ -37,12 +37,15 @@ cd "$wt" || exit 2
 slug="$(kit_origin_slug)"
 [ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
 
-# idempotent per marker: a stored report for this tool/model/round is replayed, never rerun or reposted
+# idempotent per marker: a stored report for this tool/model/round is replayed, never rerun or reposted.
+# Only reports posted by this gh user count.
+me="$(gh api user --jq .login)" && [ -n "$me" ] \
+  || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
 marker="<!-- kit-revision: $tool/$model ronda $round -->"
 cj="$(gh pr view "$p" --repo "$slug" --json comments)" \
   || { echo "error: no se pudieron leer los comentarios de la PR #$p" >&2; exit 2; }
-prev="$(printf '%s' "$cj" | jq -r --arg m "$marker" \
-  '[.comments[]? | select((.body // "") | sub("^\\s+"; "") | startswith($m))][0].body // empty')" \
+prev="$(printf '%s' "$cj" | jq -r --arg m "$marker" --arg me "$me" \
+  '[.comments[]? | select(.author.login == $me) | select((.body // "") | sub("^\\s+"; "") | startswith($m))][0].body // empty')" \
   || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
 if [ -n "$prev" ]; then
   rep="$(printf '%s\n' "$prev" | awk -v m="$marker" 'BEGIN{d=0} !d && index($0, m) { d=1; next } { print }')"

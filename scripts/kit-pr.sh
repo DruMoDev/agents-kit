@@ -7,7 +7,8 @@
 #   ronda      <wt> <pr> <n> <fichero>
 #   fusionar   <wt> <pr> <N>
 # PR lifecycle of an issue branch; <wt> is the issue worktree. Review state lives in HTML-comment markers on the PR.
-# Env: KIT_CI_TIMEOUT (s, default 1800), KIT_CI_POLL (s, default 15).
+# Env: KIT_CI_TIMEOUT (s, default 1800), KIT_CI_POLL (s, default 15),
+#   KIT_CI_GRACE (s, default 300: with workflows but no check run for the SHA after it, esperar-ci reports sin-ci).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,36 +78,46 @@ comment() { # <body-file>
     || { echo "error: no se pudo comentar en la PR #$p" >&2; exit 2; }
 }
 
-# CI, shared by esperar-ci and fusionar.
-# ci_has_workflows: print true/false; return 2 if gh fails or the answer is unreadable.
+# CI. ci_has_workflows (esperar-ci): print true/false; return 2 if gh fails or the answer is unreadable.
 ci_has_workflows() {
   local c
   c="$(gh api "repos/$slug/actions/workflows" --jq .total_count)" || return 2
   [[ $c =~ ^[0-9]+$ ]] || return 2
   if [ "$c" -gt 0 ]; then echo true; else echo false; fi
 }
-# ci_state <sha>: one read of the check runs (latest attempt per check name, by id); prints esperando | verde | rojo <conclusion>; return 2 if unreadable.
+# ci_state <sha>: one read of the check runs (latest attempt per app and check name, by id);
+# prints ninguno (no check run) | esperando | verde | rojo <conclusion>; return 2 if unreadable.
 ci_state() {
   local r
   r="$(gh api "repos/$slug/commits/$1/check-runs?filter=all&per_page=100")" || return 2
   printf '%s' "$r" | jq -r '
     if (.check_runs | type) != "array" then error("sin check_runs") else .check_runs end
-    | group_by(.name) | map(max_by(.id))
-    | if length == 0 or any(.[]; .status != "completed") then "esperando"
+    | group_by([.app.id, .name]) | map(max_by(.id))
+    | if length == 0 then "ninguno"
+      elif any(.[]; .status != "completed") then "esperando"
       else ([.[] | .conclusion // "sin conclusión" | select(. as $x | ["success", "skipped", "neutral"] | index($x) | not)]
         | first) as $bad
       | if $bad == null then "verde" else "rojo \($bad)" end
       end' 2>/dev/null || return 2
 }
 ci_unreadable() { echo "error: no se pudo leer el estado del CI" >&2; exit 2; }
+# own_login: set $me to the gh login of this run; flow markers are trusted only from it. Exit 2 if unreadable.
+own_login() {
+  me="$(gh api user --jq .login)" && [ -n "$me" ] \
+    || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
+}
 
-# marker bodies of the PR comments, in chronological (array) order
-RONDAS_JQ='[.comments[].body | select(test("^\\s*<!-- kit-ronda: [0-9]+ -->"))]'
-# review state: sin-ronda | pendiente (a kit-revision after the last kit-ronda, by position) | ok
-REVIEW_JQ='[.comments[].body] as $b
+# Markers count only in comments written by $me (jq --arg me), in chronological (array) order.
+OWN_JQ='[.comments[] | select(.author.login == $me) | .body // ""]'
+# kit-ronda bodies
+RONDAS_JQ="$OWN_JQ"' | map(select(test("^\\s*<!-- kit-ronda: [0-9]+ -->")))'
+# review state: sin-ronda | pendiente (a kit-revision after the last kit-ronda, by position)
+#   | aplicado (the last kit-ronda applied changes, so a new round is due) | ok
+REVIEW_JQ="$OWN_JQ"' as $b
   | ([range(0; $b | length) | select($b[.] | test("^\\s*<!-- kit-ronda: [0-9]+ -->"))] | last // -1) as $r
   | if $r < 0 then "sin-ronda"
     elif any(range($r + 1; $b | length); $b[.] | test("^\\s*<!-- kit-revision: ")) then "pendiente"
+    elif any($b[$r] | split("\n")[]; sub("\\s+$"; "") | endswith(" → aplicado")) then "aplicado"
     else "ok" end'
 
 case "$sub" in
@@ -122,7 +133,17 @@ case "$sub" in
 
 Cierra #$n"
     printf '%s\n' "$body" > "$tmpd/body"
+    # idempotent: an open PR for the branch is reused (pushed, never recreated)
+    open_pr="$(gh pr list --repo "$slug" --head "$branch" --state open --json number,url)" \
+      || { echo "error: gh pr list falló" >&2; exit 2; }
+    open_pr="$(printf '%s' "$open_pr" | jq -r 'if type == "array" then (.[0] // {} | "\(.number // "")\t\(.url // "")") else error("") end' 2>/dev/null)" \
+      || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     git push -q -u origin HEAD || { echo "error: git push falló" >&2; exit 2; }
+    if [ -n "${open_pr%%$'\t'*}" ]; then
+      echo "${open_pr%%$'\t'*}"
+      echo "FIN: ${open_pr#*$'\t'}"
+      exit 0
+    fi
     url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$titulo" --body-file "$tmpd/body")" \
       || { echo "error: gh pr create falló" >&2; exit 2; }
     url="$(printf '%s\n' "$url" | grep -E '/pull/[0-9]+' | sed -n '$p')"
@@ -132,9 +153,9 @@ Cierra #$n"
     ;;
 
   esperar-ci)
-    timeout="${KIT_CI_TIMEOUT:-1800}"; poll="${KIT_CI_POLL:-15}"
-    [[ $timeout =~ ^[0-9]+$ ]] && [[ $poll =~ ^[0-9]+$ ]] \
-      || { echo "error: KIT_CI_TIMEOUT y KIT_CI_POLL deben ser segundos enteros" >&2; exit 2; }
+    timeout="${KIT_CI_TIMEOUT:-1800}"; poll="${KIT_CI_POLL:-15}"; grace="${KIT_CI_GRACE:-300}"
+    [[ $timeout =~ ^[0-9]+$ ]] && [[ $poll =~ ^[0-9]+$ ]] && [[ $grace =~ ^[0-9]+$ ]] \
+      || { echo "error: KIT_CI_TIMEOUT, KIT_CI_POLL y KIT_CI_GRACE deben ser segundos enteros" >&2; exit 2; }
     sha="$(head_sha)" || exit 2
     oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
     [ "$oid" = "$sha" ] || { echo "la PR apunta a $oid y aquí estás en $sha: empuja o espera" >&2; exit 2; }
@@ -146,6 +167,8 @@ Cierra #$n"
       case "$s" in
         verde) echo "FIN: verde"; exit 0 ;;
         rojo*) echo "el CI terminó en '${s#rojo }'" >&2; exit 1 ;;
+        # workflows that never start a check run for this SHA (e.g. no pull_request trigger)
+        ninguno) if [ $((SECONDS - start)) -ge "$grace" ]; then echo "FIN: sin-ci"; exit 0; fi ;;
       esac
       if [ $((SECONDS - start)) -ge "$timeout" ]; then
         echo "el CI de ${sha:0:8} no concluyó en ${timeout}s" >&2
@@ -171,8 +194,9 @@ Cierra #$n"
     ;;
 
   historial)
+    own_login
     c="$(pr_json comments)" || exit 2
-    rondas="$(printf '%s' "$c" | jq -c "$RONDAS_JQ")" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+    rondas="$(printf '%s' "$c" | jq -c --arg me "$me" "$RONDAS_JQ")" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     k="$(printf '%s' "$rondas" | jq length)"
     if [ "$k" -eq 0 ]; then
       echo "(sin rondas previas)"
@@ -206,6 +230,7 @@ Cierra #$n"
   fusionar)
     n="$2"
     reasons=()
+    own_login
     pj="$(pr_json isDraft,state,headRefOid,url,comments)" || exit 2
     printf '%s' "$pj" | jq -e '(.comments | type) == "array" and (.isDraft | type) == "boolean"' >/dev/null 2>&1 \
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
@@ -237,29 +262,29 @@ Cierra #$n"
       fi
     fi
 
-    # CI of the PR head, skipped after a rebase (that SHA is gone)
+    # CI of the PR head, skipped after a rebase (that SHA is gone). An own gate-local stands in for the CI only
+    # when the SHA has no check run at all (no workflows, or workflows that never run on PRs).
     if [ "$rebased" = false ]; then
-      wf="$(ci_has_workflows)" || ci_unreadable
-      if [ "$wf" = true ]; then
-        s="$(ci_state "$oid")" || ci_unreadable
-        case "$s" in
-          verde) ;;
-          rojo*) reasons+=("el CI terminó en '${s#rojo }'") ;;
-          *) reasons+=("el CI de ${oid:0:8} no ha concluido") ;;
-        esac
-      elif ! printf '%s' "$pj" | jq -e --arg m "<!-- kit-gate-local: $oid -->" \
-          'any(.comments[].body; startswith($m))' >/dev/null; then
-        reasons+=("no hay CI y falta el gate local de ${oid:0:8}")
-      fi
+      s="$(ci_state "$oid")" || ci_unreadable
+      case "$s" in
+        verde) ;;
+        rojo*) reasons+=("el CI terminó en '${s#rojo }'") ;;
+        ninguno)
+          printf '%s' "$pj" | jq -e --arg me "$me" --arg m "<!-- kit-gate-local: $oid -->" \
+            "$OWN_JQ"' | any(.[]; startswith($m))' >/dev/null \
+            || reasons+=("no hay CI y falta el gate local de ${oid:0:8}") ;;
+        *) reasons+=("el CI de ${oid:0:8} no ha concluido") ;;
+      esac
     fi
 
     # review: at least one kit-ronda and no kit-revision after the last one (by position)
     review_reason() { # <pr-json>: append the review reason, if any
       local rev
-      rev="$(printf '%s' "$1" | jq -r "$REVIEW_JQ")" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+      rev="$(printf '%s' "$1" | jq -r --arg me "$me" "$REVIEW_JQ")" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
       case "$rev" in
         sin-ronda) reasons+=("no hay ninguna ronda de revisión (kit-ronda)") ;;
         pendiente) reasons+=("hay una revisión posterior a la última ronda sin decisiones escritas") ;;
+        aplicado) reasons+=("la última ronda aplicó cambios: falta una ronda nueva") ;;
       esac
     }
     report() {

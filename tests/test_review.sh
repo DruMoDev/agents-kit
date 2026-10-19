@@ -6,7 +6,7 @@ use_flow_gh
 export PATH="$TESTS_DIR/stubs/review:$PATH"
 export REVIEW_DUMP="$(mktemp -d)"
 export GH_TOKEN=secreto GITHUB_TOKEN=secreto GH_ENTERPRISE_TOKEN=secreto GITHUB_ENTERPRISE_TOKEN=secreto
-unset KIT_REVIEW_TIMEOUT REVIEW_STUB_MODE
+unset KIT_REVIEW_TIMEOUT REVIEW_STUB_MODE GH_USER
 last_line() { printf '%s\n' "$1" | sed -n '$p'; }
 
 # repo with tracked marker, bare origin seen as github.com/dru/demo, worktree on issue-3-foo
@@ -207,4 +207,18 @@ grep -qxF .claude "$REVIEW_DUMP/claude.ls" && fail "la copia conserva el enlace 
 grep -qxF .opencode "$REVIEW_DUMP/claude.ls" && fail "la copia conserva el enlace .opencode"
 grep -qx local.txt "$REVIEW_DUMP/claude.ls" || fail "la copia no está en el nuevo head"
 [ "$(wts)" = 2 ] || fail "worktrees al final"
+# a kit-revision for the same marker written by someone else is never replayed: the reviewer runs
+t="$(mktemp)"
+jq '.prs[0].comments += [{id: 900, body: "<!-- kit-revision: claude/opus ronda 8 -->\nHALLAZGOS: 0", author: {login: "otro"}}]' \
+  "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json" || fail "setup revisión ajena"
+nc="$(ncom)"; rm -f "$REVIEW_DUMP/claude.args"
+out="$(REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 claude opus foco 8 3 2>&1)" || fail "revisión ajena: $out"
+[ "$(last_line "$out")" = "FIN: 2 hallazgos" ] || fail "revisión ajena reproducida: $out"
+[ -e "$REVIEW_DUMP/claude.args" ] || fail "revisión ajena: no lanzó el revisor"
+[ "$(ncom)" = "$((nc + 1))" ] || fail "revisión ajena: no publicó"
+# own login unreadable -> 2, nothing run
+rm -f "$GH_STATE/.failed" "$REVIEW_DUMP/claude.args"
+err="$(GH_FAIL_ON="api user" REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 claude opus foco 10 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "usuario ilegible: exit $rc ($err)"
+[ ! -e "$REVIEW_DUMP/claude.args" ] || fail "usuario ilegible lanzó el revisor"
 echo "test_review OK"

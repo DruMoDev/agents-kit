@@ -10,9 +10,11 @@
 #   GH_STATE    directory holding state.json (required)
 #   GH_LOG      file where each call's arguments are logged, one line per call
 #   GH_FAIL_ON  glob; the first call whose arguments match it exits 1 (only once)
-#   GH_USER     login that @me resolves to (default: dru)
+#   GH_USER     login that @me and `api user` resolve to (default: dru); PR comments are posted by it, and a seeded
+#               PR comment without "author" is read back as written by it
 #   state.prs: [{"number": 5, "headRefName": "issue-3-foo", "state": "MERGED", "isDraft": false,
-#                "url": "...", "comments": [{"id": 1, "body": "..."}]}]   # comment ids: numeric, increasing
+#                "url": "...", "comments": [{"id": 1, "body": "...", "author": {"login": "dru"}}]}]
+#     comment ids: numeric, increasing
 #     A PR without "headRefOid" resolves it live from the cwd's origin (git ls-remote refs/heads/<headRefName>).
 #   state.workflows: number reported by `api repos/<slug>/actions/workflows` (default 0)
 #   state.checks: check runs [{"status": "completed", "conclusion": "success"}] for any commit (default [])
@@ -21,7 +23,7 @@
 #                  (delete it to restart the sequence).
 #   GH_RACE_OID    `pr merge` sees this as the live head (simulates a push landing just before the merge)
 # Supported: issue list/view/create/comment/edit/close, pr list/create/view/comment/merge,
-# api (workflows, check-runs; no --repo, the slug goes in the path). Add one case per subcommand as tests need it.
+# api (user, workflows, check-runs; no --repo, the slug goes in the path). Add one case per subcommand as tests need it.
 set -u
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
 state="${GH_STATE:?GH_STATE no definido}/state.json"
@@ -90,7 +92,7 @@ pr_json() {
     oid="$(git ls-remote origin "refs/heads/$(printf '%s' "$p" | jq -r .headRefName)" 2>/dev/null | cut -f1)"
     p="$(printf '%s' "$p" | jq -c --arg o "$oid" '.headRefOid = $o')"
   fi
-  printf '%s\n' "$p"
+  printf '%s' "$p" | jq -c --arg u "${GH_USER:-dru}" 'if (.comments | type) == "array" then .comments |= map(.author //= {login: $u}) else . end'
 }
 json_list() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
 
@@ -148,8 +150,8 @@ case "$cmd" in
   "pr comment")
     pr_exists "${pos[0]}"
     save '([.prs[].comments[]?.id | numbers] | max // 0) as $id
-        | (.prs[] | select(.number == $n) | .comments) |= . + [{id: ($id + 1), body: $b}]' \
-      --argjson n "${pos[0]}" --arg b "$body" || exit 1
+        | (.prs[] | select(.number == $n) | .comments) |= . + [{id: ($id + 1), body: $b, author: {login: $u}}]' \
+      --argjson n "${pos[0]}" --arg b "$body" --arg u "${GH_USER:-dru}" || exit 1
     echo "https://github.com/$repo/pull/${pos[0]}#issuecomment-1" ;;
   "pr merge")
     pr_exists "${pos[0]}"
@@ -161,6 +163,8 @@ case "$cmd" in
       --argjson n "${pos[0]}" --arg o "$(pr_json "${pos[0]}" | jq -r .headRefOid)" || exit 1 ;;
   api)
     case "$apipath" in
+      user)
+        jq -n --arg u "${GH_USER:-dru}" '{login: $u}' | emit ;;
       repos/*/*/actions/workflows)
         jq '{total_count: (.workflows // 0), workflows: []}' "$state" | emit ;;
       repos/*/*/commits/*/check-runs*)
