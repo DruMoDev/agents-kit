@@ -72,7 +72,7 @@ Trabajando "normal" sin comandos en un repo activado, las reglas también aplica
 
 ### Configuración (`.agents-kit.json`)
 Valores por defecto, decisión del diseñador salvo donde se indica:
-- `reviewers` (organizado **por herramienta**, p. ej. `{"claude": [...], "codex": [...]}`; hoy solo se rellena `claude`): lista de revisores con modelo y foco. Por defecto solo Claude: **Opus** (corrección, casos límite, tests) y **Sonnet** (simplicidad, reutilización, scope). *Dru: los revisores dependen de sus suscripciones; hoy solo Claude. Añadir Codex u otro debe ser cambiar configuración, no código.*
+- `reviewers` (organizado **por herramienta**, p. ej. `{"claude": [...], "opencode": [...], "codex": [...]}`; *Dru, 2026-10-19: también tiene ChatGPT, que usa desde OpenCode, así que por defecto se añade un revisor GPT vía `opencode`*): lista de revisores con modelo y foco. Por defecto solo Claude: **Opus** (corrección, casos límite, tests) y **Sonnet** (simplicidad, reutilización, scope). *Dru: los revisores dependen de sus suscripciones; hoy solo Claude. Añadir Codex u otro debe ser cambiar configuración, no código.*
 - `implementer`: modelo que implementa, también por herramienta (por defecto Claude Opus).
 - `notify`: canal de avisos, `"claude-push"` por defecto, `"ntfy"` como alternativa (con `ntfyTopic`), `"none"`.
 - `maxReviewRounds`: tope duro (ver "Revisión").
@@ -124,7 +124,7 @@ Fuente: `templates/base.md` actual, ampliado con lo que ya practica Dru en sus r
 **Scope** *(Dru)*: nunca salirse. Si se encuentra otro problema por el camino, se abre un issue `propuesta` aparte en vez de arreglarlo en la PR. El revisor de scope lo comprueba explícitamente.
 
 ### Revisión multiagente
-- Revisores = subagentes con contexto limpio, modelos según `reviewers` (hoy Opus + Sonnet con focos distintos).
+- Revisores = agentes con contexto limpio lanzados por CLI desde un script (`claude -p`, `opencode run`, `codex exec`), cada uno en un worktree desechable con `gh` y `git push` bloqueados, modelos según `reviewers` (por defecto Opus + Sonnet + GPT con focos distintos). Así el flujo funciona igual desde cualquier herramienta. *(Decisión del builder.)*
 - Cada hallazgo se **aplica o se rechaza con motivo escrito** en la PR; no existe "ignorado". Los comentarios del flujo llevan marcadores HTML para poder seguir el estado.
 - Ronda nueva obligatoria si la anterior obligó a tocar código (los hallazgos graves salen en los arreglos).
 - Parar con señal limpia (0 hallazgos), o si los hallazgos vienen ya de los propios arreglos sin afectar al uso real (lo pendiente se abre como issues).
