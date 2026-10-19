@@ -37,7 +37,7 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 - `kit-off`: borra `.agents-kit.json` por PR. `AGENTS.md`, `CHANGELOG.md` y las skills del proyecto se quedan.
 - `kit-plan <objetivo>`: acuerda contigo el comportamiento (una pregunta cada vez), propone el desglose y, cuando lo apruebas, crea los issues con la etiqueta `listo`.
 - `kit-scout`: busca bugs, tests que faltan, deuda y docs obsoletas, y abre como máximo 5 issues `propuesta`.
-- `kit-run`: coge los issues `listo` por orden y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (o gate local si el repo no tiene workflows), rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza. Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
+- `kit-run`: coge los issues `listo` por orden y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (o gate local si no corre ningún check sobre la PR), rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza. Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
 
 Cómo se invocan:
 
@@ -47,8 +47,10 @@ Cómo se invocan:
 ### Issues que esperan a Dru
 
 - **Aprobar una propuesta:** cambia la etiqueta `propuesta` por `listo` (`gh issue edit <n> --remove-label propuesta --add-label listo`). Las que no quieras, ciérralas.
-- **`necesita-decision`:** el agente dejó una pregunta de producto en un comentario y la PR, si existía, en borrador. Responde en el issue y quita la etiqueta (`gh issue edit <n> --remove-label necesita-decision`); el siguiente `kit-run` lo retoma con tu respuesta.
-- **`bloqueado`:** el comentario explica qué falta (CI que no corre en PRs, límite de rondas...). Arréglalo y quita la etiqueta para que vuelva a la cola.
+- **`necesita-decision`:** el agente dejó una pregunta de producto en un comentario y la PR, si existía, en borrador. Responde en el issue y quita `necesita-decision` (`gh issue edit <n> --remove-label necesita-decision`); `listo` sigue puesto, no hay que volver a ponerlo. El siguiente `kit-run` lo retoma con tu respuesta.
+- **`bloqueado`:** el comentario explica qué falta (un check colgado, el límite de rondas...). Arréglalo, responde en el issue y quita `bloqueado`; `listo` sigue puesto, no hay que volver a ponerlo.
+- **PR sin fusionar (`autoMerge` falso):** revísala y fusiónala tú. El issue se cierra solo, pero conserva las etiquetas `listo` y `en-curso`: quítalas a mano (`gh issue edit <n> --remove-label listo --remove-label en-curso`).
+- **Reclamo colgado:** el resumen de `kit-run` lista los issues `listo` con `en-curso` que no reclamó esa ejecución, con el comando `kit-issue.sh soltar` exacto. Suéltalo solo si ningún agente lo está trabajando.
 
 ### Revisores
 

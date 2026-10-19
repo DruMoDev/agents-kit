@@ -104,6 +104,18 @@ grep -q 'kit_origin_slug' "$run" || fail "kit-run must take the repo slug from o
 grep -q 'kit-pr.sh" historial' "$run" || fail "kit-run must continue round numbering from historial"
 grep -q 'ninguno aplicado' "$REPO_ROOT/skills/kit-run/references/ronda.md" || fail "ronda.md must stop when nothing was applied"
 grep -q 'gh issue list --repo <slug>' "$scout" || fail "kit-scout gh calls need --repo"
+# after decision/bloquear Dru only answers and drops the label: listo stays on the issue
+for f in "$run" "$REPO_ROOT/README.md"; do
+  grep -q '`listo` sigue puesto, no hay que volver a ponerlo' "$f" || fail "$f must say listo stays after decision/bloquear"
+done
+grep -Eiq 'add-label listo|(vuelve|volver) a poner `listo`|(añade|pon|ponle) `listo`' "$run" && fail "kit-run tells Dru to re-add listo"
+grep -q 'falta una ronda nueva' "$run" || fail "kit-run must handle the applied-round refusal of fusionar"
+grep -q 'listo --label en-curso' "$run" || fail "kit-run summary must list possible stale claims"
+grep -q 'kit-issue.sh" soltar <raíz> <N> <id> "reclamo colgado"' "$run" || fail "kit-run must give the exact soltar command for stale claims"
+grep -q 'KIT_CI_GRACE' "$run" || fail "kit-run must explain sin-ci after the grace period"
+grep -q 'no se ejecutan en PRs' "$run" && fail "kit-run keeps the obsolete workflows-never-run guidance"
+grep -q 'autoMerge` falso' "$REPO_ROOT/README.md" && grep -q 'quítalas a mano' "$REPO_ROOT/README.md" \
+  || fail "README must say labels stay after Dru merges with autoMerge false"
 # every suite stops if lib.sh cannot be sourced, never falling back to the real repo
 for t in "$TESTS_DIR"/test_*.sh; do
   grep -qxF 'source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1' "$t" || fail "$(basename "$t") must guard its source of lib.sh"

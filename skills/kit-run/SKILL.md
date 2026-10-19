@@ -38,15 +38,15 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    - Escribe en el chat 4 líneas: qué pide; sigue vigente (con la evidencia); qué vas a hacer; qué NO tocas.
 3. **Implementar.**
    - Rama: si ya existe una `issue-<N>-*` (`git -C <raíz> branch --list 'issue-<N>-*'` o `git -C <raíz> ls-remote --heads origin 'issue-<N>-*'`), es un issue retomado: reutiliza su `<slug-rama>` tal cual. Si no, sácalo del título (minúsculas, `a-z0-9` y guiones).
-   - `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" abrir <raíz> <N> <slug-rama>`. La ruta es la línea `FIN: <wt>`; trabaja solo con esa ruta absoluta. En un issue retomado, mira si hay PR abierta (`gh pr list --repo <slug> --head <rama> --state open --json number`); si la hay, reutilízala y quítale el borrador con `gh pr ready <pr> --repo <slug>`.
+   - `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" abrir <raíz> <N> <slug-rama>`. La ruta es la línea `FIN: <wt>`; trabaja solo con esa ruta absoluta. Si la rama solo existe en origin, el worktree parte de `origin/<rama>`.
    - Tests primero (unitarios, e2e y casos límite), luego el código. Tests, lint y build de `AGENTS.md` en verde en local.
    - `.implementer` dice el modelo que implementa en cada herramienta. Si la sesión no corre con ese modelo, delega la implementación en un subagente con ese modelo cuando la herramienta lo permita, pasándole la ruta del worktree, el issue y tus 4 líneas.
    - Automejora en la misma PR: si aprendiste algo, actualiza `AGENTS.md` y las skills del proyecto.
-4. **PR.** Commit en el worktree y `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" abrir <wt> <N> "<título>" <fichero-cuerpo>` (empuja; añade `Cierra #<N>` si falta). La primera línea es `<pr>`. Después añade la entrada de `CHANGELOG.md` con el formato del comentario de cabecera del propio fichero (ya con el número y la URL de la PR), commit y `git -C <wt> push -q`. Entonces la puerta de CI:
+4. **PR.** Commit en el worktree y `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" abrir <wt> <N> "<título>" <fichero-cuerpo>` (empuja; añade `Cierra #<N>` si falta; si la rama ya tiene una PR abierta, como en un issue retomado, la reutiliza sin crear otra). La primera línea es `<pr>`. Si esa PR está en borrador (`gh pr view <pr> --repo <slug> --json isDraft`), quítaselo con `gh pr ready <pr> --repo <slug>`. Después añade la entrada de `CHANGELOG.md` con el formato del comentario de cabecera del propio fichero (ya con el número y la URL de la PR), commit y `git -C <wt> push -q`. Entonces la puerta de CI:
    - `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" esperar-ci <wt> <pr>`. `FIN: verde`: sigue.
-   - `FIN: sin-ci`: el repo no tiene workflows. Ejecuta en el worktree los comandos de test, lint y build de `AGENTS.md` sobre el último commit, guarda toda su salida en un fichero y, si todo pasa, `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" gate-local <wt> <pr> <fichero>`. Repite el gate tras cada push: vale solo para ese SHA.
+   - `FIN: sin-ci`: el repo no tiene workflows, o ninguno arrancó un check para ese SHA en `KIT_CI_GRACE` segundos (300 por defecto; por ejemplo, workflows sin disparador `pull_request`). Ejecuta en el worktree los comandos de test, lint y build de `AGENTS.md` sobre el último commit, guarda toda su salida en un fichero y, si todo pasa, `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" gate-local <wt> <pr> <fichero>`. Repite el gate tras cada push: vale solo para ese SHA, y solo mientras ese SHA no tenga ningún check (si aparece alguno, manda el CI).
    - Exit 1 `el CI terminó en ...`: lee el fallo (`gh run view --repo <slug> --log-failed`), corrígelo, commit, push y vuelve a esperar.
-   - Exit 1 `no concluyó en ...`: si `gh pr checks <pr> --repo <slug>` no muestra ningún check, los workflows del repo no se ejecutan en PRs. `gate-local` no vale cuando hay workflows, así que no repitas: bloquea el issue (ver abajo) explicando que falta un disparador `pull_request` en los workflows.
+   - Exit 1 `no concluyó en ...`: hay checks que no terminan. Míralos con `gh pr checks <pr> --repo <slug>`; si no avanzan, bloquea el issue (ver abajo) explicando qué check se quedó colgado.
    - Exit 2 `la PR apunta a ...`: falta un push; empuja y repite.
 5. **Revisión.** Rondas `r = k + 1, k + 2, ...`, con `k` de la línea `FIN: <k> rondas` de `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" historial <wt> <pr>` (0 en una PR nueva; las rondas previas cuentan para `.maxReviewRounds`). Sigue `references/ronda.md` (lanzar revisores, decidir, fichero de ronda, cuándo parar). Antes de cada ronda, todo confirmado y empujado: los revisores revisan el head de la PR. Lanza los revisores en paralelo con un único comando; si el límite de tiempo de tu herramienta es menor que `KIT_REVIEW_TIMEOUT` (1800 s por revisor), lánzalo en segundo plano (por ejemplo `run_in_background` en Claude Code):
    ```bash
@@ -69,7 +69,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 6. **Fusionar.** Con `.autoMerge` verdadero: `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" fusionar <wt> <pr> <N>`.
    - Exit 0: guarda la línea `PR fusionado: <url>` para el resumen y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" limpiar <raíz> <N>` (`FIN: limpio`).
    - Exit 1 con `rebasada sobre ...`: el script ya rebasó y empujó. Vuelve a la puerta de CI del paso 4 y reintenta.
-   - Otro exit 1: lee cada motivo. Corrige lo que puedas (conflicto, CI, ronda pendiente) y reintenta; si no, bloquea.
+   - Otro exit 1: lee cada motivo. Corrige lo que puedas (conflicto, CI, ronda pendiente) y reintenta; si no, bloquea. `la última ronda aplicó cambios: falta una ronda nueva` significa volver al paso 5 con la ronda siguiente.
    - Con `.autoMerge` falso: deja la PR lista sin fusionar ni limpiar; el issue sigue `en-curso` y se cierra solo al fusionarla Dru. Anótala para el resumen.
 7. **Duda de producto, en cualquier paso.** Si ya hay PR, `gh pr ready --undo <pr> --repo <slug>`. Escribe la pregunta (contexto, opciones y lo que propones) en un fichero y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" decision <raíz> <N> <id> <fichero>` (`FIN: necesita-decision #<N>`). El worktree se queda. Siguiente issue.
 
@@ -77,4 +77,10 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 
 ## Resumen final
 
-Cuando `siguiente` da exit 1, escribe en el chat: cada PR fusionada (su URL), cada issue cerrado por obsoleto, y cada issue que espera a Dru (`necesita-decision`, `bloqueado` o PR sin fusionar por `autoMerge` falso) con su URL y qué tiene que hacer.
+Cuando `siguiente` da exit 1, escribe en el chat:
+
+- Cada PR fusionada (su URL) y cada issue cerrado por obsoleto.
+- Cada issue que espera a Dru, con su URL y qué tiene que hacer:
+  - `necesita-decision` o `bloqueado`: responde en el issue y quita `necesita-decision` (o `bloqueado`); `listo` sigue puesto, no hay que volver a ponerlo. El siguiente `kit-run` lo retoma.
+  - PR sin fusionar por `autoMerge` falso: revisarla y fusionarla; después, quitar a mano `listo` y `en-curso` del issue cerrado.
+- Posibles reclamos colgados: los issues abiertos con `listo` y `en-curso` que no reclamaste en esta ejecución (`gh issue list --repo <slug> --state open --label listo --label en-curso --json number,url`). Para cada uno, saca el `<id>` del último `<!-- kit-reclamado: <id> -->` de sus comentarios (`gh issue view <N> --repo <slug> --comments`) y dale a Dru el comando exacto con los valores reales: `"$PLUGIN/scripts/kit-issue.sh" soltar <raíz> <N> <id> "reclamo colgado"`. Avisa de que solo debe soltarlo si ningún agente lo está trabajando.
