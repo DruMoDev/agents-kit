@@ -133,14 +133,33 @@ out="$(REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 claude opus foco 3 3 2>&1)" || f
 [ "$(last_line "$out")" = "FIN: 0 hallazgos" ] || fail "cero FIN: $out"
 [ "$(jq -r '.prs[0].comments[3].body' "$GH_STATE/state.json")" = "<!-- kit-revision: claude/opus ronda 3 -->
 HALLAZGOS: 0" ] || fail "cero comentario"
+# idempotent per marker: same args again prints the stored report, posts nothing, does not run the reviewer
+nc="$(ncom)"; rm -f "$REVIEW_DUMP/claude.args"
+out2="$(REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 claude opus foco 3 3 2>&1)" || fail "idem: $out2"
+[ "$(last_line "$out2")" = "FIN: 0 hallazgos" ] || fail "idem FIN: $out2"
+[ "$(printf '%s\n' "$out2" | sed -n 1p)" = "HALLAZGOS: 0" ] || fail "idem cuerpo: $out2"
+[ "$(ncom)" = "$nc" ] || fail "idem volvió a comentar"
+[ ! -e "$REVIEW_DUMP/claude.args" ] || fail "idem lanzó el revisor"
+# a stored report with findings is printed back with its count
+out2="$(bash "$rv" "$wt" 4 claude sonnet "bordes y errores" 2 3 2>&1)" || fail "idem2: $out2"
+[ "$(last_line "$out2")" = "FIN: 2 hallazgos" ] || fail "idem2 FIN: $out2"
+printf '%s\n' "$out2" | grep -qx "2. \[menor\] b.txt:2: nombre confuso. Escenario: lectura. Arreglo: renombrar" || fail "idem2 hallazgos: $out2"
+case "$out2" in *"kit-revision"*) fail "idem2 imprime el marcador";; esac
+[ "$(ncom)" = "$nc" ] || fail "idem2 volvió a comentar"
+[ ! -e "$REVIEW_DUMP/claude.args" ] || fail "idem2 lanzó el revisor"
+# another model or round still runs
+REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 claude haiku foco 3 3 >/dev/null 2>&1 || fail "otro modelo"
+[ -e "$REVIEW_DUMP/claude.args" ] && [ "$(ncom)" = "$((nc + 1))" ] || fail "otro modelo no corrió o no comentó"
+REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 claude opus foco 9 3 >/dev/null 2>&1 || fail "otra ronda"
+[ "$(ncom)" = "$((nc + 2))" ] || fail "otra ronda no comentó"
 lastc() { jq -r '.prs[0].comments[-1].body' "$GH_STATE/state.json"; }
 
 # a total > 0 with no recognisable finding keeps everything before HALLAZGOS
-out="$(REVIEW_STUB_MODE=negrita bash "$rv" "$wt" 4 claude opus foco 3 3 2>&1)" || fail "negrita: $out"
+out="$(REVIEW_STUB_MODE=negrita bash "$rv" "$wt" 4 claude opus foco 6 3 2>&1)" || fail "negrita: $out"
 [ "$(last_line "$out")" = "FIN: 1 hallazgos" ] || fail "negrita FIN: $out"
 case "$(lastc)" in *"1. **[grave]** a:1: x"*"HALLAZGOS: 1") ;; *) fail "negrita perdió el hallazgo: $(lastc)";; esac
 # HALLAZGOS line wrapped in markdown still delivers
-out="$(REVIEW_STUB_MODE=envuelto bash "$rv" "$wt" 4 claude opus foco 3 3 2>&1)" || fail "envuelto: $out"
+out="$(REVIEW_STUB_MODE=envuelto bash "$rv" "$wt" 4 claude opus foco 7 3 2>&1)" || fail "envuelto: $out"
 [ "$(last_line "$out")" = "FIN: 1 hallazgos" ] || fail "envuelto FIN: $out"
 case "$(lastc)" in *"1. [medio] a.txt:1: y."*'HALLAZGOS: 1`**') ;; *) fail "envuelto comentario: $(lastc)";; esac
 n0="$(ncom)"

@@ -34,6 +34,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    - Verifica que lo que nombra el issue existe y sigue vigente.
    - Si está obsoleto o ya está hecho: `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" soltar <raíz> <N> <id> "<motivo>"`, luego `gh issue close <N> --repo <slug> --comment "<evidencia>"`, y siguiente issue.
    - Si le falta producto: paso 7.
+   - Todo comportamiento visible para el usuario que el issue no define es una decisión de producto: usa el paso 7 (`kit-issue.sh decision`) salvo que solo haya una lectura razonable. En todo caso, lista esas interpretaciones en el cuerpo de la PR bajo `## Decisiones de comportamiento` y en el resumen final del chat.
    - Escribe en el chat 4 líneas: qué pide; sigue vigente (con la evidencia); qué vas a hacer; qué NO tocas.
 3. **Implementar.**
    - Rama: si ya existe una `issue-<N>-*` (`git -C <raíz> branch --list 'issue-<N>-*'` o `git -C <raíz> ls-remote --heads origin 'issue-<N>-*'`), es un issue retomado: reutiliza su `<slug-rama>` tal cual. Si no, sácalo del título (minúsculas, `a-z0-9` y guiones).

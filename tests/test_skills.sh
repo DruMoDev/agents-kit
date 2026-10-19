@@ -96,6 +96,7 @@ grep -q 'kit_reviewers' "$run" || fail "kit-run must read reviewers with kit_rev
 grep -q 'maxReviewRounds' "$run" || fail "kit-run must honour maxReviewRounds"
 grep -q 'autoMerge' "$run" || fail "kit-run must honour autoMerge"
 grep -q 'gh pr ready --undo' "$run" || fail "kit-run must move the PR to draft"
+grep -q '## Decisiones de comportamiento' "$run" || fail "kit-run must require the Decisiones de comportamiento section"
 grep -q 'FIN: sin-ci' "$run" || fail "kit-run must handle FIN: sin-ci"
 grep -q 'kit-review.sh" .*&$' "$run" || fail "kit-run must launch each reviewer as a background job"
 grep -q 'wait "${pids\[' "$run" || fail "kit-run must wait for each reviewer PID"

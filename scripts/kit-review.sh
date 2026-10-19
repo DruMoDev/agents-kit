@@ -37,6 +37,23 @@ cd "$wt" || exit 2
 slug="$(kit_origin_slug)"
 [ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
 
+# idempotent per marker: a stored report for this tool/model/round is replayed, never rerun or reposted
+marker="<!-- kit-revision: $tool/$model ronda $round -->"
+cj="$(gh pr view "$p" --repo "$slug" --json comments)" \
+  || { echo "error: no se pudieron leer los comentarios de la PR #$p" >&2; exit 2; }
+prev="$(printf '%s' "$cj" | jq -r --arg m "$marker" \
+  '[.comments[]? | select((.body // "") | sub("^\\s+"; "") | startswith($m))][0].body // empty')" \
+  || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+if [ -n "$prev" ]; then
+  rep="$(printf '%s\n' "$prev" | awk -v m="$marker" 'BEGIN{d=0} !d && index($0, m) { d=1; next } { print }')"
+  ptotal="$(printf '%s\n' "$rep" | sed -n 's/^[[:space:]]*[`*]*HALLAZGOS: \([0-9][0-9]*\)[`*]*[[:space:]]*$/\1/p' | sed -n '$p')"
+  if [ -n "$ptotal" ]; then
+    printf '%s\n' "$rep"
+    echo "FIN: $ptotal hallazgos"
+    exit 0
+  fi
+fi
+
 tmpd="$(mktemp -d)" || exit 2
 scratch="$tmpd/clon"
 rpid=""

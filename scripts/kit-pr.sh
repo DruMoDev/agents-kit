@@ -291,6 +291,9 @@ Cierra #$n"
       gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
         || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
     fi
+    # the issue is done: drop the work labels; a failure only warns, the merge already happened
+    gh issue edit "$n" --repo "$slug" --remove-label en-curso --remove-label listo >/dev/null \
+      || echo "aviso: PR fusionada y issue cerrado, pero no se pudieron quitar las etiquetas en-curso y listo del issue #$n" >&2
     echo "PR fusionado: $url"
     echo "FIN: ok"
     ;;
