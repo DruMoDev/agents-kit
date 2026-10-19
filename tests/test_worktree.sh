@@ -15,7 +15,10 @@ echo '{}' > "$r/.agents-kit.json"
 git -C "$o" symbolic-ref HEAD refs/heads/main
 name="$(basename "$r")"
 path="$KIT_WORKTREES/$name/issue-3-foo"
-set_pr() { echo "{\"issues\":[],\"prs\":[{\"number\":9,\"headRefName\":\"issue-3-foo\",\"state\":\"$1\"}]}" > "$GH_STATE/state.json"; }
+set_pr() { # <state> [oid]: seed a PR for issue-3-foo (oid defaults to the branch tip)
+  local oid="${2:-$(git -C "$r" rev-parse issue-3-foo)}"
+  echo "{\"issues\":[],\"prs\":[{\"number\":9,\"headRefName\":\"issue-3-foo\",\"state\":\"$1\",\"headRefOid\":\"$oid\"}]}" > "$GH_STATE/state.json"
+}
 
 # invalid args
 bash "$wt" abrir "$r" 3 "Foo_bar" >/dev/null 2>&1; [ $? -eq 1 ] || fail "slug inválido debe dar 1"
@@ -68,12 +71,28 @@ rm "$path/dirty.txt"
 GH_FAIL_ON="pr list" bash "$wt" limpiar "$r" 3 >/dev/null 2>&1; [ $? -eq 2 ] || fail "fallo de gh debe dar 2"
 [ -d "$path" ] || fail "fallo de gh borró"
 
+# commit made after the merge (PR oid differs from the tip)
+set_pr MERGED
+(cd "$path" && echo y > late.txt && git add late.txt && git commit -q -m late) || fail "commit tardío"
+err="$(bash "$wt" limpiar "$r" 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "commit tardío: exit $rc"
+case "$err" in *"la rama tiene commits que no están en la PR fusionada; no se borra nada"*) ;; *) fail "commit tardío msg: $err";; esac
+[ -d "$path" ] && git -C "$r" rev-parse -q --verify issue-3-foo >/dev/null || fail "commit tardío borró algo"
+
+# issue 31 coexists: limpiar 3 must touch only issue 3
+bash "$wt" abrir "$r" 31 bar >/dev/null 2>&1 || fail "abrir 31"
+path31="$KIT_WORKTREES/$name/issue-31-bar"
+git -C "$path" reset -q --hard HEAD~1
+set_pr MERGED
+
 # MERGED and clean
 out="$(bash "$wt" limpiar "$r" 3 2>&1)" || fail "limpiar: $out"
 [ "$(last_line "$out")" = "FIN: limpio" ] || fail "limpiar sin FIN"
 [ ! -e "$path" ] || fail "queda el worktree"
 git -C "$r" rev-parse -q --verify issue-3-foo >/dev/null && fail "queda la rama"
 while IFS= read -r line; do case "$line" in *"dru/demo"*) ;; *) fail "gh sin repo: $line";; esac; done < "$GH_LOG"
+
+[ -d "$path31" ] && git -C "$r" rev-parse -q --verify issue-31-bar >/dev/null || fail "limpiar 3 tocó el issue 31"
 
 # nothing to clean
 bash "$wt" limpiar "$r" 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin worktree debe dar 1"

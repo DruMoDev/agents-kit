@@ -79,13 +79,17 @@ path="$(wt_of "$branch")"
 command -v gh >/dev/null 2>&1 || { echo "error: falta 'gh' en el PATH" >&2; exit 2; }
 slug="$(kit_origin_slug)"
 [ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
-prs="$(gh pr list --repo "$slug" --head "$branch" --state all --json number,state)" \
+prs="$(gh pr list --repo "$slug" --head "$branch" --state all --json number,state,headRefOid)" \
   || { echo "error: gh pr list falló" >&2; exit 2; }
 printf '%s' "$prs" | jq -e 'any(.[]; .state == "MERGED")' >/dev/null 2>&1 \
   || { echo "la PR de $branch no está fusionada" >&2; exit 1; }
+# the merged PR must contain the branch tip, else local commits would be lost
+tip="$(git rev-parse "refs/heads/$branch")" || exit 2
+printf '%s' "$prs" | jq -e --arg t "$tip" 'any(.[]; .state == "MERGED" and .headRefOid == $t)' >/dev/null 2>&1 \
+  || { echo "la rama tiene commits que no están en la PR fusionada; no se borra nada" >&2; exit 1; }
 status="$(git -C "$path" status --porcelain)" || exit 2
 [ -z "$status" ] || { echo "el worktree tiene cambios; no se borra nada" >&2; exit 1; }
 git worktree remove "$path" || exit 2
 git branch -D "$branch" >/dev/null || exit 2
-git fetch -q --prune origin || exit 2
+git fetch -q --prune origin || echo "aviso: git fetch --prune falló; ya se borraron el worktree y la rama" >&2
 echo "FIN: limpio"
