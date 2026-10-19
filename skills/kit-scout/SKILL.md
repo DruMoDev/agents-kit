@@ -23,7 +23,7 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
    - `AGENTS.md` desactualizado frente al repo (comandos, stack, mapa).
    - Si el repo no tiene CI (`.github/workflows/` vacío o inexistente), puedes proponer añadirlo.
 
-   Antes de proponer algo, mira los issues abiertos (`gh issue list --state open`) para no repetir.
+   Antes de proponer algo, mira los issues abiertos (`gh issue list --repo <slug> --state open`, con `<slug>` = `owner/repo` del remoto `origin`) para no repetir.
 3. **Elegir.** Como máximo 5 issues por ejecución, los de más valor. Cada uno es un objetivo completo de punta a punta.
 4. **Crear.** Por cada uno, escribe el cuerpo con la plantilla de `skills/kit-plan/references/issue.md` del plugin en un fichero temporal (`mktemp`). En "Supuesto" pon la evidencia encontrada (ruta:línea, comando y salida). Ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" crear <raíz> "<título>" <fichero> propuesta`.
    - Exit 0: la URL es la línea `FIN: <url>`.

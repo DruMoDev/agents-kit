@@ -35,6 +35,6 @@ Puedes añadir líneas libres que no empiecen por `- [R`, por ejemplo:
 ## Cuándo parar
 
 - Todos los revisores (y tu revisión propia, si la hubo) traen 0 hallazgos: publica la ronda y pasa a fusionar.
+- Ronda con hallazgos pero ninguno aplicado (todos rechazados con motivo): publica la ronda y pasa a fusionar.
 - Dos rondas seguidas solo traen hallazgos que salen de tus propios arreglos de la revisión y no afectan al uso real: recházalos en el fichero con `abierto como propuesta #<n>`, ábrelos como `propuesta`, publica la ronda y pasa a fusionar.
-- Si hubo hallazgos, aunque todos se rechazaran, toca otra ronda: solo se para por las dos reglas de arriba o por el límite.
 - Si aplicaste algo, la ronda nueva es obligatoria, salvo que `r` ya sea `maxReviewRounds`: entonces se bloquea el issue (paso 5 de la skill).
