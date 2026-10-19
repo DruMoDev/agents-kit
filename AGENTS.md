@@ -13,12 +13,16 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `hooks/`: `hooks.json` y el script `session-start`.
 - `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso y reglas).
 - `rules/`: reglas inyectadas en las sesiones.
-- `skills/`: `kit-on` y `kit-off`.
-- `scripts/`: scripts mecánicos de las skills y `release.sh`.
+- `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout` y `kit-run` (con `references/`: plantilla de issue, prompt del revisor y formato de ronda).
+- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-review.sh`...) y `release.sh`.
 - `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node).
 - `docs/`: specs y planes.
+
+## Flujo de issues
+
+`kit-plan` y `kit-scout` crean issues (`listo` o `propuesta`); `kit-run` los lleva hasta `main`. El estado vive en GitHub: etiquetas `listo`, `propuesta`, `en-curso`, `necesita-decision`, `bloqueado` y marcadores HTML en los comentarios de issues y PRs.
 
 ## Comandos
 

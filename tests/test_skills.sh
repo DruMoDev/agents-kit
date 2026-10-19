@@ -4,7 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # Value of a frontmatter key (first --- block) in a SKILL.md.
 fm() { awk -v k="$2" 'NR==1&&$0!="---"{exit} NR>1&&$0=="---"{exit} NR>1&&index($0,k": ")==1{print substr($0,length(k)+3); exit}' "$1"; }
 
-for s in kit-on kit-off; do
+for s in kit-on kit-off kit-plan kit-run kit-scout; do
   [ -f "$REPO_ROOT/skills/$s/SKILL.md" ] || fail "missing skills/$s/SKILL.md"
 done
 
@@ -26,7 +26,15 @@ for f in "$REPO_ROOT"/skills/*/SKILL.md; do
   done
   n=$((n + 1))
 done
-[ "$n" -ge 2 ] || fail "expected at least 2 skills, found $n"
+[ "$n" -ge 5 ] || fail "expected at least 5 skills, found $n"
+
+# references follow the same writing rules
+for f in "$REPO_ROOT"/skills/*/references/*.md; do
+  [ -f "$f" ] || continue
+  grep -q "—" "$f" && fail "$f: em dash found"
+  grep -Ewq '(él|ella)' "$f" && fail "$f: gendered wording (él/ella)"
+  grep -Eq '\| *(head|tail)\b' "$f" && fail "$f: pipes output through head/tail"
+done
 
 # kit-on / kit-off specifics from the brief
 on="$REPO_ROOT/skills/kit-on/SKILL.md"; off="$REPO_ROOT/skills/kit-off/SKILL.md"
@@ -60,4 +68,34 @@ for sk in "$on" "$off"; do
   grep -q 'el árbol NO quedó limpio' "$sk" || fail "$sk: debe retransmitir el estado real del árbol"
   grep -q 'a salvo ahí y el árbol quedó limpio' "$sk" && fail "$sk: afirma árbol limpio sin condición"
 done
+
+# phase 2 flow skills
+plan="$REPO_ROOT/skills/kit-plan/SKILL.md"; run="$REPO_ROOT/skills/kit-run/SKILL.md"; scout="$REPO_ROOT/skills/kit-scout/SKILL.md"
+[ -f "$REPO_ROOT/skills/kit-run/references/revisor.md" ] || fail "missing skills/kit-run/references/revisor.md"
+[ -f "$REPO_ROOT/skills/kit-plan/references/issue.md" ] || fail "missing skills/kit-plan/references/issue.md"
+for sk in "$plan" "$run" "$scout"; do
+  grep -q 'CLAUDE_PLUGIN_ROOT' "$sk" || fail "$sk must resolve CLAUDE_PLUGIN_ROOT"
+  grep -q 'kit no activado: ejecuta kit-on' "$sk" || fail "$sk must refuse without the marker"
+  grep -q 'scripts/kit-issue.sh' "$sk" || fail "$sk must use scripts/kit-issue.sh"
+done
+grep -Eq 'kit-issue.sh" crear .* listo' "$plan" || fail "kit-plan creates issues as listo"
+grep -q 'references/issue.md' "$plan" || fail "kit-plan must use the issue template"
+grep -Eq 'kit-issue.sh" crear .* propuesta' "$scout" || fail "kit-scout creates issues as propuesta"
+grep -Eq 'crear .* listo' "$scout" && fail "kit-scout must never create listo issues"
+grep -q 'references/issue.md' "$scout" || fail "kit-scout must use the issue template"
+for sc in kit-worktree.sh kit-pr.sh kit-review.sh lib/config.sh; do
+  grep -q "scripts/$sc" "$run" || fail "kit-run must use scripts/$sc"
+done
+for sub in siguiente reclamar soltar decision bloquear; do
+  grep -q "kit-issue.sh\" $sub" "$run" || fail "kit-run must call kit-issue.sh $sub"
+done
+for sub in abrir esperar-ci gate-local ronda fusionar; do
+  grep -q "kit-pr.sh\" $sub" "$run" || fail "kit-run must call kit-pr.sh $sub"
+done
+grep -q 'kit_reviewers' "$run" || fail "kit-run must read reviewers with kit_reviewers"
+grep -q 'maxReviewRounds' "$run" || fail "kit-run must honour maxReviewRounds"
+grep -q 'autoMerge' "$run" || fail "kit-run must honour autoMerge"
+grep -q 'gh pr ready --undo' "$run" || fail "kit-run must move the PR to draft"
+grep -q 'FIN: sin-ci' "$run" || fail "kit-run must handle FIN: sin-ci"
+grep -q 'wait' "$run" || fail "kit-run must wait for the parallel reviewers"
 echo "ok"

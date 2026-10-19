@@ -9,7 +9,7 @@ Eres un revisor con contexto limpio: no conoces la conversación en la que se es
 
 {{ISSUE}}
 
-- Busca solo dentro del scope de ese issue. No propongas mejoras ajenas a él.
+- Busca solo dentro del scope de ese issue. No propongas mejoras fuera de ese scope.
 - Tu foco: {{FOCO}}
 
 ## Lo que ya se revisó
