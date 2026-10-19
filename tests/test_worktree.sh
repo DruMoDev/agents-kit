@@ -48,6 +48,19 @@ mkdir -p "$KIT_WORKTREES/$name/issue-4-bar"
 bash "$wt" abrir "$r" 4 bar >/dev/null 2>&1; [ $? -eq 1 ] || fail "ruta ocupada debe dar 1"
 rmdir "$KIT_WORKTREES/$name/issue-4-bar"
 
+# branch only on origin (issue resumed elsewhere): the local branch starts from it, without upstream
+git -C "$r" worktree add -q -b issue-5-remota --no-track "$(mktemp -d)/w5" origin/main || fail "setup rama remota"
+w5="$(git -C "$r" worktree list --porcelain | sed -n 's|^worktree \(.*/w5\)$|\1|p')"
+(cd "$w5" && echo r > r.txt && git add r.txt && git commit -q -m remota && git push -q origin HEAD) >/dev/null 2>&1 || fail "push rama remota"
+tip5="$(git -C "$w5" rev-parse HEAD)"
+git -C "$r" worktree remove "$w5" && git -C "$r" branch -q -D issue-5-remota || fail "borrar rama local"
+git -C "$r" update-ref -d refs/remotes/origin/issue-5-remota 2>/dev/null
+out="$(bash "$wt" abrir "$r" 5 remota 2>&1)" || fail "abrir rama remota: $out"
+p5="$KIT_WORKTREES/$name/issue-5-remota"
+[ "$(git -C "$p5" rev-parse HEAD)" = "$tip5" ] || fail "abrir no parte de origin/issue-5-remota"
+[ -z "$(git -C "$p5" config --get branch.issue-5-remota.remote)" ] || fail "la rama remota quedó con upstream"
+git -C "$r" worktree remove "$p5" || fail "quitar worktree 5"
+
 # limpiar: PR open
 set_pr OPEN
 err="$(bash "$wt" limpiar "$r" 3 2>&1 >/dev/null)"; rc=$?

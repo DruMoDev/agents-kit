@@ -63,7 +63,17 @@ if [ "$sub" = abrir ]; then
     if git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
       git worktree add -q "$path" "$branch" || exit 2
     else
-      git worktree add -q -b "$branch" --no-track "$path" "origin/$base" || exit 2
+      # a branch that only exists on origin (issue resumed elsewhere) is the start point; else origin/<default>
+      start="origin/$base"
+      git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; rc=$?
+      case $rc in
+        0) git fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+             || { echo "error: git fetch de $branch falló" >&2; exit 2; }
+           start="origin/$branch" ;;
+        2) ;;
+        *) echo "error: git ls-remote falló" >&2; exit 2 ;;
+      esac
+      git worktree add -q -b "$branch" --no-track "$path" "$start" || exit 2
     fi
   fi
   echo "worktree: $path"
