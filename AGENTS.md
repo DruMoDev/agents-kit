@@ -15,7 +15,7 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `rules/`: reglas inyectadas en las sesiones.
 - `skills/`: `kit-on` y `kit-off`.
 - `scripts/`: scripts mecánicos de las skills y `release.sh`.
-- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`).
+- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node).
 - `docs/`: specs y planes.

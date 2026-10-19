@@ -11,8 +11,16 @@
 #   GH_LOG      file where each call's arguments are logged, one line per call
 #   GH_FAIL_ON  glob; the first call whose arguments match it exits 1 (only once)
 #   GH_USER     login that @me resolves to (default: dru)
-#   state.prs: [{"number": 5, "headRefName": "issue-3-foo", "state": "MERGED"}]
-# Supported: issue list/view/create/comment/edit, pr list (--head, --state). Add one case per subcommand as tests need it.
+#   state.prs: [{"number": 5, "headRefName": "issue-3-foo", "state": "MERGED", "isDraft": false,
+#                "url": "...", "comments": [{"id": 1, "body": "..."}]}]   # comment ids: numeric, increasing
+#     A PR without "headRefOid" resolves it live from the cwd's origin (git ls-remote refs/heads/<headRefName>).
+#   state.workflows: number reported by `api repos/<slug>/actions/workflows` (default 0)
+#   state.checks: check runs [{"status": "completed", "conclusion": "success"}] for any commit (default [])
+#   GH_CHECKS_SEQ  file with one JSON array of check runs per line; each check-runs call consumes the next line
+#                  (the last one repeats). Overrides state.checks. Position kept in $GH_STATE/.checks_idx
+#                  (delete it to restart the sequence).
+# Supported: issue list/view/create/comment/edit/close, pr list/create/view/comment/merge,
+# api (workflows, check-runs; no --repo, the slug goes in the path). Add one case per subcommand as tests need it.
 set -u
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
 state="${GH_STATE:?GH_STATE no definido}/state.json"
@@ -23,7 +31,8 @@ if [ -n "${GH_FAIL_ON:-}" ] && [ ! -e "$GH_STATE/.failed" ] && [[ "$*" == *$GH_F
 fi
 
 cmd="${1:-} ${2:-}"; shift 2 2>/dev/null
-repo="" head="" json="" jqf="" title="" body="" st=open
+apipath=""; [ "${cmd%% *}" = api ] && { apipath="${cmd#api }"; cmd=api; }
+repo="" head="" json="" jqf="" title="" body="" st=open base="" draft=false comment=""
 pos=() labels=() addl=() reml=() adda=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,6 +44,10 @@ while [ $# -gt 0 ]; do
     --body-file|-F) body="$(cat "$2")" || exit 1; shift 2 ;;
     --state|-s) st="$2"; shift 2 ;;
     --head|-H) head="$2"; shift 2 ;;
+    --base|-B) base="$2"; shift 2 ;;
+    --draft|-d) draft=true; shift ;;
+    --squash|--delete-branch) shift ;;
+    --comment|-c) comment="$2"; shift 2 ;;
     --limit|-L) shift 2 ;;
     --label|-l) labels+=("$2"); shift 2 ;;
     --add-label) IFS=, read -r -a a <<< "$2"; addl+=("${a[@]}"); shift 2 ;;
@@ -43,7 +56,7 @@ while [ $# -gt 0 ]; do
     *) pos+=("$1"); shift ;;
   esac
 done
-[ -n "$repo" ] || { echo "stub: falta --repo" >&2; exit 1; }
+[ -n "$repo" ] || [ "$cmd" = api ] || { echo "stub: falta --repo" >&2; exit 1; }
 
 # save <jq-filter> [jq args...]: update state.json in place
 save() {
@@ -62,6 +75,20 @@ emit() {
 issue_exists() {
   jq -e --argjson n "$1" 'any(.issues[]; .number == $n)' "$state" >/dev/null \
     || { echo "stub: no existe el issue $1" >&2; exit 1; }
+}
+pr_exists() {
+  jq -e --argjson n "$1" 'any(.prs[]; .number == $n)' "$state" >/dev/null \
+    || { echo "stub: no existe la PR $1" >&2; exit 1; }
+}
+# pr_json <n>: the PR object, headRefOid resolved live from origin when not fixed in the state
+pr_json() {
+  local p oid
+  p="$(jq -c --argjson n "$1" '.prs[] | select(.number == $n)' "$state")"
+  if [ "$(printf '%s' "$p" | jq -r '.headRefOid // ""')" = "" ]; then
+    oid="$(git ls-remote origin "refs/heads/$(printf '%s' "$p" | jq -r .headRefName)" 2>/dev/null | cut -f1)"
+    p="$(printf '%s' "$p" | jq -c --arg o "$oid" '.headRefOid = $o')"
+  fi
+  printf '%s\n' "$p"
 }
 json_list() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
 
@@ -100,6 +127,49 @@ case "$cmd" in
     jq --arg st "$st" --arg h "$head" \
       '[.prs[] | select($h == "" or .headRefName == $h)
         | select($st == "all" or (.state | ascii_downcase) == $st)] | sort_by(-.number)' "$state" | emit ;;
+  "issue close")
+    issue_exists "${pos[0]}"
+    save '(.issues[] | select(.number == $n)) |= (.state = "CLOSED"
+        | if $c != "" then .comments += [{id: "IC_\($n)_\(.comments | length)", body: $c}] else . end)' \
+      --argjson n "${pos[0]}" --arg c "$comment" || exit 1 ;;
+  "pr create")
+    n="$(jq '[.issues[].number, .prs[].number, 0] | max + 1' "$state")"
+    url="https://github.com/$repo/pull/$n"
+    save '.prs += [{number: $n, title: $t, body: $b, headRefName: $h, baseRefName: $base,
+        state: "OPEN", isDraft: $d, url: $u, mergeable: "MERGEABLE", comments: []}]' \
+      --argjson n "$n" --arg t "$title" --arg b "$body" --arg h "$head" --arg base "$base" \
+      --argjson d "$draft" --arg u "$url" || exit 1
+    echo "$url" ;;
+  "pr view")
+    pr_exists "${pos[0]}"
+    pr_json "${pos[0]}" | emit ;;
+  "pr comment")
+    pr_exists "${pos[0]}"
+    save '([.prs[].comments[]?.id | numbers] | max // 0) as $id
+        | (.prs[] | select(.number == $n) | .comments) |= . + [{id: ($id + 1), body: $b}]' \
+      --argjson n "${pos[0]}" --arg b "$body" || exit 1
+    echo "https://github.com/$repo/pull/${pos[0]}#issuecomment-1" ;;
+  "pr merge")
+    pr_exists "${pos[0]}"
+    save '(.prs[] | select(.number == $n)) |= (.headRefOid = (.headRefOid // $o) | .state = "MERGED")' \
+      --argjson n "${pos[0]}" --arg o "$(pr_json "${pos[0]}" | jq -r .headRefOid)" || exit 1 ;;
+  api)
+    case "$apipath" in
+      repos/*/*/actions/workflows)
+        jq '{total_count: (.workflows // 0), workflows: []}' "$state" | emit ;;
+      repos/*/*/commits/*/check-runs*)
+        if [ -n "${GH_CHECKS_SEQ:-}" ]; then
+          i="$(cat "$GH_STATE/.checks_idx" 2>/dev/null || echo 0)"
+          total="$(grep -c . "$GH_CHECKS_SEQ")"
+          line="$(sed -n "$(( i < total ? i + 1 : total ))p" "$GH_CHECKS_SEQ")"
+          echo $(( i + 1 )) > "$GH_STATE/.checks_idx"
+          runs="$line"
+        else
+          runs="$(jq -c '.checks // []' "$state")"
+        fi
+        printf '%s' "$runs" | jq '{total_count: length, check_runs: .}' | emit ;;
+      *) echo "stub: ruta de api no soportada: $apipath" >&2; exit 99 ;;
+    esac ;;
   *)
     echo "stub: subcomando no soportado: $cmd" >&2; exit 99 ;;
 esac

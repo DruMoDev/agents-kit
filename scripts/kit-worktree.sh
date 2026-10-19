@@ -8,6 +8,7 @@ set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
+source "$here/lib/default-branch.sh"
 
 usage() {
   echo "uso: $0 abrir <root> <N> <slug> | limpiar <root> <N>" >&2
@@ -45,7 +46,7 @@ wt_of() {
 if [ "$sub" = abrir ]; then
   branch="issue-$n-$2"
   path="${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/$(basename "$root")/$branch"
-  base="$(git ls-remote --symref origin HEAD 2>/dev/null | sed -n 's|^ref: refs/heads/\(.*\)[[:space:]]HEAD$|\1|p')"
+  base="$(kit_default_branch)"
   [ -n "$base" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
   git fetch -q origin "$base" || { echo "error: git fetch falló" >&2; exit 2; }
 
