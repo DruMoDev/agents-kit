@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Stateful gh stub for the issue flow (bash + jq). Each call is appended to $GH_LOG.
+#
+# State: $GH_STATE/state.json, shaped like gh's --json output:
+#   {"issues": [{"number": 1, "title": "...", "body": "...", "state": "OPEN",
+#                "labels": [{"name": "listo"}], "assignees": [{"login": "dru"}],
+#                "comments": [{"id": "IC_1_0", "body": "..."}]}],   # comments in creation order
+#    "prs": []}
+# Env:
+#   GH_STATE    directory holding state.json (required)
+#   GH_LOG      file where each call's arguments are logged, one line per call
+#   GH_FAIL_ON  glob; the first call whose arguments match it exits 1 (only once)
+#   GH_USER     login that @me resolves to (default: dru)
+# Supported: issue list/view/create/comment/edit. Add one case per subcommand as tests need it.
+set -u
+[ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
+state="${GH_STATE:?GH_STATE no definido}/state.json"
+if [ -n "${GH_FAIL_ON:-}" ] && [ ! -e "$GH_STATE/.failed" ] && [[ "$*" == *$GH_FAIL_ON* ]]; then
+  : > "$GH_STATE/.failed"
+  echo "stub: fallo forzado ($GH_FAIL_ON)" >&2
+  exit 1
+fi
+
+cmd="${1:-} ${2:-}"; shift 2 2>/dev/null
+repo="" json="" jqf="" title="" body="" st=open
+pos=() labels=() addl=() reml=() adda=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo|-R) repo="$2"; shift 2 ;;
+    --json) json="$2"; shift 2 ;;
+    --jq|-q) jqf="$2"; shift 2 ;;
+    --title|-t) title="$2"; shift 2 ;;
+    --body|-b) body="$2"; shift 2 ;;
+    --body-file|-F) body="$(cat "$2")" || exit 1; shift 2 ;;
+    --state|-s) st="$2"; shift 2 ;;
+    --limit|-L) shift 2 ;;
+    --label|-l) labels+=("$2"); shift 2 ;;
+    --add-label) IFS=, read -r -a a <<< "$2"; addl+=("${a[@]}"); shift 2 ;;
+    --remove-label) IFS=, read -r -a a <<< "$2"; reml+=("${a[@]}"); shift 2 ;;
+    --add-assignee) a="$2"; [ "$a" = @me ] && a="${GH_USER:-dru}"; adda+=("$a"); shift 2 ;;
+    *) pos+=("$1"); shift ;;
+  esac
+done
+[ -n "$repo" ] || { echo "stub: falta --repo" >&2; exit 1; }
+
+# save <jq-filter> [jq args...]: update state.json in place
+save() {
+  local f="$1" tmp; shift
+  tmp="$(mktemp)"
+  jq "$@" "$f" "$state" > "$tmp" && mv "$tmp" "$state"
+}
+# emit: select --json fields from stdin and apply --jq
+emit() {
+  local out
+  out="$(jq -c --arg f "$json" '($f | split(",")) as $k
+    | def pick: with_entries(select(.key as $x | $k | index($x)));
+    if $f == "" then . elif type == "array" then map(pick) else pick end')" || exit 1
+  if [ -n "$jqf" ]; then printf '%s' "$out" | jq -r "$jqf"; else printf '%s\n' "$out"; fi
+}
+issue_exists() {
+  jq -e --argjson n "$1" 'any(.issues[]; .number == $n)' "$state" >/dev/null \
+    || { echo "stub: no existe el issue $1" >&2; exit 1; }
+}
+json_list() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
+
+case "$cmd" in
+  "issue list")
+    jq --arg st "$st" --argjson l "$(json_list "${labels[@]+"${labels[@]}"}")" \
+      '[.issues[] | select($st == "all" or (.state | ascii_downcase) == $st)
+        | select([.labels[].name] as $have | all($l[]; . as $x | $have | index($x)))]
+       | sort_by(-.number)' "$state" | emit ;;
+  "issue view")
+    issue_exists "${pos[0]}"
+    jq --argjson n "${pos[0]}" '.issues[] | select(.number == $n)' "$state" | emit ;;
+  "issue create")
+    n="$(jq '[.issues[].number, .prs[].number, 0] | max + 1' "$state")"
+    save '.issues += [{number: $n, title: $t, body: $b, state: "OPEN",
+        labels: [$l[] | {name: .}], assignees: [], comments: []}]' \
+      --argjson n "$n" --arg t "$title" --arg b "$body" \
+      --argjson l "$(json_list "${labels[@]+"${labels[@]}"}")" || exit 1
+    echo "https://github.com/$repo/issues/$n" ;;
+  "issue comment")
+    issue_exists "${pos[0]}"
+    save '(.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_\($n)_\(length)", body: $b}]' \
+      --argjson n "${pos[0]}" --arg b "$body" || exit 1
+    echo "https://github.com/$repo/issues/${pos[0]}#issuecomment-1" ;;
+  "issue edit")
+    issue_exists "${pos[0]}"
+    save '(.issues[] | select(.number == $n)) |= (
+        .labels = ((.labels + [$add[] | {name: .}]) | unique_by(.name) | map(select(.name as $x | $rem | index($x) | not)))
+        | .assignees = ((.assignees + [$as[] | {login: .}]) | unique_by(.login)))' \
+      --argjson n "${pos[0]}" \
+      --argjson add "$(json_list "${addl[@]+"${addl[@]}"}")" \
+      --argjson rem "$(json_list "${reml[@]+"${reml[@]}"}")" \
+      --argjson as "$(json_list "${adda[@]+"${adda[@]}"}")" || exit 1
+    echo "https://github.com/$repo/issues/${pos[0]}" ;;
+  *)
+    echo "stub: subcomando no soportado: $cmd" >&2; exit 99 ;;
+esac
