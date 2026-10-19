@@ -32,4 +32,11 @@ err="$(kit_config "$d" .maxReviewRounds 2>&1)"; rc=$?
 [ $rc -eq 2 ] || fail "JSON inválido: exit $rc"
 [ "$err" = "error: .agents-kit.json no es JSON válido" ] || fail "JSON inválido: stderr '$err'"
 
+for bad in '' '[]' 'null' '5'; do
+  printf '%s' "$bad" > "$d/.agents-kit.json"
+  err="$(kit_config "$d" .maxReviewRounds 2>&1)"; rc=$?
+  [ $rc -eq 2 ] || fail "marcador '$bad': exit $rc, esperado 2"
+  [ "$err" = "error: .agents-kit.json no es JSON válido" ] || fail "marcador '$bad': stderr '$err'"
+done
+
 echo "ok"

@@ -13,13 +13,18 @@ kit_require_marker() {
 
 # kit_config <root> <jq-filter>: run the filter over template * marker (marker reviewers replace the template's).
 kit_config() {
-  local out
-  if ! out="$(jq -c . "$1/.agents-kit.json" 2>/dev/null)"; then
+  local merged
+  # marker must be a JSON object (empty file, [], null, 5 are rejected)
+  if ! jq -e 'type == "object"' "$1/.agents-kit.json" >/dev/null 2>&1; then
     echo "error: .agents-kit.json no es JSON válido" >&2
     return 2
   fi
-  jq -c -s '. as $s | ($s[0] * $s[1]) | .reviewers = ($s[1].reviewers // $s[0].reviewers)' \
-    "$_KIT_TEMPLATE" "$1/.agents-kit.json" | jq -r "$2"
+  if ! merged="$(jq -c -s '. as $s | ($s[0] * $s[1]) | .reviewers = ($s[1].reviewers // $s[0].reviewers)' \
+    "$_KIT_TEMPLATE" "$1/.agents-kit.json")"; then
+    echo "error: .agents-kit.json no es JSON válido" >&2
+    return 2
+  fi
+  printf '%s' "$merged" | jq -r "$2"
 }
 
 # kit_reviewers <root>: one line per reviewer, tool<TAB>model<TAB>focus (claude, opencode, codex order).
