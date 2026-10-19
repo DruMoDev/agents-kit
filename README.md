@@ -1,6 +1,6 @@
 # agents-kit
 
-Plugin personal para Claude Code y Codex. Inyecta unas reglas de trabajo al arrancar cada sesión, solo en los repos donde el kit está activado, y trae dos skills para activarlo y desactivarlo. El mismo repo es el plugin y su propio marketplace en ambas herramientas.
+Plugin personal para Claude Code, Codex y OpenCode. Inyecta unas reglas de trabajo al arrancar cada sesión, solo en los repos donde el kit está activado, y trae dos skills para activarlo y desactivarlo. El mismo repo es el plugin y su propio marketplace en Claude Code y Codex.
 
 ## Instalar
 
@@ -20,6 +20,15 @@ codex plugin add agents-kit@agents-kit
 
 Después, aprueba el hook una vez con `/hooks` dentro de Codex interactivo. Codex omite en silencio los hooks de plugin que no son de confianza. Si el hook cambia, hay que aprobarlo otra vez.
 
+### OpenCode
+
+```
+mkdir -p ~/.config/opencode/plugins
+ln -s ~/Documents/programacion/agents-kit/.opencode/plugins/agents-kit.js ~/.config/opencode/plugins/agents-kit.js
+```
+
+Es un enlace, así que OpenCode usa el código del repo: no hay caché ni aprobación de hooks. El plugin registra `kit-on` y `kit-off` en todos los repos (solo actúan si los pides). Solo en repos activados añade las reglas al primer mensaje de cada sesión y deja leer y ejecutar sin preguntar `scripts/`, `skills/`, `rules/` y `templates/` del plugin; en los demás, OpenCode pide permiso la primera vez que `kit-on` usa un script. OpenCode ya lee por su cuenta `AGENTS.md` y las skills de `.agents/skills/`.
+
 ## Uso
 
 El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
@@ -30,9 +39,9 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 Cómo se invocan:
 
 - Claude Code: `/agents-kit:kit-on` y `/agents-kit:kit-off`.
-- Codex: pídeselo por nombre (kit-on, kit-off).
+- Codex y OpenCode: pídeselo por nombre (kit-on, kit-off).
 
-Desde la siguiente sesión en un repo activado, el hook `SessionStart` carga las reglas de `rules/`.
+Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode).
 
 ## Iterar
 
@@ -40,6 +49,7 @@ Desde la siguiente sesión en un repo activado, el hook `SessionStart` carga las
 2. Sube la versión: `scripts/release.sh <version>`.
 3. Claude Code: `claude plugin update agents-kit@agents-kit` (hay que reiniciar la sesión para aplicarlo).
 4. Codex copia el plugin a una caché: `codex plugin remove agents-kit@agents-kit` y `codex plugin add agents-kit@agents-kit`, y volver a aprobar el hook con `/hooks`.
+5. OpenCode: reinicia `opencode` (carga el plugin al arrancar).
 
 ## Tests
 
