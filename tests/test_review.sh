@@ -40,8 +40,9 @@ jq '.issues[0].body = "Cuerpo del issue con & y \\1"
       comments: [{id: 1, body: "<!-- kit-ronda: 1 -->\n- [R1.1] (claude/opus) PREVIO → rechazado: no aplica {{FOCO}}"}]}]' \
   "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json" || fail "setup estado"
 ncom() { jq '.prs[0].comments | length' "$GH_STATE/state.json"; }
-wtl0="$(git -C "$wt" worktree list --porcelain)"
-wts() { if [ "$(git -C "$wt" worktree list --porcelain)" = "$wtl0" ]; then echo 2; else echo cambió; fi; }
+wtlist() { git -C "$wt" worktree list --porcelain | grep -v '^HEAD '; }  # paths and branches, not moving SHAs
+wtl0="$(wtlist)"
+wts() { if [ "$(wtlist)" = "$wtl0" ]; then echo 2; else echo cambió; fi; }
 args() { tr '\0' '\n' < "$REVIEW_DUMP/$1.args"; }
 prompt() { # last argument of the dumped argv
   perl -0 -ne '$p = $_; END { chop $p; print $p }' "$REVIEW_DUMP/$1.args"
@@ -104,7 +105,8 @@ grep -qx nota.md "$REVIEW_DUMP/claude.lsclaude" || fail "la limpieza borró de m
 [ -f "$wt/.claude/settings.json" ] && [ -d "$wt/.opencode" ] || fail "la limpieza tocó el worktree"
 ge="$(cat "$REVIEW_DUMP/claude.genv")"
 printf '%s\n' "$ge" | grep -q 'TOKEN=' && fail "tokens visibles: $ge"
-for x in GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_AUTHOR_NAME=kit-revisor GIT_COMMITTER_NAME=kit-revisor; do
+for x in GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 GIT_AUTHOR_NAME=kit-revisor \
+    GIT_COMMITTER_NAME=kit-revisor GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=; do
   printf '%s\n' "$ge" | grep -qxF "$x" || fail "falta $x: $ge"
 done
 [ -z "$(ls -A "$r/.git/worktrees" | grep -vx wt)" ] || fail "quedó un registro de worktree"
@@ -175,5 +177,15 @@ kill -0 "$hp" 2>/dev/null && { kill "$hp"; fail "el hijo del revisor sigue vivo 
 [ "$(wts)" = 2 ] || fail "TERM dejó el worktree desechable"
 expect_fail ok foo "revisor no disponible: foo"
 GH_FAIL_ON="pr comment" expect_fail ok claude "no se pudo comentar"
+# a PR that commits .claude as a symlink out of the copy: the link goes, its target is untouched
+fuera="$(mktemp -d)"; echo '{"mio": true}' > "$fuera/settings.json"; mkdir "$fuera/hooks"; echo x > "$fuera/hooks/h"
+(cd "$wt" && git rm -q -r .claude .opencode && rm -rf .claude .opencode && ln -s "$fuera" .claude && ln -s "$fuera" .opencode \
+  && git add -A && git commit -q -m enlace && git push -q origin HEAD) >/dev/null 2>&1 || fail "commit enlace"
+[ "$(git -C "$wt" ls-tree HEAD .claude .opencode | cut -c1-6 | sort -u)" = 120000 ] || fail "setup: .claude no es un enlace"
+out="$(REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 claude opus foco 5 3 2>&1)" || fail "enlace: $out"
+[ "$(cat "$fuera/settings.json")" = '{"mio": true}' ] && [ -f "$fuera/hooks/h" ] || fail "la limpieza siguió el enlace .claude"
+grep -qxF .claude "$REVIEW_DUMP/claude.ls" && fail "la copia conserva el enlace .claude"
+grep -qxF .opencode "$REVIEW_DUMP/claude.ls" && fail "la copia conserva el enlace .opencode"
+grep -qx local.txt "$REVIEW_DUMP/claude.ls" || fail "la copia no está en el nuevo head"
 [ "$(wts)" = 2 ] || fail "worktrees al final"
 echo "test_review OK"

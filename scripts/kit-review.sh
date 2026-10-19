@@ -75,8 +75,16 @@ prompt="$(jq -Rrs --arg FOCO "$focus" --arg RONDA "$round" --arg ISSUE "$issue" 
     && git -C "$scratch" remote remove origin; } >/dev/null 2>&1 \
   || { echo "error: no se pudo crear la copia desechable" >&2; exit 2; }
 # agent config committed in the PR is untrusted: drop it from the copy (it stays reviewable via git diff)
-( cd "$scratch" && rm -rf .claude/settings.json .claude/settings.local.json .claude/hooks .mcp.json \
-    .opencode opencode.json opencode.jsonc .codex ) || { echo "error: no se pudo limpiar la copia desechable" >&2; exit 2; }
+# never through a symlink: rm -rf on a link path drops the link only, and a linked .claude is dropped whole
+(
+  cd "$scratch" || exit 1
+  rm -rf .mcp.json .opencode opencode.json opencode.jsonc .codex || exit 1
+  if [ -L .claude ]; then
+    rm -f .claude
+  elif [ -d .claude ]; then
+    rm -rf .claude/settings.json .claude/settings.local.json .claude/hooks
+  fi
+) || { echo "error: no se pudo limpiar la copia desechable" >&2; exit 2; }
 mkdir "$tmpd/gh" || exit 2
 
 # runner: reviewer in its own process group; on timeout or TERM/INT/HUP the whole group gets TERM, then KILL.
@@ -109,7 +117,9 @@ oc_cfg='{"permission":{"bash":{"*":"allow","gh *":"deny","git push*":"deny"},"ed
 (
   cd "$scratch" || exit 2
   unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
-  export GH_CONFIG_DIR="$tmpd/gh" GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
+  export GH_CONFIG_DIR="$tmpd/gh" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+  # an empty credential.helper resets the helper list, so no stored credential is ever offered
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
   export GIT_AUTHOR_NAME=kit-revisor GIT_AUTHOR_EMAIL=kit-revisor@localhost \
     GIT_COMMITTER_NAME=kit-revisor GIT_COMMITTER_EMAIL=kit-revisor@localhost
   run=(perl -e "$runner" "$timeout")
