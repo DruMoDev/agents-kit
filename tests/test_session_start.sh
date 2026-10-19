@@ -3,7 +3,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 hook="$REPO_ROOT/hooks/session-start"
 [ -x "$hook" ] || fail "hooks/session-start missing or not executable"
-jq -e '.hooks.SessionStart[0].matcher == "startup|resume|clear|compact"' "$REPO_ROOT/hooks/hooks.json" >/dev/null \
+jq -e '.hooks.SessionStart[0].matcher == "startup|resume|clear|compact|fork"' "$REPO_ROOT/hooks/hooks.json" >/dev/null \
   || fail "hooks/hooks.json missing or wrong matcher"
 
 # run_hook <hook> <cwd> <stdin-json|-> : prints stdout; exit status in $RC_FILE

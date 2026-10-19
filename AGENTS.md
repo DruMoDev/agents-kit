@@ -27,7 +27,7 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 ## Convenciones de scripts
 
 - Scripts `kit-*`. Códigos de salida: 0 bien, 1 error de uso o rechazo, 2 error de entorno.
-- La última línea de la salida es `FIN: ...`.
+- Al terminar con éxito (y en la salida 2 de PR abierto) la última línea de la salida es `FIN: ...`; en los demás errores solo hay mensaje en stderr.
 - Nunca recortar la salida propia con `head` ni `tail`.
 - Mensajes al usuario en español, sin rayas largas.
 
@@ -62,7 +62,7 @@ Verificado contra Claude Code 2.1.302 y codex-cli 0.162.1 con un plugin de prueb
 
 - `hooks/hooks.json`:
   ```json
-  {"hooks": {"SessionStart": [{"matcher": "startup|resume|clear|compact",
+  {"hooks": {"SessionStart": [{"matcher": "startup|resume|clear|compact|fork",
     "hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-start\""}]}]}}
   ```
 - Salida para inyectar contexto, válida en ambas herramientas (emitir solo esta, sin variantes snake_case ni top-level):

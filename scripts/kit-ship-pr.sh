@@ -19,7 +19,10 @@ cd "$repo" || exit 2
 
 gh auth status >/dev/null 2>&1 || { echo "error: gh no autenticado (ejecuta 'gh auth login')" >&2; exit 2; }
 git remote get-url origin >/dev/null 2>&1 || { echo "error: el repo no tiene un remoto 'origin'" >&2; exit 2; }
-info="$(gh repo view --json nameWithOwner,defaultBranchRef 2>/dev/null)" \
+origin_url="$(git config --get remote.origin.url 2>/dev/null)"
+slug="$(printf '%s' "$origin_url" | sed -nE 's#^(https?://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)github\.com[:/]+([^/]+/[^/]+)$#\4#p' | sed -E 's#(\.git)?/?$##')"
+[ -n "$slug" ] || { echo "sin remoto de GitHub: el remoto 'origin' no es de GitHub" >&2; exit 1; }
+info="$(gh repo view "$slug" --json nameWithOwner,defaultBranchRef 2>/dev/null)" \
   || { echo "sin remoto de GitHub" >&2; exit 1; }
 base="$(printf '%s' "$info" | jq -r '.defaultBranchRef.name // empty')"
 [ -n "$base" ] || { echo "error: no se pudo determinar la rama por defecto" >&2; exit 2; }
@@ -32,7 +35,7 @@ git check-ref-format --branch "$branch" >/dev/null 2>&1 || { echo "nombre de ram
 if git show-ref --verify -q "refs/heads/$branch"; then
   echo "la rama '$branch' ya existe en local; no se toca" >&2; exit 1
 fi
-git fetch -q --prune origin 2>/dev/null || { echo "error: git fetch origin falló" >&2; exit 2; }
+git fetch -q --prune origin || { echo "error: git fetch origin falló" >&2; exit 2; }
 if git show-ref --verify -q "refs/remotes/origin/$branch"; then
   echo "la rama '$branch' ya existe en origin; no se toca" >&2; exit 1
 fi
@@ -67,7 +70,7 @@ restore() {
   fi
 }
 if ! { git checkout -q "$base" 2>/dev/null || git checkout -q -b "$base" "origin/$base"; } \
-   || ! git merge -q --ff-only "origin/$base" 2>/dev/null; then
+   || ! git merge -q --ff-only "origin/$base"; then
   git checkout -q "$start" 2>/dev/null; restore
   echo "error: no se pudo actualizar '$base'" >&2; exit 2
 fi
@@ -76,9 +79,15 @@ if ! git checkout -q -b "$branch"; then
 fi
 if ! git stash apply -q "$stash_sha" 2>/dev/null; then
   git reset -q --hard 2>/dev/null
+  # Remove untracked files the failed apply restored, so the tree is clean and the stash stays intact.
+  if git rev-parse -q --verify "$stash_sha^3" >/dev/null; then
+    git ls-tree -r --name-only -z "$stash_sha^3" | while IFS= read -r -d '' f; do
+      git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || { rm -f -- "$f"; rmdir -p -- "$(dirname -- "$f")" 2>/dev/null; }
+    done
+  fi
   git checkout -q "$start" 2>/dev/null
   git branch -D "$branch" >/dev/null 2>&1
-  echo "error: conflicto al aplicar los cambios sobre '$base'; siguen en 'git stash' ($stash_sha). Aplícalos a mano; la rama '$branch' se borró" >&2
+  echo "error: conflicto al aplicar los cambios sobre '$base'; tus cambios están a salvo en el stash $stash_sha y el árbol quedó limpio. Haz 'git pull' en '$base' y relanza kit-on/kit-off; la rama '$branch' se borró" >&2
   exit 2
 fi
 [ "$(git rev-parse -q --verify 'stash@{0}')" = "$stash_sha" ] && git stash drop -q
@@ -94,13 +103,16 @@ if ! { git add -A && git commit -q -m "$title"; }; then
   echo "error: no se pudo hacer commit; los cambios siguen en el árbol de trabajo y la rama '$branch' se borró, puedes reintentar" >&2
   exit 2
 fi
-git push -q -u origin "$branch" 2>/dev/null || abort "error: git push falló (rama local $branch conservada)"
-url="$(gh pr create --base "$base" --head "$branch" --title "$title" --body "$body")" \
+git push -q -u origin "$branch" || abort "error: git push falló (rama local $branch conservada)"
+url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$title" --body "$body")" \
   || abort "error: gh pr create falló (rama $branch ya subida)"
-gh pr merge "$url" --squash --delete-branch >/dev/null \
-  || abort "error: gh pr merge falló; el PR sigue abierto: $url"
+merge_rc=0
+gh pr merge "$url" --repo "$slug" --squash --delete-branch >/dev/null || merge_rc=$?
 
-state="$(gh pr view "$url" --json state -q .state 2>/dev/null)"
+state="$(gh pr view "$url" --repo "$slug" --json state -q .state 2>/dev/null)"
+if [ "$merge_rc" -ne 0 ] && [ "$state" != "MERGED" ]; then
+  abort "error: gh pr merge falló; el PR sigue abierto: $url"
+fi
 if [ "$state" != "MERGED" ]; then
   git checkout -q "$base" 2>/dev/null
   echo "el PR sigue abierto (estado: ${state:-desconocido}): $url" >&2
@@ -109,8 +121,8 @@ if [ "$state" != "MERGED" ]; then
 fi
 
 git checkout -q "$base" || exit 2
-git pull -q --ff-only origin "$base" 2>/dev/null || echo "aviso: no se pudo hacer pull de $base" >&2
+git pull -q --ff-only origin "$base" || echo "aviso: no se pudo hacer pull de $base" >&2
 git branch -D "$branch" >/dev/null 2>&1 || true
-git fetch -q --prune origin 2>/dev/null || true
+git fetch -q --prune origin || true
 echo "PR fusionado: $url"
 echo "FIN: ok"

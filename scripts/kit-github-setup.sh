@@ -17,13 +17,16 @@ git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error:
 
 cd "$repo" || exit 2
 gh auth status >/dev/null 2>&1 || { echo "error: gh no autenticado (ejecuta 'gh auth login')" >&2; exit 2; }
-if ! gh repo view --json nameWithOwner,defaultBranchRef >/dev/null 2>&1; then
+origin_url="$(git config --get remote.origin.url 2>/dev/null)"
+slug="$(printf '%s' "$origin_url" | sed -nE 's#^(https?://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)github\.com[:/]+([^/]+/[^/]+)$#\4#p' | sed -E 's#(\.git)?/?$##')"
+[ -n "$slug" ] || { echo "sin remoto de GitHub: el remoto 'origin' no es de GitHub" >&2; exit 1; }
+if ! gh repo view "$slug" --json nameWithOwner,defaultBranchRef >/dev/null 2>&1; then
   echo "sin remoto de GitHub: este repo no tiene un remoto de GitHub accesible" >&2
   exit 1
 fi
 
 label() { # name color description
-  gh label create "$1" --color "$2" --description "$3" --force >/dev/null \
+  gh label create "$1" --color "$2" --description "$3" --force --repo "$slug" >/dev/null \
     || { echo "error: no se pudo crear la etiqueta $1" >&2; exit 2; }
   echo "etiqueta: $1"
 }
@@ -33,22 +36,22 @@ label en-curso 1D76DB "Un agente la está trabajando"
 label necesita-decision D93F0B "Duda de producto para Dru"
 label bloqueado B60205 "No se pudo terminar, requiere a Dru"
 
-gh repo edit --enable-squash-merge --delete-branch-on-merge >/dev/null \
+gh repo edit "$slug" --enable-squash-merge --delete-branch-on-merge >/dev/null \
   || { echo "error: no se pudo configurar el repo" >&2; exit 2; }
 echo "repo: squash merge y borrado de ramas activados"
 
 title="📦 Changelog"
-list="$(gh issue list --state open --search "in:title $title" --json number,title)" \
+list="$(gh issue list --state open --search "in:title $title" --json number,title --repo "$slug")" \
   || { echo "error: no se pudo listar issues" >&2; exit 2; }
 num="$(printf '%s' "$list" | jq -r --arg t "$title" '[.[] | select(.title == $t)][0].number // empty')"
 if [ -z "$num" ]; then
-  url="$(gh issue create --title "$title" --body "Aquí llegan los resúmenes de cambios de cada PR que el kit fusiona. No cerrar: es el registro vivo del repo.")" \
+  url="$(gh issue create --repo "$slug" --title "$title" --body "Aquí llegan los resúmenes de cambios de cada PR que el kit fusiona. No cerrar: es el registro vivo del repo.")" \
     || { echo "error: no se pudo crear el issue" >&2; exit 2; }
   num="${url##*/}"
   echo "issue creado: $url"
 else
   echo "issue existente: #$num"
 fi
-gh issue pin "$num" >/dev/null 2>&1 || echo "aviso: no se pudo fijar #$num (quizá ya está fijado)" >&2
+gh issue pin "$num" --repo "$slug" >/dev/null 2>&1 || echo "aviso: no se pudo fijar #$num (quizá ya está fijado)" >&2
 
 echo "FIN: ok"

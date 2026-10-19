@@ -27,6 +27,11 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 - `kit-on`: activa el kit en el repo actual. Crea `.agents-kit.json`, `AGENTS.md`, `CLAUDE.md` y `CHANGELOG.md` si faltan, ordena un `AGENTS.md` existente, configura GitHub (etiquetas, issue de changelog, borrado de rama al fusionar) y lo envía todo por un PR que se fusiona. Si se interrumpe, se relanza y retoma.
 - `kit-off`: borra `.agents-kit.json` por PR. `AGENTS.md`, `CHANGELOG.md` y las skills del proyecto se quedan.
 
+Cómo se invocan:
+
+- Claude Code: `/agents-kit:kit-on` y `/agents-kit:kit-off`.
+- Codex: pídeselo por nombre (kit-on, kit-off).
+
 Desde la siguiente sesión en un repo activado, el hook `SessionStart` carga las reglas de `rules/`.
 
 ## Iterar

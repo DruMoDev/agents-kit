@@ -10,7 +10,9 @@ mk_with_origin() {
   local b="$1" r o
   r="$(mk_repo)"; o="$(mktemp -d)"
   git init -q --bare "$o"
-  (cd "$r" && git branch -m "$b" && git remote add origin "$o" && git push -q -u origin "$b") >/dev/null 2>&1 || fail "mk_with_origin"
+  # origin looks like a GitHub URL; insteadOf routes the real traffic to the local bare repo
+  (cd "$r" && git branch -m "$b" && git remote add origin "https://github.com/dru/demo.git" \
+    && git config "url.$o.insteadOf" "https://github.com/dru/demo.git" && git push -q -u origin "$b") >/dev/null 2>&1 || fail "mk_with_origin"
   echo "$r"
 }
 
@@ -20,7 +22,14 @@ err="$(GH_STUB_MODE=no-remote bash "$setup" "$r" 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "no-remote: exit $rc, esperado 1"
 case "$err" in *"sin remoto de GitHub"*) ;; *) fail "no-remote: stderr '$err'";; esac
 
-# --- setup: ok
+# --- setup: non-GitHub origin -> exit 1
+(cd "$r" && git remote add origin https://example.com/x/y.git)
+err="$(bash "$setup" "$r" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "origin no GitHub: exit $rc"
+case "$err" in *"sin remoto de GitHub"*) ;; *) fail "origin no GitHub: stderr '$err'";; esac
+
+# --- setup: ok (ssh origin parsed, --repo passed to every gh call)
+(cd "$r" && git remote set-url origin git@github.com:dru/demo.git)
 : > "$GH_LOG"
 out="$(GH_STUB_MODE=ok bash "$setup" "$r" 2>&1)" || fail "setup ok: exit $?"
 n="$(grep -c '^label create .*--force' "$GH_LOG")"
@@ -33,6 +42,10 @@ grep -q '^repo edit .*--delete-branch-on-merge' "$GH_LOG" || fail "repo edit sin
 grep -q '^issue create .*📦 Changelog' "$GH_LOG" || fail "no crea issue Changelog"
 grep -q '^issue pin' "$GH_LOG" || fail "no fija issue"
 case "$out" in *"FIN: ok"*) ;; *) fail "setup sin FIN: ok";; esac
+while IFS= read -r line; do
+  case "$line" in "auth status"*) continue;; esac
+  case "$line" in *"dru/demo"*) ;; *) fail "gh sin repo explícito: $line";; esac
+done < "$GH_LOG"
 
 # --- setup: idempotent with existing issue (fuzzy neighbour must not match)
 : > "$GH_LOG"
@@ -51,6 +64,41 @@ git -C "$r" show-ref --verify -q refs/heads/kit/cambio && fail "rama local no bo
 git -C "$r" ls-remote --exit-code --heads origin kit/cambio >/dev/null 2>&1 && fail "rama remota no borrada tras el merge"
 git -C "$r" show-ref --verify -q refs/remotes/origin/kit/cambio && fail "queda ref de seguimiento obsoleto"
 case "$out" in *"PR fusionado: https://github.com/dru/demo/pull/1"*"FIN: ok"*) ;; *) fail "salida sin URL/FIN: $out";; esac
+
+grep -q '^pr create .*--repo dru/demo' "$GH_LOG" || fail "pr create sin --repo"
+grep -q '^pr merge .*--repo dru/demo' "$GH_LOG" || fail "pr merge sin --repo"
+
+# --- ship: merge exits 1 but PR is MERGED -> success
+r="$(mk_with_origin main)"; echo c > "$r/f.txt"
+out="$(GH_STUB_MODE=merge-fails-merged bash "$ship" "$r" kit/mf t b 2>&1)" || fail "merge falla pero MERGED: exit $? ($out)"
+case "$out" in *"PR fusionado"*"FIN: ok"*) ;; *) fail "merge falla pero MERGED: salida '$out'";; esac
+
+# --- ship: non-GitHub origin -> exit 1
+r="$(mk_with_origin main)"; echo c > "$r/f.txt"
+git -C "$r" config remote.origin.url https://example.com/x/y.git
+err="$(bash "$ship" "$r" kit/ng t b 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "origin no GitHub: exit $rc"
+case "$err" in *"sin remoto de GitHub"*) ;; *) fail "origin no GitHub: stderr '$err'";; esac
+
+# --- ship: stale local default, origin edited a file / added a colliding one -> exit 2, clean tree, stash kept
+for kind in edit collide; do
+  r="$(mk_with_origin main)"
+  o="$(git -C "$r" config --get-regexp '^url\..*\.insteadof$' | sed -E 's/^url\.(.*)\.insteadof .*/\1/')"
+  w="$(mktemp -d)"; git clone -q "$o" "$w" 2>/dev/null
+  (cd "$w" && git config user.name T && git config user.email t@e.c \
+    && if [ $kind = edit ]; then echo upstream > README.md; else echo upstream > CHANGELOG.md; fi \
+    && git add -A && git commit -q -m up && git push -q origin main) || fail "stale: setup upstream"
+  if [ $kind = edit ]; then echo mine > "$r/README.md"; else echo mine > "$r/CHANGELOG.md"; fi
+  echo extra > "$r/extra.txt"
+  out="$(bash "$ship" "$r" kit/stale t b 2>&1)"; rc=$?
+  [ $rc -eq 2 ] || fail "stale $kind: exit $rc ($out)"
+  [ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = main ] || fail "stale $kind: debe volver a main"
+  [ -z "$(git -C "$r" status --porcelain)" ] || fail "stale $kind: árbol sucio: $(git -C "$r" status --porcelain)"
+  sha="$(git -C "$r" rev-parse refs/stash)"
+  case "$out" in *"$sha"*"git pull"*) ;; *) fail "stale $kind: mensaje sin sha/pull: $out";; esac
+  git -C "$r" show "$sha^3:extra.txt" >/dev/null 2>&1 || fail "stale $kind: stash sin los cambios"
+  git -C "$r" show-ref --verify -q refs/heads/kit/stale && fail "stale $kind: rama no borrada"
+done
 
 # --- ship: nothing to ship
 r="$(mk_with_origin main)"
