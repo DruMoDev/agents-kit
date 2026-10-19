@@ -3,6 +3,7 @@
 # Ships the working-tree changes as a PR from <rama> and squash-merges it.
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error.
 set -u
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/github-slug.sh"
 
 if [ $# -ne 4 ] || [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
   echo "uso: $0 <repo_root> <rama> <titulo> <cuerpo>" >&2
@@ -19,8 +20,7 @@ cd "$repo" || exit 2
 
 gh auth status >/dev/null 2>&1 || { echo "error: gh no autenticado (ejecuta 'gh auth login')" >&2; exit 2; }
 git remote get-url origin >/dev/null 2>&1 || { echo "error: el repo no tiene un remoto 'origin'" >&2; exit 2; }
-origin_url="$(git config --get remote.origin.url 2>/dev/null)"
-slug="$(printf '%s' "$origin_url" | sed -nE 's#^(https?://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)github\.com[:/]+([^/]+/[^/]+)$#\4#p' | sed -E 's#(\.git)?/?$##')"
+slug="$(kit_origin_slug)"
 [ -n "$slug" ] || { echo "sin remoto de GitHub: el remoto 'origin' no es de GitHub" >&2; exit 1; }
 info="$(gh repo view "$slug" --json nameWithOwner,defaultBranchRef 2>/dev/null)" \
   || { echo "sin remoto de GitHub" >&2; exit 1; }
@@ -77,19 +77,41 @@ fi
 if ! git checkout -q -b "$branch"; then
   git checkout -q "$start" 2>/dev/null; restore; exit 2
 fi
+# Snapshot untracked paths right before the apply: only what the apply creates may be removed afterwards.
+root="$(git rev-parse --show-toplevel)" && cd "$root" || exit 2
+root_phys="$(pwd -P)"
+untracked_before="$(mktemp)"
+git ls-files -o --exclude-standard -z > "$untracked_before"
 if ! git stash apply -q "$stash_sha" 2>/dev/null; then
   git reset -q --hard 2>/dev/null
-  # Remove untracked files the failed apply restored, so the tree is clean and the stash stays intact.
-  if git rev-parse -q --verify "$stash_sha^3" >/dev/null; then
-    git ls-tree -r --name-only -z "$stash_sha^3" | while IFS= read -r -d '' f; do
-      git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || { rm -f -- "$f"; rmdir -p -- "$(dirname -- "$f")" 2>/dev/null; }
-    done
-  fi
+  # Remove only untracked paths created by the failed apply; never follow symlinks or leave the repo.
+  while IFS= read -r -d '' f; do
+    grep -qzxF -- "$f" "$untracked_before" && continue
+    d="$(dirname -- "$f")"; unsafe=0; p=""
+    if [ "$d" != . ]; then
+      IFS=/ read -r -a parts <<< "$d"
+      for c in "${parts[@]}"; do
+        p="${p:+$p/}$c"
+        [ -L "$p" ] && unsafe=1
+      done
+      [ "$unsafe" = 0 ] && case "$(cd "$d" 2>/dev/null && pwd -P)/" in "$root_phys"/*) ;; *) unsafe=1;; esac
+    fi
+    [ "$unsafe" = 0 ] || continue
+    rm -f -- "$f"; [ "$d" = . ] || rmdir -p -- "$d" 2>/dev/null
+  done < <(git ls-files -o --exclude-standard -z)
+  rm -f "$untracked_before"
+  leftover="$(git status --porcelain)"
   git checkout -q "$start" 2>/dev/null
   git branch -D "$branch" >/dev/null 2>&1
-  echo "error: conflicto al aplicar los cambios sobre '$base'; tus cambios están a salvo en el stash $stash_sha y el árbol quedó limpio. Haz 'git pull' en '$base' y relanza kit-on/kit-off; la rama '$branch' se borró" >&2
+  if [ -z "$leftover" ]; then
+    state_msg="el árbol quedó limpio"
+  else
+    state_msg="el árbol NO quedó limpio, quedan: $(printf '%s' "$leftover" | tr '\n' ';')"
+  fi
+  echo "error: conflicto al aplicar los cambios sobre '$base'; tus cambios están a salvo en el stash $stash_sha y $state_msg. Haz 'git pull' en '$base' y relanza kit-on/kit-off; la rama '$branch' se borró" >&2
   exit 2
 fi
+rm -f "$untracked_before"
 [ "$(git rev-parse -q --verify 'stash@{0}')" = "$stash_sha" ] && git stash drop -q
 
 abort() { # message code: leave the repo on the default branch with the changes intact

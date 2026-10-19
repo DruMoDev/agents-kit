@@ -100,6 +100,36 @@ for kind in edit collide; do
   git -C "$r" show-ref --verify -q refs/heads/kit/stale && fail "stale $kind: rama no borrada"
 done
 
+# upstream_commit <repo> <cmds>: clone origin, run cmds in the clone, commit, push
+upstream_commit() {
+  local r="$1" o w; shift
+  o="$(git -C "$r" config --get-regexp '^url\..*\.insteadof$' | sed -E 's/^url\.(.*)\.insteadof .*/\1/')"
+  w="$(mktemp -d)"; git clone -q "$o" "$w" 2>/dev/null
+  (cd "$w" && git config user.name T && git config user.email t@e.c && eval "$@" \
+    && git add -A && git commit -q -m up && git push -q origin main) >/dev/null 2>&1 || fail "upstream_commit: $*"
+}
+
+# --- ship: failed apply never deletes a tracked file whose name differs only by case
+r="$(mk_with_origin main)"
+upstream_commit "$r" 'echo upstream > README.md; echo up > Notes.md'
+echo mine > "$r/README.md"; echo mynotes > "$r/notes.md"
+out="$(bash "$ship" "$r" kit/case t b 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "case: exit $rc ($out)"
+[ -z "$(git -C "$r" status --porcelain)" ] || fail "case: árbol sucio: $(git -C "$r" status --porcelain) / $out"
+git -C "$r" ls-files --error-unmatch Notes.md >/dev/null 2>&1 || fail "case: Notes.md ya no está trackeado"
+[ -f "$r/Notes.md" ] && [ "$(cat "$r/Notes.md")" = up ] || fail "case: Notes.md borrado o alterado"
+[ -z "$(git -C "$r" ls-files -o --exclude-standard)" ] || fail "case: quedan untracked"
+case "$out" in *"el árbol quedó limpio"*) ;; *) fail "case: sin mensaje de árbol limpio: $out";; esac
+
+# --- ship: failed apply never writes/removes through a symlinked directory
+r="$(mk_with_origin main)"; outside="$(mktemp -d)"; echo precious > "$outside/a.txt"
+upstream_commit "$r" "echo upstream > README.md; ln -s '$outside' d"
+echo mine > "$r/README.md"; mkdir "$r/d"; echo mine > "$r/d/a.txt"
+out="$(bash "$ship" "$r" kit/sym t b 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "symlink: exit $rc ($out)"
+[ "$(cat "$outside/a.txt" 2>/dev/null)" = precious ] || fail "symlink: se tocó un archivo fuera del repo"
+[ -L "$r/d" ] || fail "symlink: d ya no es symlink"
+
 # --- ship: nothing to ship
 r="$(mk_with_origin main)"
 err="$(bash "$ship" "$r" kit/x t b 2>&1 >/dev/null)"; rc=$?

@@ -52,4 +52,8 @@ done
 grep -q 'no relacionad' "$on" || fail "kit-on must stop on unrelated changes when resuming"
 grep -q 'creado: AGENTS.md' "$on" || fail "kit-on step 4 gate must use 'creado: AGENTS.md'"
 grep -q 'borrado del marcador pendiente' "$off" || fail "kit-off must report dirty tree + pending marker deletion"
+for sk in "$on" "$off"; do
+  grep -q 'sin el prefijo `origin/`' "$sk" || fail "$sk: falta aclarar que la rama por defecto va sin origin/"
+done
+grep -q 'interrumpida: haz solo la comprobación de al día' "$off" || fail "kit-off retomado debe comprobar al día"
 echo "ok"

@@ -3,6 +3,7 @@
 # Prepares the GitHub repo: labels, squash-merge settings, pinned changelog issue. Idempotent.
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error.
 set -u
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/github-slug.sh"
 
 if [ $# -ne 1 ] || [ -z "$1" ]; then
   echo "uso: $0 <repo_root>" >&2
@@ -17,8 +18,7 @@ git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error:
 
 cd "$repo" || exit 2
 gh auth status >/dev/null 2>&1 || { echo "error: gh no autenticado (ejecuta 'gh auth login')" >&2; exit 2; }
-origin_url="$(git config --get remote.origin.url 2>/dev/null)"
-slug="$(printf '%s' "$origin_url" | sed -nE 's#^(https?://([^@/]+@)?|ssh://([^@/]+@)?|[^@/:]+@)github\.com[:/]+([^/]+/[^/]+)$#\4#p' | sed -E 's#(\.git)?/?$##')"
+slug="$(kit_origin_slug)"
 [ -n "$slug" ] || { echo "sin remoto de GitHub: el remoto 'origin' no es de GitHub" >&2; exit 1; }
 if ! gh repo view "$slug" --json nameWithOwner,defaultBranchRef >/dev/null 2>&1; then
   echo "sin remoto de GitHub: este repo no tiene un remoto de GitHub accesible" >&2
