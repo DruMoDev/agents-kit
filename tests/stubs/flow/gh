@@ -11,7 +11,8 @@
 #   GH_LOG      file where each call's arguments are logged, one line per call
 #   GH_FAIL_ON  glob; the first call whose arguments match it exits 1 (only once)
 #   GH_USER     login that @me resolves to (default: dru)
-# Supported: issue list/view/create/comment/edit. Add one case per subcommand as tests need it.
+#   state.prs: [{"number": 5, "headRefName": "issue-3-foo", "state": "MERGED"}]
+# Supported: issue list/view/create/comment/edit, pr list (--head, --state). Add one case per subcommand as tests need it.
 set -u
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
 state="${GH_STATE:?GH_STATE no definido}/state.json"
@@ -22,7 +23,7 @@ if [ -n "${GH_FAIL_ON:-}" ] && [ ! -e "$GH_STATE/.failed" ] && [[ "$*" == *$GH_F
 fi
 
 cmd="${1:-} ${2:-}"; shift 2 2>/dev/null
-repo="" json="" jqf="" title="" body="" st=open
+repo="" head="" json="" jqf="" title="" body="" st=open
 pos=() labels=() addl=() reml=() adda=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -33,6 +34,7 @@ while [ $# -gt 0 ]; do
     --body|-b) body="$2"; shift 2 ;;
     --body-file|-F) body="$(cat "$2")" || exit 1; shift 2 ;;
     --state|-s) st="$2"; shift 2 ;;
+    --head|-H) head="$2"; shift 2 ;;
     --limit|-L) shift 2 ;;
     --label|-l) labels+=("$2"); shift 2 ;;
     --add-label) IFS=, read -r -a a <<< "$2"; addl+=("${a[@]}"); shift 2 ;;
@@ -94,6 +96,10 @@ case "$cmd" in
       --argjson rem "$(json_list "${reml[@]+"${reml[@]}"}")" \
       --argjson as "$(json_list "${adda[@]+"${adda[@]}"}")" || exit 1
     echo "https://github.com/$repo/issues/${pos[0]}" ;;
+  "pr list")
+    jq --arg st "$st" --arg h "$head" \
+      '[.prs[] | select($h == "" or .headRefName == $h)
+        | select($st == "all" or (.state | ascii_downcase) == $st)] | sort_by(-.number)' "$state" | emit ;;
   *)
     echo "stub: subcomando no soportado: $cmd" >&2; exit 99 ;;
 esac
