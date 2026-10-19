@@ -2,8 +2,8 @@
 
 ## Qué es
 
-Plugin personal `agents-kit` para Claude Code y Codex; el mismo repo es su marketplace en ambas herramientas.
-Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo tiene `.agents-kit.json`.
+Plugin personal `agents-kit` para Claude Code, Codex y OpenCode; el mismo repo es su marketplace en Claude Code y Codex.
+Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo tiene `.agents-kit.json` (en OpenCode, el plugin de `.opencode/plugins/` reutiliza ese script).
 
 ## Mapa del repo
 
@@ -11,12 +11,13 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `.codex-plugin/`: manifiesto de Codex.
 - `.agents/plugins/`: marketplace de Codex.
 - `hooks/`: `hooks.json` y el script `session-start`.
+- `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso y reglas).
 - `rules/`: reglas inyectadas en las sesiones.
 - `skills/`: `kit-on` y `kit-off`.
 - `scripts/`: scripts mecánicos de las skills y `release.sh`.
 - `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
-- `tests/`: tests de bash con stubs.
+- `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node).
 - `docs/`: specs y planes.
 
 ## Comandos
@@ -93,3 +94,13 @@ Verificado contra Claude Code 2.1.302 y codex-cli 0.162.1 con un plugin de prueb
   - `codex plugin add <plugin>@<marketplace>`
   - `codex plugin list`; `codex plugin remove <plugin>@<marketplace>`; `codex plugin marketplace remove <marketplace>`
   - No existe comando de validación de plugins.
+
+### OpenCode
+
+Verificado contra opencode 1.19.0 (V1) con `opencode run` en un repo activado y en uno sin marcador.
+
+- No lee plugins de Claude Code ni de Codex. Sus plugins son módulos JS: un fichero en `~/.config/opencode/plugins/` (se admite un enlace simbólico) se carga al arrancar.
+- Lee `AGENTS.md` (o `CLAUDE.md` si falta) y skills de `.agents/skills/`, `.claude/skills/` y `.opencode/skills/`. No sigue los `@imports`.
+- Hooks del plugin usados: `config` (añade `skills.paths` y `permission.external_directory`) y `experimental.chat.messages.transform` (se ejecuta en cada paso con los mensajes recargados; hace falta una guarda para inyectar una sola vez). Mismo enfoque que superpowers.
+- Sin permiso `external_directory`, `opencode run` rechaza leer o ejecutar los scripts del plugin, que están fuera del proyecto.
+- OpenCode V2 (2.x) usa otra API (`default.setup`, `ctx.session.hook("context")`); sin soporte por ahora.
