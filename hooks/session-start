@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# SessionStart hook (Claude Code and Codex). Injects rules/core.md only when the
+# session's repo has .agents-kit.json at its root; otherwise silent, exit 0.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cwd=""
+if [ ! -t 0 ]; then
+  input="$(cat 2>/dev/null)"
+  if [ -n "$input" ]; then
+    cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)" || cwd=""
+  fi
+fi
+[ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$PWD"
+
+root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$root" ] && [ -f "$root/.agents-kit.json" ] || exit 0
+[ -f "$PLUGIN_ROOT/rules/core.md" ] || exit 0
+
+header="agents-kit está activo en este repo. Reglas adicionales (léelas cuando apliquen): $PLUGIN_ROOT/rules/testing.md y $PLUGIN_ROOT/rules/docs-discipline.md."
+
+{ printf '%s\n\n' "$header"; cat "$PLUGIN_ROOT/rules/core.md"; } \
+  | jq -Rs '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: .}}'
+exit 0

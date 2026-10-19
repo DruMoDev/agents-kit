@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+rules="$REPO_ROOT/rules"
+for f in core.md testing.md docs-discipline.md; do
+  [ -s "$rules/$f" ] || fail "rules/$f missing or empty"
+done
+
+for h in "## Escribe menos código" "## Tests y verificación" "## Producto vs implementación" "## Flujo git" "## Automejora"; do
+  grep -q "^$h" "$rules/core.md" || fail "core.md missing heading: $h"
+done
+
+lines="$(wc -l < "$rules/core.md")"
+[ "$lines" -le 140 ] || fail "core.md has $lines lines (max 140)"
+
+for ref in rules/testing.md rules/docs-discipline.md; do
+  grep -qF "$ref" "$rules/core.md" || fail "core.md does not reference $ref"
+done
+
+if grep -rlF "docs/agent/" "$rules"; then fail "rules/ references docs/agent/"; fi
+if grep -rlF "—" "$rules"; then fail "rules/ contains em dashes"; fi
+echo "ok"

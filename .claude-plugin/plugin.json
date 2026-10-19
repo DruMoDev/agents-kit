@@ -1,0 +1,6 @@
+{
+  "name": "agents-kit",
+  "version": "2.0.0",
+  "description": "Personal kit of skills, hooks and project docs conventions for Claude Code and Codex.",
+  "author": { "name": "Dru" }
+}

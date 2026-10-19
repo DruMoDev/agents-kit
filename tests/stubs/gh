@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# gh stub. Logs args to $GH_LOG; behaviour chosen by $GH_STUB_MODE:
+#   ok                  default branch main, no changelog issue yet
+#   default-branch-trunk  default branch trunk
+#   issue-exists        changelog issue already present
+#   merge-open          `gh pr view` reports OPEN (merge did not happen)
+#   merge-fails-merged  `gh pr merge` exits 1 but `gh pr view` reports MERGED
+#   no-auth             `gh auth status` fails
+#   no-remote           `gh repo view` fails
+[ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
+mode="${GH_STUB_MODE:-ok}"
+branch=main
+[ "$mode" = default-branch-trunk ] && branch=trunk
+if [ "$1 $2" = "auth status" ]; then [ "$mode" = no-auth ] && exit 1; exit 0; fi
+case "$1 $2" in
+  "repo view")
+    if [ "$mode" = no-remote ]; then
+      echo "no git remotes found" >&2; exit 1
+    fi
+    printf '{"nameWithOwner":"dru/demo","defaultBranchRef":{"name":"%s"}}\n' "$branch" ;;
+  "issue list")
+    if [ "$mode" = issue-exists ]; then
+      echo '[{"number":7,"title":"📦 Changelog"},{"number":8,"title":"📦 Changelog extra"}]'
+    else
+      echo '[{"number":9,"title":"📦 Changelog extra"}]'
+    fi ;;
+  "issue create") echo "https://github.com/dru/demo/issues/7" ;;
+  "pr view") if [ "$mode" = merge-open ]; then echo OPEN; else echo MERGED; fi ;;
+  "pr merge") [ "$mode" = merge-fails-merged ] && exit 1
+    case " $* " in *" --delete-branch "*) git push -q origin --delete "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 ;; esac ;;
+  "pr create") echo "https://github.com/dru/demo/pull/1" ;;
+esac
+exit 0

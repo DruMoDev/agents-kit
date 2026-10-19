@@ -1,0 +1,15 @@
+{
+  "maxReviewRounds": 10,
+  "notify": "claude-push",
+  "autoMerge": true,
+  "implementer": {
+    "claude": "opus"
+  },
+  "reviewers": {
+    "claude": [
+      { "model": "opus", "focus": "corrección, casos límite y tests" },
+      { "model": "sonnet", "focus": "simplicidad, reutilización y scope" }
+    ],
+    "codex": []
+  }
+}
