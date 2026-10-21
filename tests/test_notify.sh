@@ -45,7 +45,7 @@ grep -q "^tema ntfy nuevo: $topic" <<<"$out" || fail "sin línea de tema nuevo"
 grep -qx "Title: T" "$CURL_LOG" || fail "Title"
 grep -qx "Click: https://x" "$CURL_LOG" || fail "Click"
 grep -qx "M" "$CURL_LOG" || fail "mensaje"
-grep -qx -- "-d" "$CURL_LOG" || fail "-d"
+grep -qx -- "--data-raw" "$CURL_LOG" || fail "--data-raw (un mensaje con @ no debe leer ficheros)"
 grep -qx "https://ntfy.sh/$topic" "$CURL_LOG" || fail "URL"
 # segunda llamada
 out="$(bash "$N" "$r" T M)"

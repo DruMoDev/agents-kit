@@ -38,7 +38,7 @@ case "$channel" in
     [ "$created" -eq 1 ] && echo "tema ntfy nuevo: $topic (suscríbete en la app ntfy)"
     args=(-fsS --max-time 10 -H "Title: $title")
     [ -n "$url" ] && args+=(-H "Click: $url")
-    if ! curl "${args[@]}" -d "$msg" "${KIT_NTFY_SERVER:-https://ntfy.sh}/$topic" >/dev/null; then
+    if ! curl "${args[@]}" --data-raw "$msg" "${KIT_NTFY_SERVER:-https://ntfy.sh}/$topic" >/dev/null; then
       echo "error: no se pudo enviar el aviso por ntfy" >&2
       exit 2
     fi
