@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# curl stub: logs one argument per line to $CURL_LOG (calls separated by "--"); CURL_FAIL=1 exits 22.
+{ printf '%s\n' "$@"; echo "--"; } >> "${CURL_LOG:-/dev/null}"
+[ "${CURL_FAIL:-}" = 1 ] && exit 22
+exit 0
