@@ -297,8 +297,9 @@ Cierra #$n"
     }
     review_reason "$pj"
 
-    # CHANGELOG.md, when the repo has one, must keep the fixed format (a PR without a new entry is fine)
-    if [ -f "$wt/CHANGELOG.md" ]; then
+    # CHANGELOG.md, when the repo has one, must keep the fixed format (a PR without a new entry is fine).
+    # Without the marker kit-changelog refuses for that reason, not for the format: skip it (the dirty tree stops the merge).
+    if [ -f "$wt/CHANGELOG.md" ] && [ -f "$wt/.agents-kit.json" ]; then
       cl_err="$("$here/kit-changelog.sh" validar "$wt" 2>&1 >/dev/null)"; cl_rc=$?
       case $cl_rc in
         0) ;;

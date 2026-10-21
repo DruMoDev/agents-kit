@@ -48,9 +48,9 @@ grep -qx "M" "$CURL_LOG" || fail "mensaje"
 grep -qx -- "--data-raw" "$CURL_LOG" || fail "--data-raw (un mensaje con @ no debe leer ficheros)"
 grep -qx "https://ntfy.sh/$topic" "$CURL_LOG" || fail "URL"
 # segunda llamada
-out="$(bash "$N" "$r" T M)"
+: > "$CURL_LOG"; out="$(bash "$N" "$r" T M)"
 grep -q "tema ntfy nuevo" <<<"$out" && fail "repite tema nuevo"
-grep -q "^Click:" <(tail -n 8 "$CURL_LOG") && fail "Click sin url"
+grep -q "^Click:" "$CURL_LOG" && fail "Click sin url"
 [ "$(cat "$f")" = "$topic" ] || fail "tema cambió"
 
 # tema por variable de entorno; el marcador del repo no puede desviarlo
@@ -89,6 +89,20 @@ grep -q "canal de aviso desconocido: sms" <<<"$out" || fail "sms msg"
 r="$(mk '{"notify":"ntfy"}')"
 out="$(HOME=/dev/null/x bash "$N" "$r" T M 2>&1)"; rc=$?
 [ $rc -eq 2 ] || fail "home rc=$rc"
+
+# en la nube sin KIT_NTFY_TOPIC ni tema guardado: no inventa un tema
+r="$(mk '{"notify":"ntfy"}')"; h="$(mktemp -d)"; : > "$CURL_LOG"
+out="$(HOME="$h" CLAUDE_CODE_REMOTE=true bash "$N" "$r" T M 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "nube sin tema rc=$rc $out"
+grep -qx "error: en la nube define KIT_NTFY_TOPIC (el tema de tu app ntfy)" <<<"$out" || fail "nube sin tema msg: $out"
+[ -e "$h/.agents-kit/ntfy-topic" ] && fail "nube sin tema: creó un tema"
+[ -s "$CURL_LOG" ] && fail "nube sin tema: llamó a curl"
+# en la nube con KIT_NTFY_TOPIC o con tema guardado sí envía
+HOME="$h" CLAUDE_CODE_REMOTE=true KIT_NTFY_TOPIC=nube-tema bash "$N" "$r" T M >/dev/null || fail "nube con variable"
+grep -qx "https://ntfy.sh/nube-tema" "$CURL_LOG" || fail "nube con variable: URL"
+mkdir -p "$h/.agents-kit"; echo guardado > "$h/.agents-kit/ntfy-topic"; : > "$CURL_LOG"
+HOME="$h" CLAUDE_CODE_REMOTE=true bash "$N" "$r" T M >/dev/null || fail "nube con tema guardado"
+grep -qx "https://ntfy.sh/guardado" "$CURL_LOG" || fail "nube con tema guardado: URL"
 
 # kit_transport
 source "$REPO_ROOT/scripts/lib/transport.sh"

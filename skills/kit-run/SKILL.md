@@ -18,6 +18,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 - Un exit 2 que no sepas resolver con lo de abajo: intenta soltar el issue con el motivo, para el bucle y explícaselo a Dru.
 - Ficheros temporales (cuerpos, preguntas, rondas, salidas) siempre fuera del worktree, con `mktemp`.
 - Cada línea `AVISO-CLAUDE: <texto>` en la salida de un script es un aviso para Dru: llama a la herramienta de notificación push de la sesión (en Claude Code, `PushNotification`) con ese texto; si la herramienta no existe, ignórala. Un `aviso: no se pudo avisar (...)` en stderr no para nada: cuéntalo en el resumen.
+- Una línea `tema ntfy nuevo: <tema>` en la salida de cualquier script (aunque el aviso haya fallado) solo sale una vez: ponla siempre en el resumen final del chat con el tema y la instrucción "instala la app ntfy y suscríbete a ese tema", porque si no nadie recibe los avisos.
 
 ## Arranque
 
@@ -48,10 +49,11 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    - Exit 1 `el CI terminó en ...`: lee el fallo (`gh run view --repo <slug> --log-failed`), corrígelo, commit, push y vuelve a esperar.
    - Exit 1 `no concluyó en ...`: hay checks que no terminan. Míralos con `gh pr checks <pr> --repo <slug>`; si no avanzan, bloquea el issue (ver abajo) explicando qué check se quedó colgado.
    - Exit 2 `la PR apunta a ...`: falta un push; empuja y repite.
-5. **Revisión.** Rondas `r = k + 1, k + 2, ...`, con `k` de la línea `FIN: <k> rondas` de `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" historial <wt> <pr>` (0 en una PR nueva; las rondas previas cuentan para `.maxReviewRounds`). Sigue `references/ronda.md` (lanzar revisores, decidir, fichero de ronda, cuándo parar). Antes de cada ronda, todo confirmado y empujado: los revisores revisan el head de la PR. Lanza los revisores en paralelo con un único comando; si el límite de tiempo de tu herramienta es menor que `KIT_REVIEW_TIMEOUT` (1800 s por revisor), lánzalo en segundo plano (por ejemplo `run_in_background` en Claude Code):
+5. **Revisión.** Rondas `r = k + 1, k + 2, ...`, con `k` de la línea `FIN: <k> rondas` de `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" historial <wt> <pr>` (0 en una PR nueva; las rondas previas cuentan para `.maxReviewRounds`). Sigue `references/ronda.md` (lanzar revisores, decidir, fichero de ronda, cuándo parar). Antes de cada ronda, todo confirmado y empujado: los revisores revisan el head de la PR. Lanza los revisores en paralelo con un único comando; si el límite de tiempo de tu herramienta es menor que `KIT_REVIEW_TIMEOUT` (1800 s por revisor), lánzalo en segundo plano (por ejemplo `run_in_background` en Claude Code). Usa sintaxis de bash: ejecútalo tal cual, envuelto en `bash <<'EOS' ... EOS` (tu shell puede ser zsh), sustituyendo dentro los `<...>` por sus valores reales:
    ```bash
+   bash <<'EOS'
    PLUGIN="<raíz del plugin>"; d="$(mktemp -d)"
-   list="$(bash -c 'source "$1/scripts/lib/config.sh"; kit_reviewers "$2"' _ "$PLUGIN" "<raíz>")" || exit 2
+   list="$(bash -c 'source "$1/scripts/lib/config.sh"; kit_reviewers "$2"' _ "$PLUGIN" "<raíz>" </dev/null)" || exit 2
    i=0; pids=()
    while IFS=$'\t' read -r tool model focus; do
      [ -n "$tool" ] && [ -n "$model" ] && [ -n "$focus" ] || continue
@@ -61,6 +63,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    done <<< "$list"
    for j in "${!pids[@]}"; do wait "${pids[$j]}"; echo "revisor $((j + 1)): exit $?"; done
    echo "salidas en $d"
+   EOS
    ```
    Si `kit_reviewers` no da ninguna línea completa (`i` queda en 0), no lances `kit-review.sh`: revisa tú el cambio con todos los focos y dilo en el fichero de ronda. Lee entero cada `rev-<i>.out`. Escribe el fichero de ronda y publícalo con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" ronda <wt> <pr> <r> <fichero>`; exit 1 señala la línea mal formada: corrígela y repite.
    - Si aplicaste algo: commit, push, puerta de CI del paso 4 y ronda nueva obligatoria.
@@ -77,11 +80,12 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 
 ## Resumen final
 
-Cuando `siguiente` da exit 1, antes del texto del chat: si en esta ejecución entró algo en `main` o hay issues esperando a Dru, escribe el resumen en un fichero temporal (cada PR fusionada con su línea corta del changelog y su URL, y cada issue que espera a Dru con su URL y qué tiene que hacer) y publícalo con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-changelog.sh" resumen <raíz> <id> <fichero>`; la URL del comentario es la línea `FIN: <url>` (si ya estaba publicado, no se duplica). Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-notify.sh" <raíz> "<repo>: kit-run terminado" "<n> fusionadas, <m> esperan" <url del comentario>`. Si no pasó nada, ni resumen ni aviso. Si alguno de los dos falla (por ejemplo, exit 2 `no hay issue "📦 Changelog": ejecuta kit-on`), no pares: cuéntalo en el chat.
+Cuando `siguiente` da exit 1, antes del texto del chat: si en esta ejecución fusionaste alguna PR o hay issues que pasaron a `necesita-decision` o `bloqueado` en esta ejecución (los que ya esperaban antes de empezar no cuentan), escribe el resumen en un fichero temporal (cada PR fusionada con su línea corta del changelog y su URL, y cada uno de esos issues con su URL y qué tiene que hacer Dru) y publícalo con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-changelog.sh" resumen <raíz> <id> <fichero>`; la URL del comentario es la línea `FIN: <url>` (si ya estaba publicado, no se duplica). Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-notify.sh" <raíz> "<repo>: kit-run terminado" "<n> fusionadas, <m> esperan" <url del comentario>`; si `resumen` falla, avisa igual sin URL (sin el último argumento). Si no pasó nada de eso, ni resumen ni aviso. Si alguno de los dos falla (por ejemplo, exit 2 `no hay issue "📦 Changelog": ejecuta kit-on`), no pares: cuéntalo en el chat.
 
 Después escribe en el chat:
 
 - Cada PR fusionada (su URL) y cada issue cerrado por obsoleto.
+- Si algún script imprimió `tema ntfy nuevo: <tema>`: el tema y "instala la app ntfy y suscríbete a ese tema".
 - Cada issue que espera a Dru, con su URL y qué tiene que hacer:
   - `necesita-decision` o `bloqueado`: responde en el issue y quita `necesita-decision` (o `bloqueado`); `listo` sigue puesto, no hay que volver a ponerlo. El siguiente `kit-run` lo retoma.
   - PR sin fusionar por `autoMerge` falso: revisarla y fusionarla; después, quitar a mano `listo` y `en-curso` del issue cerrado.

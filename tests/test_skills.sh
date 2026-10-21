@@ -121,6 +121,13 @@ for w in 'kit-changelog.sh" validar' 'kit-changelog.sh" resumen' 'scripts/kit-no
   grep -qF "$w" "$run" || fail "kit-run must mention $w"
 done
 grep -q 'llegan en la fase 3' "$run" && fail "kit-run keeps the phase 3 placeholder"
+grep -q 'tema ntfy nuevo: <tema>' "$run" && grep -q 'suscríbete' "$run" \
+  || fail "kit-run must pass a new ntfy topic to Dru with the subscribe instruction"
+grep -q 'si `resumen` falla, avisa igual sin URL' "$run" || fail "kit-run must notify without URL when resumen fails"
+grep -q 'pasaron a `necesita-decision` o `bloqueado` en esta ejecución' "$run" \
+  || fail "kit-run summary trigger must be limited to this run"
+# the reviewer launcher uses bash syntax: it must run under bash whatever the agent's shell is (zsh breaks it)
+grep -qx "   bash <<'EOS'" "$run" && grep -qx '   EOS' "$run" || fail "kit-run reviewer launcher must run under bash"
 grep -q 'ntfy' "$on" || fail "kit-on must mention ntfy"
 grep -q 'scripts/kit-notify.sh' "$on" || fail "kit-on must send the activation notice"
 grep -qF 'cat ~/.agents-kit/ntfy-topic' "$on" || fail "kit-on must show the ntfy topic"

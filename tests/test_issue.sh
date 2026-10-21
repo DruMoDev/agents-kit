@@ -153,6 +153,12 @@ err="$(CURL_FAIL=1 bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>&1 >"$H
 [ $rc -eq 0 ] || fail "aviso fallido: exit $rc"
 case "$err" in *"aviso: no se pudo avisar (error: no se pudo enviar el aviso por ntfy)"*) ;; *) fail "aviso fallido: stderr '$err'";; esac
 [ "$(sed -n '$p' "$HOME/out")" = "FIN: necesita-decision #7" ] || fail "aviso fallido: FIN '$(cat "$HOME/out")'"
+# tema nuevo y envío fallido: la línea del tema no se pierde
+seed7
+out="$(HOME="$(mktemp -d)" CURL_FAIL=1 KIT_NTFY_TOPIC= bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)"; rc=$?
+[ $rc -eq 0 ] || fail "tema nuevo con fallo: exit $rc"
+printf '%s\n' "$out" | grep -q '^tema ntfy nuevo: agents-kit-' || fail "tema nuevo con fallo: se perdió la línea ($out)"
+[ "$(last_line "$out")" = "FIN: necesita-decision #7" ] || fail "tema nuevo con fallo: FIN '$out'"
 echo '{"notify":"claude-push"}' > "$r/.agents-kit.json"
 seed7
 out="$(bash "$issue" bloquear "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso push: exit $?"

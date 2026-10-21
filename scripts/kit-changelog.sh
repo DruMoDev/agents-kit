@@ -2,7 +2,8 @@
 # Usage: scripts/kit-changelog.sh <subcomando> <root> [args...]
 #   validar <root>
 #   resumen <root> <id> <fichero>
-# validar: formato de CHANGELOG.md (el de templates/CHANGELOG.md); lo que esté dentro de <!-- ... --> se ignora.
+# validar: formato de CHANGELOG.md (el de templates/CHANGELOG.md); lo que esté dentro de <!-- ... --> o de un
+#   bloque de código (``` o ~~~) se ignora; un <!-- sin cerrar es un error.
 # resumen: comenta el fichero en el issue abierto "📦 Changelog" con el marcador <!-- kit-resumen: <id> -->;
 #   si ya hay un comentario propio (login de `gh api user`) con ese marcador, no publica otro. FIN: <url del comentario>.
 # Exit: 0 ok, 1 rechazo (errores "CHANGELOG.md:<línea>: <motivo>" en stderr), 2 error de entorno.
@@ -28,7 +29,7 @@ case "$sub" in
     [ $# -eq 0 ] || usage
     f="$root/CHANGELOG.md"
     if [ ! -f "$f" ]; then echo "FIN: sin-changelog"; exit 0; fi
-    errs=0 entries=0
+    errs=0 entries=""
     # awk emits ERR<TAB>line<TAB>msg, IMG<TAB>line<TAB>path and a final COUNT<TAB>n
     while IFS=$'\t' read -r kind a b; do
       case "$kind" in
@@ -57,6 +58,12 @@ case "$sub" in
       }
       {
         line = $0; sub(/\r$/, "", line); vis = ""
+        # fenced code blocks: nothing inside counts (headings, images, comments)
+        if (!inc) {
+          if (fence != "") { if (index(line, fence) == 1) fence = ""; next }
+          if (line ~ /^```/) { fence = "```"; next }
+          if (line ~ /^~~~/) { fence = "~~~"; next }
+        }
         while (line != "") {
           if (inc) {
             p = index(line, "-->")
@@ -65,9 +72,10 @@ case "$sub" in
           } else {
             p = index(line, "<!--")
             if (!p) { vis = vis line; line = ""; break }
-            vis = vis substr(line, 1, p - 1); line = substr(line, p + 4); inc = 1
+            vis = vis substr(line, 1, p - 1); line = substr(line, p + 4); inc = 1; cline = NR
           }
         }
+        if (vis ~ /^###? /) sub(/[ \t]+$/, "", vis)
         if (vis ~ /^## /) {
           if (vis !~ /^## [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) { err("fecha con formato inválido (## YYYY-MM-DD): " vis); date = ""; ndate = 1 }
           else {
@@ -100,12 +108,17 @@ case "$sub" in
         s = vis
         while (match(s, /!\[[^]]*\]\([^)]*\)/)) {
           ref = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
-          sub(/^!\[[^]]*\]\(/, "", ref); sub(/\)$/, "", ref)
+          sub(/^!\[[^]]*\]\(/, "", ref); sub(/\)$/, "", ref); sub(/[ \t].*/, "", ref)
           printf "IMG\t%d\t%s\n", NR, ref
         }
       }
-      END { printf "COUNT\t%d\n", entries + 0 }
+      END {
+        if (inc) printf "ERR\t%d\t%s\n", cline, "comentario <!-- sin cerrar"
+        printf "COUNT\t%d\n", entries + 0
+      }
     ' "$f")
+    # no COUNT line: awk failed, so nothing was validated
+    [ -n "$entries" ] || { echo "error: no se pudo validar CHANGELOG.md" >&2; exit 2; }
     [ "$errs" -eq 0 ] || exit 1
     echo "FIN: valido $entries entradas"
     ;;

@@ -15,7 +15,7 @@ flat() { printf '%s' "$1" | tr '\r\n' '  '; }
 title="$(flat "$2")"; msg="$(flat "$3")"; url="$(flat "${4:-}")"
 
 channel="$(kit_config "$root" '.notify')" || exit $?
-# kit_transport: en nube y en local ntfy y none funcionan igual en esta fase.
+# kit_transport: en la nube el HOME es desechable, así que allí no se inventa un tema (nadie estaría suscrito).
 case "$channel" in
   none)
     echo "FIN: sin-aviso" ;;
@@ -28,6 +28,10 @@ case "$channel" in
     created=0
     if [ -z "$topic" ]; then
       dir="$HOME/.agents-kit"; file="$dir/ntfy-topic"
+      if [ ! -s "$file" ] && [ "$(kit_transport)" = nube ]; then
+        echo "error: en la nube define KIT_NTFY_TOPIC (el tema de tu app ntfy)" >&2
+        exit 2
+      fi
       if [ ! -s "$file" ]; then
         (umask 077; mkdir -p "$dir" && printf 'agents-kit-%s\n' "$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')" > "$file") 2>/dev/null \
           || { echo "error: no se pudo crear $file" >&2; exit 2; }

@@ -35,6 +35,23 @@ chk invalido-tipo.md 5 "tipo inválido"
 chk invalido-orden.md 7 "descendente"
 chk invalido-enlace.md 5 "no coincide"
 chk invalido-imagen.md 6 "no existe"
+chk invalido-comentario.md 6 "comentario <!-- sin cerrar"
+
+# bloques de código: ni encabezados ni imágenes ni comentarios dentro
+run valido-codigo.md; [ $rc -eq 0 ] && [ "$out" = "FIN: valido 1 entradas" ] || fail "código: $rc $out"
+# imagen con título: la ruta acaba en el primer espacio
+printf '## 2026-10-18\n\n### Nuevo: A · [#1](https://github.com/a/b/pull/1)\n![x](docs/changelog/12-login.png "Pantalla")\n' > "$r/CHANGELOG.md"
+out="$(bash "$cl" validar "$r" 2>&1)" || fail "imagen con título: $out"
+# espacios al final de los encabezados se ignoran
+printf '## 2026-10-18 \n\n### Nuevo: A · [#1](https://github.com/a/b/pull/1)\t \n' > "$r/CHANGELOG.md"
+out="$(bash "$cl" validar "$r" 2>&1)"; [ $? -eq 0 ] && [ "$out" = "FIN: valido 1 entradas" ] || fail "espacios finales: $out"
+# awk roto: falla cerrado
+awkd="$(mktemp -d)"; printf '#!/bin/sh\nexit 2\n' > "$awkd/awk"; chmod +x "$awkd/awk"
+printf '## 2026-99-99\n### Malo: x\n' > "$r/CHANGELOG.md"
+out="$(PATH="$awkd:$PATH" bash "$cl" validar "$r" 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "awk roto debe dar 2: $rc $out"
+case "$out" in *"error: no se pudo validar CHANGELOG.md"*) ;; *) fail "awk roto msg: $out";; esac
+case "$out" in *FIN:*) fail "awk roto: no debe imprimir FIN";; esac
 
 # imagen grande: aviso, exit 0
 cp "$fx/invalido-imagen.md" "$r/CHANGELOG.md"
