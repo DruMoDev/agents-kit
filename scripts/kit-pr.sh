@@ -297,6 +297,17 @@ Cierra #$n"
     }
     review_reason "$pj"
 
+    # CHANGELOG.md, when the repo has one, must keep the fixed format (a PR without a new entry is fine)
+    if [ -f "$wt/CHANGELOG.md" ]; then
+      cl_err="$("$here/kit-changelog.sh" validar "$wt" 2>&1 >/dev/null)"; cl_rc=$?
+      case $cl_rc in
+        0) ;;
+        1) reasons+=("CHANGELOG.md mal formado:
+$cl_err") ;;
+        *) echo "error: kit-changelog.sh falló: $cl_err" >&2; exit 2 ;;
+      esac
+    fi
+
     report
     # a review may have landed while the gates ran: re-read just before merging
     late="$(pr_json comments)" || exit 2

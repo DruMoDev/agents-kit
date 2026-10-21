@@ -305,4 +305,15 @@ GH_FAIL_ON="issue edit" bash "$pr" fusionar "$wt" $p 3 >"$GH_STATE/o" 2>"$GH_STA
 [ $rc -eq 0 ] || fail "etiquetas fallidas rompen la fusión: $rc $(cat "$GH_STATE/e")"
 [ "$(last_line "$(cat "$GH_STATE/o")")" = "FIN: ok" ] || fail "FIN con aviso de etiquetas"
 grep -q "etiquetas" "$GH_STATE/e" || fail "sin aviso de etiquetas: $(cat "$GH_STATE/e")"
+# fusionar: malformed CHANGELOG.md blocks the merge before gh pr merge
+st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
+  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+printf '# Changelog\n\n## 2026-10-18\n\n### Novedad: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
+: > "$GH_LOG"
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "changelog inválido debe dar 1: $rc $err"
+case "$err" in *"CHANGELOG.md mal formado"*"CHANGELOG.md:5: tipo inválido"*) ;; *) fail "changelog msg: $err";; esac
+grep -q "pr merge" "$GH_LOG" && fail "fusionó con el changelog inválido"
+[ "$(pr_q .state)" = OPEN ] || fail "changelog inválido: PR no abierta"
+rm "$wt/CHANGELOG.md"
 echo "OK test_pr"
