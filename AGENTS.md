@@ -116,3 +116,10 @@ Verificado de punta a punta el 2026-10-19 en un repo privado de pruebas, con `cl
 - Issue con producto sin definir → comentario `kit-decision` con opciones y propuesta, `necesita-decision`, asignado a Dru, reclamo soltado, sin rama ni PR.
 - Los revisores corren sin interfaz por CLI: `claude -p --permission-mode bypassPermissions --disallowedTools "Bash(git push:*)" "Bash(gh:*)"` y `opencode run` con `OPENCODE_CONFIG_CONTENT` que niega `gh *` y `git push*`; ambos respetan el bloqueo.
 - `claude -p` espera 3 s a stdin si no se le pasa `</dev/null`. La salida de `opencode run` lleva códigos ANSI.
+
+### Changelog y avisos (fase 3)
+
+Verificado de punta a punta el 2026-10-21 en el repo privado de pruebas con `claude -p "/agents-kit:kit-run"` (también con `SHELL=/bin/zsh`):
+- Issue `listo` → PR fusionada con entrada de `CHANGELOG.md` validada por `kit-changelog.sh validar`, revisores lanzados por `kit-review-all.sh`, comentario `kit-resumen` en el issue "📦 Changelog" y aviso por ntfy (`curl` a ntfy.sh; se comprobó leyendo el tema con `https://ntfy.sh/<tema>/json?poll=1`).
+- `PushNotification` de Claude Code es una herramienta del modelo: un script no puede llamarla y solo llega al móvil con Remote Control. Por eso el canal por defecto es ntfy y `claude-push` solo imprime `AVISO-CLAUDE:` para que la skill la llame.
+- Un bloque de bash con arrays dentro de una skill falla si el agente lo ejecuta en zsh (`bad substitution`): lo mecánico va en scripts, no en bloques inline.
