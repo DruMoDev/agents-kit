@@ -4,7 +4,8 @@
 # State: $GH_STATE/state.json, shaped like gh's --json output:
 #   {"issues": [{"number": 1, "title": "...", "body": "...", "state": "OPEN",
 #                "labels": [{"name": "listo"}], "assignees": [{"login": "dru"}],
-#                "comments": [{"id": "IC_1_0", "body": "..."}]}],   # comments in creation order
+#                "comments": [{"id": "IC_1_0", "body": "...", "author": {"login": "dru"}, "url": "..."}]}],
+#                # comments in creation order; issue view fills a missing author (GH_USER) and url
 #    "prs": []}
 # Env:
 #   GH_STATE    directory holding state.json (required)
@@ -52,7 +53,7 @@ while [ $# -gt 0 ]; do
     --squash|--delete-branch) shift ;;
     --match-head-commit) match="$2"; shift 2 ;;
     --comment|-c) comment="$2"; shift 2 ;;
-    --limit|-L) shift 2 ;;
+    --limit|-L|--search|-S) shift 2 ;;
     --label|-l) labels+=("$2"); shift 2 ;;
     --add-label) IFS=, read -r -a a <<< "$2"; addl+=("${a[@]}"); shift 2 ;;
     --remove-label) IFS=, read -r -a a <<< "$2"; reml+=("${a[@]}"); shift 2 ;;
@@ -104,7 +105,10 @@ case "$cmd" in
        | sort_by(-.number)' "$state" | emit ;;
   "issue view")
     issue_exists "${pos[0]}"
-    jq --argjson n "${pos[0]}" '.issues[] | select(.number == $n)' "$state" | emit ;;
+    jq --argjson n "${pos[0]}" --arg r "$repo" --arg u "${GH_USER:-dru}" '.issues[] | select(.number == $n)
+      | .url //= "https://github.com/\($r)/issues/\($n)"
+      | .comments |= map(.author //= {login: $u} | .url //= "https://github.com/\($r)/issues/\($n)#issuecomment-\(.id)")' \
+      "$state" | emit ;;
   "issue create")
     n="$(jq '[.issues[].number, .prs[].number, 0] | max + 1' "$state")"
     save '.issues += [{number: $n, title: $t, body: $b, state: "OPEN",
@@ -114,9 +118,10 @@ case "$cmd" in
     echo "https://github.com/$repo/issues/$n" ;;
   "issue comment")
     issue_exists "${pos[0]}"
-    save '(.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_\($n)_\(length)", body: $b}]' \
-      --argjson n "${pos[0]}" --arg b "$body" || exit 1
-    echo "https://github.com/$repo/issues/${pos[0]}#issuecomment-1" ;;
+    save '(.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_\($n)_\(length)", body: $b,
+        author: {login: $u}, url: "https://github.com/\($r)/issues/\($n)#issuecomment-IC_\($n)_\(length)"}]' \
+      --argjson n "${pos[0]}" --arg b "$body" --arg u "${GH_USER:-dru}" --arg r "$repo" || exit 1
+    jq -r --argjson n "${pos[0]}" '.issues[] | select(.number == $n) | .comments[-1].url' "$state" ;;
   "issue edit")
     issue_exists "${pos[0]}"
     save '(.issues[] | select(.number == $n)) |= (

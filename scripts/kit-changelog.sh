@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-changelog.sh <subcomando> <root> [args...]
 #   validar <root>
-# Formato de CHANGELOG.md (el de templates/CHANGELOG.md); lo que esté dentro de <!-- ... --> se ignora.
+#   resumen <root> <id> <fichero>
+# validar: formato de CHANGELOG.md (el de templates/CHANGELOG.md); lo que esté dentro de <!-- ... --> se ignora.
+# resumen: comenta el fichero en el issue abierto "📦 Changelog" con el marcador <!-- kit-resumen: <id> -->;
+#   si ya hay un comentario propio (login de `gh api user`) con ese marcador, no publica otro. FIN: <url del comentario>.
 # Exit: 0 ok, 1 rechazo (errores "CHANGELOG.md:<línea>: <motivo>" en stderr), 2 error de entorno.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/config.sh"
+source "$here/lib/github-slug.sh"
 
 usage() {
-  echo "uso: $0 validar <root>" >&2
+  echo "uso: $0 validar <root> | resumen <root> <id> <fichero>" >&2
   exit 1
 }
 
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-case "$sub" in validar) ;; *) usage ;; esac
+case "$sub" in validar|resumen) ;; *) usage ;; esac
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 root="$(cd "$1" && pwd)"; shift
 kit_require_marker "$root" || exit 1
@@ -104,5 +108,45 @@ case "$sub" in
     ' "$f")
     [ "$errs" -eq 0 ] || exit 1
     echo "FIN: valido $entries entradas"
+    ;;
+
+  resumen)
+    [ $# -eq 2 ] || usage
+    id="$1"; file="$2"
+    # the id goes inside an HTML comment: keep it to a safe token
+    [[ $id =~ ^[A-Za-z0-9._-]+$ ]] || { echo "id inválido: $id" >&2; exit 1; }
+    [ -f "$file" ] && [ -r "$file" ] || { echo "no se puede leer el fichero: $file" >&2; exit 1; }
+    for c in gh git jq; do
+      command -v "$c" >/dev/null 2>&1 || { echo "error: falta '$c' en el PATH" >&2; exit 2; }
+    done
+    cd "$root" || exit 2
+    slug="$(kit_origin_slug)"
+    [ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
+    title="📦 Changelog"; marker="<!-- kit-resumen: $id -->"
+    list="$(gh issue list --repo "$slug" --state open --search "in:title $title" --limit 100 --json number,title)" \
+      || { echo "error: no se pudo listar los issues" >&2; exit 2; }
+    n="$(printf '%s' "$list" | jq -r --arg t "$title" 'map(select(.title == $t)) | min_by(.number) | .number // empty')" \
+      || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+    [ -n "$n" ] || { echo "no hay issue \"$title\": ejecuta kit-on" >&2; exit 2; }
+    # markers are trusted only from this run's gh login
+    me="$(gh api user --jq .login)" && [ -n "$me" ] \
+      || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
+    comments="$(gh issue view "$n" --repo "$slug" --json comments)" \
+      || { echo "error: no se pudo leer los comentarios de #$n" >&2; exit 2; }
+    url="$(printf '%s' "$comments" | jq -r --arg me "$me" --arg m "$marker" \
+      '[.comments[] | select(.author.login == $me and ((.body // "") | startswith($m)))] | first | .url // empty')" \
+      || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+    if [ -n "$url" ]; then
+      echo "resumen ya publicado: $url"
+    else
+      body="$(mktemp)" || exit 2
+      trap 'rm -f "$body"' EXIT
+      { printf '%s\n' "$marker"; cat "$file"; } > "$body"
+      url="$(gh issue comment "$n" --repo "$slug" --body-file "$body")" \
+        || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
+      case "$url" in https://*) ;; *) echo "error: gh no devolvió la URL del comentario" >&2; exit 2 ;; esac
+      echo "$url"
+    fi
+    echo "FIN: $url"
     ;;
 esac

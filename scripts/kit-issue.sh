@@ -7,6 +7,7 @@
 #   bloquear  <root> <N> <id> <fichero-motivo>
 #   crear     <root> <titulo> <fichero-cuerpo> <listo|propuesta>
 # Issue state for the agent flow. Claims live in HTML-comment markers on the issue.
+# decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,6 +87,20 @@ require_not_foreign() {
     exit 1
   fi
 }
+# notify <N> <estado>: tell Dru out of GitHub; never fails. Forwards the notifier's lines except its FIN.
+notify() {
+  local t out rc line
+  t="$(gh issue view "$1" --repo "$slug" --json title --jq .title 2>/dev/null)" || t=""
+  out="$(bash "$here/kit-notify.sh" "$root" "${slug#*/}: $2" "#$1${t:+ $t}" "https://github.com/$slug/issues/$1" 2>"$tmpd/notify.err")"
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "aviso: no se pudo avisar ($(tr '\n' ' ' < "$tmpd/notify.err" | sed 's/ *$//'))" >&2
+    return 0
+  fi
+  while IFS= read -r line; do
+    case "$line" in FIN:*|"") ;; *) printf '%s\n' "$line" ;; esac
+  done <<< "$out"
+}
 read_file() { # <path>: print contents or exit 1
   [ -f "$1" ] && [ -r "$1" ] || { echo "no se puede leer el fichero: $1" >&2; exit 1; }
   cat "$1"
@@ -144,9 +159,9 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
   decision|bloquear)
     text="$(read_file "$3")" || exit 1
     if [ "$sub" = decision ]; then
-      marker="<!-- kit-decision -->"; label=necesita-decision; motivo="necesita decisión de producto"
+      marker="<!-- kit-decision -->"; label=necesita-decision; motivo="necesita decisión de producto"; aviso="necesita decisión"
     else
-      marker="<!-- kit-bloqueado -->"; label=bloqueado; motivo="bloqueado"
+      marker="<!-- kit-bloqueado -->"; label=bloqueado; motivo="bloqueado"; aviso="bloqueado"
     fi
     require_not_foreign "$n" "$id"
     comment "$n" "$marker
@@ -154,6 +169,7 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     gh issue edit "$n" --repo "$slug" --add-label "$label" --add-assignee @me >/dev/null \
       || { echo "error: no se pudo marcar #$n como $label" >&2; exit 2; }
     release "$n" "$id" "$motivo" || { echo "error: no se pudo soltar #$n" >&2; exit 2; }
+    notify "$n" "$aviso"
     echo "FIN: $label #$n"
     ;;
 

@@ -58,4 +58,50 @@ bash "$cl" validar "$r" >/dev/null 2>&1; [ $? -eq 1 ] || fail "entrada sin fecha
 # título vacío
 printf '## 2026-10-18\n### Nuevo:  · [#1](https://github.com/a/b/pull/1)\n' > "$r/CHANGELOG.md"
 bash "$cl" validar "$r" >/dev/null 2>&1; [ $? -eq 1 ] || fail "título vacío"
+
+# --- resumen en el issue fijado "📦 Changelog"
+rr="$(mk_repo)"; echo '{}' > "$rr/.agents-kit.json"
+git -C "$rr" remote add origin https://github.com/dru/demo.git
+sfile="$(mktemp)"; printf 'Fusionadas: #4\n' > "$sfile"
+use_flow_gh
+flow_add_issue 3 "📦 Changelog viejo"
+flow_add_issue 9 "📦 Changelog"
+out="$(bash "$cl" resumen "$rr" run-1 "$sfile" 2>&1)" || fail "resumen: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: https://github.com/dru/demo/issues/9#issuecomment-IC_9_0" ] || fail "resumen FIN: $out"
+[ "$(flow_issue 9 '.comments | length')" = 1 ] || fail "resumen: no comentó en #9"
+[ "$(flow_issue 9 '.comments[0].body')" = "$(printf '<!-- kit-resumen: run-1 -->\nFusionadas: #4')" ] \
+  || fail "resumen: cuerpo '$(flow_issue 9 '.comments[0].body')'"
+[ "$(flow_issue 3 '.comments | length')" = 0 ] || fail "resumen: comentó en un título parecido"
+while IFS= read -r line; do
+  case "$line" in api\ user*|*"--repo dru/demo"*) ;; *) fail "resumen: gh sin --repo: $line";; esac
+done < "$GH_LOG"
+# segunda llamada: no duplica
+out="$(bash "$cl" resumen "$rr" run-1 "$sfile" 2>&1)" || fail "resumen repetido: exit $? ($out)"
+[ "$(flow_issue 9 '.comments | length')" = 1 ] || fail "resumen repetido: duplicó el comentario"
+[ "$(last_line "$out")" = "FIN: https://github.com/dru/demo/issues/9#issuecomment-IC_9_0" ] || fail "resumen repetido FIN: $out"
+# otro id sí publica
+bash "$cl" resumen "$rr" run-2 "$sfile" >/dev/null 2>&1 || fail "resumen otro id"
+[ "$(flow_issue 9 '.comments | length')" = 2 ] || fail "resumen otro id: no publicó"
+# un comentario con el marcador de otro autor no cuenta
+use_flow_gh
+flow_add_issue 9 "📦 Changelog"
+tmp="$(mktemp)"
+jq '(.issues[0].comments) += [{id: "IC_x", body: "<!-- kit-resumen: run-1 -->\nfalso", author: {login: "intruso"}}]' \
+  "$GH_STATE/state.json" > "$tmp" && mv "$tmp" "$GH_STATE/state.json"
+out="$(bash "$cl" resumen "$rr" run-1 "$sfile" 2>&1)" || fail "resumen ajeno: exit $? ($out)"
+[ "$(flow_issue 9 '.comments | length')" = 2 ] || fail "resumen ajeno: no publicó el suyo"
+case "$(last_line "$out")" in *issuecomment-IC_x) fail "resumen ajeno: devolvió el comentario ajeno";; esac
+# sin issue fijado
+use_flow_gh
+flow_add_issue 9 "Otra cosa"
+err="$(bash "$cl" resumen "$rr" run-1 "$sfile" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "sin issue fijado: exit $rc"
+case "$err" in *'no hay issue "📦 Changelog": ejecuta kit-on'*) ;; *) fail "sin issue fijado: '$err'";; esac
+# uso y marcador
+bash "$cl" resumen "$rr" run-1 >/dev/null 2>&1; [ $? -eq 1 ] || fail "resumen sin fichero: uso"
+bash "$cl" resumen "$rr" run-1 /no/existe >/dev/null 2>&1; [ $? -eq 1 ] || fail "resumen fichero inexistente"
+bash "$cl" resumen "$rr" 'mal id' "$sfile" >/dev/null 2>&1; [ $? -eq 1 ] || fail "resumen id inválido"
+use_flow_gh
+bash "$cl" resumen "$m" run-1 "$sfile" >/dev/null 2>&1; [ $? -eq 1 ] || fail "resumen sin marcador"
+[ -s "$GH_LOG" ] && fail "resumen sin marcador: llamó a gh"
 echo "OK test_changelog"

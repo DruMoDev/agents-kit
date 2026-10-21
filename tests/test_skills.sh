@@ -116,6 +116,14 @@ grep -q 'KIT_CI_GRACE' "$run" || fail "kit-run must explain sin-ci after the gra
 grep -q 'no se ejecutan en PRs' "$run" && fail "kit-run keeps the obsolete workflows-never-run guidance"
 grep -q 'autoMerge` falso' "$REPO_ROOT/README.md" && grep -q 'quítalas a mano' "$REPO_ROOT/README.md" \
   || fail "README must say labels stay after Dru merges with autoMerge false"
+# phase 3: changelog and notifications
+for w in 'kit-changelog.sh" validar' 'kit-changelog.sh" resumen' 'scripts/kit-notify.sh' 'AVISO-CLAUDE' 'docs/changelog/' 'PushNotification'; do
+  grep -qF "$w" "$run" || fail "kit-run must mention $w"
+done
+grep -q 'llegan en la fase 3' "$run" && fail "kit-run keeps the phase 3 placeholder"
+grep -q 'ntfy' "$on" || fail "kit-on must mention ntfy"
+grep -q 'scripts/kit-notify.sh' "$on" || fail "kit-on must send the activation notice"
+grep -qF 'cat ~/.agents-kit/ntfy-topic' "$on" || fail "kit-on must show the ntfy topic"
 # every suite stops if lib.sh cannot be sourced, never falling back to the real repo
 for t in "$TESTS_DIR"/test_*.sh; do
   grep -qxF 'source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1' "$t" || fail "$(basename "$t") must guard its source of lib.sh"

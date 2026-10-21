@@ -17,7 +17,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 - Una duda de producto nunca la resuelves tú: ve al paso 7.
 - Un exit 2 que no sepas resolver con lo de abajo: intenta soltar el issue con el motivo, para el bucle y explícaselo a Dru.
 - Ficheros temporales (cuerpos, preguntas, rondas, salidas) siempre fuera del worktree, con `mktemp`.
-- Los avisos fuera de GitHub llegan en la fase 3: de momento todo queda en los issues, las PRs y el resumen final.
+- Cada línea `AVISO-CLAUDE: <texto>` en la salida de un script es un aviso para Dru: llama a la herramienta de notificación push de la sesión (en Claude Code, `PushNotification`) con ese texto; si la herramienta no existe, ignórala. Un `aviso: no se pudo avisar (...)` en stderr no para nada: cuéntalo en el resumen.
 
 ## Arranque
 
@@ -42,7 +42,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    - Tests primero (unitarios, e2e y casos límite), luego el código. Tests, lint y build de `AGENTS.md` en verde en local.
    - `.implementer` dice el modelo que implementa en cada herramienta. Si la sesión no corre con ese modelo, delega la implementación en un subagente con ese modelo cuando la herramienta lo permita, pasándole la ruta del worktree, el issue y tus 4 líneas.
    - Automejora en la misma PR: si aprendiste algo, actualiza `AGENTS.md` y las skills del proyecto.
-4. **PR.** Commit en el worktree y `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" abrir <wt> <N> "<título>" <fichero-cuerpo>` (empuja; añade `Cierra #<N>` si falta; si la rama ya tiene una PR abierta, como en un issue retomado, la reutiliza sin crear otra). La primera línea es `<pr>`. Si esa PR está en borrador (`gh pr view <pr> --repo <slug> --json isDraft`), quítaselo con `gh pr ready <pr> --repo <slug>`. Después añade la entrada de `CHANGELOG.md` con el formato del comentario de cabecera del propio fichero (ya con el número y la URL de la PR), commit y `git -C <wt> push -q`. Entonces la puerta de CI:
+4. **PR.** Commit en el worktree y `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" abrir <wt> <N> "<título>" <fichero-cuerpo>` (empuja; añade `Cierra #<N>` si falta; si la rama ya tiene una PR abierta, como en un issue retomado, la reutiliza sin crear otra). La primera línea es `<pr>`. Si esa PR está en borrador (`gh pr view <pr> --repo <slug> --json isDraft`), quítaselo con `gh pr ready <pr> --repo <slug>`. Después añade la entrada de `CHANGELOG.md` con el formato del comentario de cabecera del propio fichero (ya con el número y la URL de la PR) y comprueba el formato con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-changelog.sh" validar <wt>` hasta que salga 0 (exit 1 señala `CHANGELOG.md:<línea>: <motivo>`: corrígelo). Si el cambio es visual, durante la comprobación e2e del estado final haz capturas con el navegador automatizado, solo las que aportan, guárdalas en `<wt>/docs/changelog/<pr>-<nombre>.png` comprimidas por debajo de 500 KB y enlázalas en la versión extendida de la entrada; sin cambio visual, sin capturas. Commit y `git -C <wt> push -q`. Entonces la puerta de CI:
    - `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" esperar-ci <wt> <pr>`. `FIN: verde`: sigue.
    - `FIN: sin-ci`: el repo no tiene workflows, o ninguno arrancó un check para ese SHA en `KIT_CI_GRACE` segundos (300 por defecto; por ejemplo, workflows sin disparador `pull_request`). Ejecuta en el worktree los comandos de test, lint y build de `AGENTS.md` sobre el último commit, guarda toda su salida en un fichero y, si todo pasa, `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" gate-local <wt> <pr> <fichero>`. Repite el gate tras cada push: vale solo para ese SHA, y solo mientras ese SHA no tenga ningún check (si aparece alguno, manda el CI).
    - Exit 1 `el CI terminó en ...`: lee el fallo (`gh run view --repo <slug> --log-failed`), corrígelo, commit, push y vuelve a esperar.
@@ -77,7 +77,9 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 
 ## Resumen final
 
-Cuando `siguiente` da exit 1, escribe en el chat:
+Cuando `siguiente` da exit 1, antes del texto del chat: si en esta ejecución entró algo en `main` o hay issues esperando a Dru, escribe el resumen en un fichero temporal (cada PR fusionada con su línea corta del changelog y su URL, y cada issue que espera a Dru con su URL y qué tiene que hacer) y publícalo con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-changelog.sh" resumen <raíz> <id> <fichero>`; la URL del comentario es la línea `FIN: <url>` (si ya estaba publicado, no se duplica). Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-notify.sh" <raíz> "<repo>: kit-run terminado" "<n> fusionadas, <m> esperan" <url del comentario>`. Si no pasó nada, ni resumen ni aviso. Si alguno de los dos falla (por ejemplo, exit 2 `no hay issue "📦 Changelog": ejecuta kit-on`), no pares: cuéntalo en el chat.
+
+Después escribe en el chat:
 
 - Cada PR fusionada (su URL) y cada issue cerrado por obsoleto.
 - Cada issue que espera a Dru, con su URL y qué tiene que hacer:
