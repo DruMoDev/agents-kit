@@ -53,14 +53,19 @@ grep -q "tema ntfy nuevo" <<<"$out" && fail "repite tema nuevo"
 grep -q "^Click:" <(tail -n 8 "$CURL_LOG") && fail "Click sin url"
 [ "$(cat "$f")" = "$topic" ] || fail "tema cambió"
 
-# tema en marcador
-r="$(mk '{"notify":"ntfy","ntfyTopic":"mi-tema"}')"; : > "$CURL_LOG"
-bash "$N" "$r" T M >/dev/null || fail "mi-tema rc"
+# tema por variable de entorno; el marcador del repo no puede desviarlo
+r="$(mk '{"notify":"ntfy","ntfyTopic":"del-repo"}')"; : > "$CURL_LOG"
+KIT_NTFY_TOPIC=mi-tema bash "$N" "$r" T M >/dev/null || fail "mi-tema rc"
 grep -qx "https://ntfy.sh/mi-tema" "$CURL_LOG" || fail "URL mi-tema"
+: > "$CURL_LOG"; bash "$N" "$r" T M >/dev/null || fail "repo rc"
+grep -q "del-repo" "$CURL_LOG" && fail "el marcador desvió el tema"
 
 # tema inválido
-r="$(mk '{"notify":"ntfy","ntfyTopic":"a/b"}')"
-bash "$N" "$r" T M >/dev/null 2>&1; [ $? -eq 2 ] || fail "tema inválido rc"
+KIT_NTFY_TOPIC=a/b bash "$N" "$r" T M >/dev/null 2>&1; [ $? -eq 2 ] || fail "tema inválido rc"
+
+# url con salto de línea no inyecta cabeceras
+: > "$CURL_LOG"; bash "$N" "$r" T M "$(printf 'https://x\nX-Evil: 1')" >/dev/null || fail "url rc"
+grep -q "^X-Evil" "$CURL_LOG" && fail "cabecera inyectada"
 
 # fallo de curl
 r="$(mk '{"notify":"ntfy"}')"

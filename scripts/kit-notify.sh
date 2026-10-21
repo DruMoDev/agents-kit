@@ -12,7 +12,7 @@ source "$here/lib/transport.sh"
 root="$(cd "$1" && pwd)"
 kit_require_marker "$root" || exit $?
 flat() { printf '%s' "$1" | tr '\r\n' '  '; }
-title="$(flat "$2")"; msg="$(flat "$3")"; url="${4:-}"
+title="$(flat "$2")"; msg="$(flat "$3")"; url="$(flat "${4:-}")"
 
 channel="$(kit_config "$root" '.notify')" || exit $?
 # kit_transport: en nube y en local ntfy y none funcionan igual en esta fase.
@@ -23,7 +23,8 @@ case "$channel" in
     echo "AVISO-CLAUDE: $title: $msg $url"
     echo "FIN: claude-push" ;;
   ntfy)
-    topic="$(kit_config "$root" '.ntfyTopic | if type == "string" then . else "" end')" || exit $?
+    # The topic is the only secret: it comes from the user (env or ~/.agents-kit), never from the repo.
+    topic="${KIT_NTFY_TOPIC:-}"
     created=0
     if [ -z "$topic" ]; then
       dir="$HOME/.agents-kit"; file="$dir/ntfy-topic"
