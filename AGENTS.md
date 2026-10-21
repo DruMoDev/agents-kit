@@ -14,15 +14,15 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso y reglas).
 - `rules/`: reglas inyectadas en las sesiones.
 - `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout` y `kit-run` (con `references/`: plantilla de issue, prompt del revisor y formato de ronda).
-- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-review.sh`...) y `release.sh`.
-- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`).
+- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-review.sh`, `kit-changelog.sh`, `kit-notify.sh`...) y `release.sh`.
+- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`; `transport.sh`, dónde corre la sesión).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
-- `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node).
+- `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node). `tests/fixtures/changelog/` es el contrato del formato de `CHANGELOG.md`: la web lo reutilizará para probar su parser.
 - `docs/`: specs y planes.
 
 ## Flujo de issues
 
-`kit-plan` y `kit-scout` crean issues (`listo` o `propuesta`); `kit-run` los lleva hasta `main`. El estado vive en GitHub: etiquetas `listo`, `propuesta`, `en-curso`, `necesita-decision`, `bloqueado` y marcadores HTML en los comentarios de issues y PRs.
+`kit-plan` y `kit-scout` crean issues (`listo` o `propuesta`); `kit-run` los lleva hasta `main`. El estado vive en GitHub: etiquetas `listo`, `propuesta`, `en-curso`, `necesita-decision`, `bloqueado` y marcadores HTML en los comentarios de issues y PRs. Los avisos salen de `kit-notify.sh` (`ntfy`, `claude-push` o `none`); el tema de ntfy solo lo pone el usuario (`~/.agents-kit/ntfy-topic` o `KIT_NTFY_TOPIC`), nunca el repo.
 
 ## Comandos
 
