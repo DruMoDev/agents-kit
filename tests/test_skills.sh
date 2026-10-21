@@ -83,7 +83,7 @@ grep -q 'references/issue.md' "$plan" || fail "kit-plan must use the issue templ
 grep -Eq 'kit-issue.sh" crear .* propuesta' "$scout" || fail "kit-scout creates issues as propuesta"
 grep -Eq 'crear .* listo' "$scout" && fail "kit-scout must never create listo issues"
 grep -q 'references/issue.md' "$scout" || fail "kit-scout must use the issue template"
-for sc in kit-worktree.sh kit-pr.sh kit-review.sh lib/config.sh; do
+for sc in kit-worktree.sh kit-pr.sh kit-review-all.sh lib/config.sh; do
   grep -q "scripts/$sc" "$run" || fail "kit-run must use scripts/$sc"
 done
 for sub in siguiente reclamar soltar decision bloquear; do
@@ -92,14 +92,12 @@ done
 for sub in abrir esperar-ci gate-local ronda fusionar; do
   grep -q "kit-pr.sh\" $sub" "$run" || fail "kit-run must call kit-pr.sh $sub"
 done
-grep -q 'kit_reviewers' "$run" || fail "kit-run must read reviewers with kit_reviewers"
 grep -q 'maxReviewRounds' "$run" || fail "kit-run must honour maxReviewRounds"
 grep -q 'autoMerge' "$run" || fail "kit-run must honour autoMerge"
 grep -q 'gh pr ready --undo' "$run" || fail "kit-run must move the PR to draft"
 grep -q '## Decisiones de comportamiento' "$run" || fail "kit-run must require the Decisiones de comportamiento section"
 grep -q 'FIN: sin-ci' "$run" || fail "kit-run must handle FIN: sin-ci"
-grep -q 'kit-review.sh" .*&$' "$run" || fail "kit-run must launch each reviewer as a background job"
-grep -q 'wait "${pids\[' "$run" || fail "kit-run must wait for each reviewer PID"
+grep -q 'kit-review-all.sh" <wt> <pr> <r> <N>' "$run" || fail "kit-run must launch the reviewers with kit-review-all.sh"
 grep -q 'kit_origin_slug' "$run" || fail "kit-run must take the repo slug from origin like the scripts"
 grep -q 'kit-pr.sh" historial' "$run" || fail "kit-run must continue round numbering from historial"
 grep -q 'ninguno aplicado' "$REPO_ROOT/skills/kit-run/references/ronda.md" || fail "ronda.md must stop when nothing was applied"
@@ -126,8 +124,8 @@ grep -q 'tema ntfy nuevo: <tema>' "$run" && grep -q 'suscríbete' "$run" \
 grep -q 'si `resumen` falla, avisa igual sin URL' "$run" || fail "kit-run must notify without URL when resumen fails"
 grep -q 'pasaron a `necesita-decision` o `bloqueado` en esta ejecución' "$run" \
   || fail "kit-run summary trigger must be limited to this run"
-# the reviewer launcher uses bash syntax: it must run under bash whatever the agent's shell is (zsh breaks it)
-grep -qx "   bash <<'EOS'" "$run" && grep -qx '   EOS' "$run" || fail "kit-run reviewer launcher must run under bash"
+# no inline bash in the skill: under zsh it broke (bad substitution); the launcher is a script
+grep -q 'pids' "$run" && fail "kit-run keeps the inline reviewer launcher"
 grep -q 'ntfy' "$on" || fail "kit-on must mention ntfy"
 grep -q 'scripts/kit-notify.sh' "$on" || fail "kit-on must send the activation notice"
 grep -qF 'cat ~/.agents-kit/ntfy-topic' "$on" || fail "kit-on must show the ntfy topic"
