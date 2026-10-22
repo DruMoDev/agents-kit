@@ -40,7 +40,7 @@ export async function fetchImage(
 ): Promise<Response> {
   if (!imageAllowed(path)) return notFound();
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  const headers = { "content-type": TYPES[ext], "cache-control": "public, max-age=86400" };
+  const headers = { "content-type": TYPES[ext], "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" };
 
   if (env.DATA_SOURCE === "fixtures") {
     const bytes = Uint8Array.from(atob(PLACEHOLDER_PNG), (c) => c.charCodeAt(0));

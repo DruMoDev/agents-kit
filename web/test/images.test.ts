@@ -30,7 +30,8 @@ describe("fetchImage", () => {
     const res = await fetchImage({ GITHUB_TOKEN: "tok" }, repo, "docs/changelog/12-login.png", { fetch: fetchMock });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
-    expect(res.headers.get("cache-control")).toBe("public, max-age=86400");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=86400");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("set-cookie")).toBeNull();
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.github.com/repos/dru/demo/contents/docs/changelog/12-login.png");
