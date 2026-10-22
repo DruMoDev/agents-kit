@@ -139,11 +139,13 @@ read_file() { # <path>: print contents or exit 1
 
 case "$sub" in
   siguiente)
-    list="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title,labels)" \
+    list="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title,labels,author)" \
       || { echo "error: no se pudo listar los issues" >&2; exit 2; }
-    next="$(printf '%s' "$list" | jq -r '
+    # only issues opened by this gh account: anyone can open an issue in a public repo, and kit-run acts on it unattended
+    me="$(gh api user --jq .login)" && [ -n "$me" ] || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
+    next="$(printf '%s' "$list" | jq -r --arg me "$me" '
         def rank: if index("prio:alta") then 0 elif index("prio:media") then 1 elif index("prio:baja") then 3 else 2 end;
-        map([.labels[].name] as $l | select(.title != "📦 Changelog"
+        map(select(.author.login == $me)) | map([.labels[].name] as $l | select(.title != "📦 Changelog"
             and (["en-curso", "necesita-respuesta", "necesita-decision", "bloqueado", "propuesta", "someday", "registro"]
               | any(. as $x | $l | index($x)) | not))
           | {number, r: ($l | rank)})

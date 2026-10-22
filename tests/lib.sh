@@ -54,8 +54,10 @@ use_flow_gh() {
 flow_add_issue() {
   local n="$1" t="$2"; shift 2
   local tmp; tmp="$(mktemp)"
-  jq --argjson n "$n" --arg t "$t" '.issues += [{number: $n, title: $t, body: "", state: "OPEN",
-      labels: [$ARGS.positional[] | {name: .}], assignees: [], comments: []}]' --args "$@" \
+  # FLOW_AUTHOR sets the issue author (default: the gh user, filled in by the stub)
+  jq --argjson n "$n" --arg t "$t" --arg a "${FLOW_AUTHOR:-}" '.issues += [{number: $n, title: $t, body: "", state: "OPEN",
+      labels: [$ARGS.positional[] | {name: .}], assignees: [], comments: []}
+      + (if $a == "" then {} else {author: {login: $a}} end)]' --args "$@" \
     < "$GH_STATE/state.json" > "$tmp" && mv "$tmp" "$GH_STATE/state.json" || fail "flow_add_issue"
 }
 

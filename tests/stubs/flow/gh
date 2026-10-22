@@ -99,8 +99,8 @@ json_list() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
 
 case "$cmd" in
   "issue list")
-    jq --arg st "$st" --argjson l "$(json_list "${labels[@]+"${labels[@]}"}")" \
-      '[.issues[] | select($st == "all" or (.state | ascii_downcase) == $st)
+    jq --arg st "$st" --arg u "${GH_USER:-dru}" --argjson l "$(json_list "${labels[@]+"${labels[@]}"}")" \
+      '[.issues[] | .author //= {login: $u} | select($st == "all" or (.state | ascii_downcase) == $st)
         | select([.labels[].name] as $have | all($l[]; . as $x | $have | index($x)))]
        | sort_by(-.number)' "$state" | emit ;;
   "issue view")

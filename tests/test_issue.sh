@@ -34,6 +34,8 @@ flow_add_issue 11 "sin prio vieja v2" listo
 flow_add_issue 14 "media nueva" prio:media
 flow_add_issue 13 "media vieja" prio:media
 flow_add_issue 16 "alta cogida" prio:alta en-curso
+# an issue opened by someone else never enters the pool (prompt injection into an unattended agent)
+FLOW_AUTHOR=desconocido flow_add_issue 17 "alta ajena" prio:alta
 out="$(bash "$issue" siguiente "$r" 2>&1)" || fail "siguiente: exit $? ($out)"
 [ "$out" = "$(printf '13\nFIN: 13')" ] || fail "siguiente media: salida '$out'"
 grep -q -- '--repo dru/demo' "$GH_LOG" || fail "siguiente: gh sin --repo"
