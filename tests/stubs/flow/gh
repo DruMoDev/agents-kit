@@ -106,7 +106,7 @@ case "$cmd" in
   "issue view")
     issue_exists "${pos[0]}"
     jq --argjson n "${pos[0]}" --arg r "$repo" --arg u "${GH_USER:-dru}" '.issues[] | select(.number == $n)
-      | .url //= "https://github.com/\($r)/issues/\($n)"
+      | .url //= "https://github.com/\($r)/issues/\($n)" | .author //= {login: $u}
       | .comments |= map(.author //= {login: $u} | .url //= "https://github.com/\($r)/issues/\($n)#issuecomment-\(.id)")' \
       "$state" | emit ;;
   "issue create")

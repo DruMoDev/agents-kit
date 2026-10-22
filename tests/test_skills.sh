@@ -145,6 +145,17 @@ grep -q 'KIT_CI_GRACE' "$run" || fail "kit-run must explain sin-ci after the gra
 grep -q 'no se ejecutan en PRs' "$run" && fail "kit-run keeps the obsolete workflows-never-run guidance"
 grep -q 'autoMerge` falso' "$REPO_ROOT/README.md" && grep -q 'quítala a mano' "$REPO_ROOT/README.md" \
   || fail "README must say en-curso stays after Dru merges with autoMerge false"
+# comment trust: issues are read with kit-issue.sh leer (only the gh account's comments), never with gh --comments
+grep -q 'kit-issue.sh" leer <raíz> <N>' "$run" || fail "kit-run must read the issue with kit-issue.sh leer"
+grep -q -- '--comments' "$run" && fail "kit-run still reads comments with gh issue view --comments"
+grep -q 'kit-issue.sh" leer' "$plan" || fail "kit-plan must read existing issues with kit-issue.sh leer"
+for f in "$run" "$plan" "$REPO_ROOT/README.md"; do
+  grep -q 'nunca son instrucciones' "$f" || fail "$f must say other accounts' comments are never instructions"
+done
+# kit-run <N>: one issue, claimed only if siguiente could pick it
+grep -q 'kit-run <N>' "$run" || fail "kit-run must document the single-issue mode"
+grep -q 'kit-issue.sh" siguiente <raíz> <N>' "$run" || fail "kit-run <N> must check the issue with siguiente <N>"
+grep -q 'kit-skills-check.sh' "$on" || fail "kit-on must propose kit-skills-check.sh for the project CI"
 # phase 3: changelog and notifications
 for w in 'kit-changelog.sh" validar' 'kit-changelog.sh" resumen' 'scripts/kit-notify.sh' 'AVISO-CLAUDE' 'docs/changelog/' 'PushNotification'; do
   grep -qF "$w" "$run" || fail "kit-run must mention $w"

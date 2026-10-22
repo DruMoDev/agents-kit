@@ -34,11 +34,23 @@ kit_global_init() {
   echo "creada la configuración global en $g"
 }
 
+# _kit_warn_once <scope> <text>: print the warnings on stderr unless the same text for the same scope was printed in
+# the last hour (kit-run reads the config from many processes; Dru only needs to see it once per run). A stamp per
+# scope and text lives in ${KIT_AVISOS_DIR:-$TMPDIR/agents-kit-avisos-<uid>}; if it cannot be written, always warn.
+_kit_warn_once() {
+  local dir="${KIT_AVISOS_DIR:-${TMPDIR:-/tmp}/agents-kit-avisos-$(id -u)}" key
+  key="$(printf '%s\n%s' "$1" "$2" | cksum | tr ' ' '-')"
+  [ -n "$(find "$dir/$key" -mmin -60 2>/dev/null)" ] && return 0
+  printf '%s\n' "$2" >&2
+  (umask 077; mkdir -p "$dir" && touch "$dir/$key") 2>/dev/null || true
+}
+
 # kit_config <root> <jq-filter>: run the filter (jq -r) over plugin < global < repo.
-# Repo keys outside the whitelist are ignored with one warning per key on stderr (v2 keys name their new key).
+# Repo keys outside the whitelist are ignored with one warning per key on stderr (v2 keys name their new key),
+# printed once per hour for the same repo and warnings (_kit_warn_once).
 # Return: 0 ok, 2 marker or global config is not a JSON object.
 _kit_config_file() {
-  local mk="$1" filter="$2" g global merged
+  local mk="$1" filter="$2" scope="$3" g global merged warnings
   if ! jq -e 'type == "object"' "$mk" >/dev/null 2>&1; then
     echo "error: .agents-kit.json no es JSON válido" >&2
     return 2
@@ -54,7 +66,7 @@ _kit_config_file() {
     global=/dev/null # slurps to []: treated as {}
   fi
   # \(q) is a single quote (the program itself is single-quoted for the shell).
-  jq -r --argjson ok "$_KIT_REPO_KEYS" --arg g "$g" --arg q "'" '
+  warnings="$(jq -r --argjson ok "$_KIT_REPO_KEYS" --arg g "$g" --arg q "'" '
     def warn($m): "aviso: .agents-kit.json: \($m)";
     to_entries[] | .key as $k | .value as $v |
     if ($ok | index([$k])) then empty
@@ -68,7 +80,8 @@ _kit_config_file() {
     elif $k == "notify" then warn("\($q)notify\($q) se ignora; el canal de avisos va en \($q)notify\($q) de la configuración global (\($g))")
     elif $k == "proveedores" or $k == "implementador" then warn("\($q)\($k)\($q) solo se lee de la configuración global (\($g)); se ignora")
     else warn("clave \($q)\($k)\($q) no admitida en el repo; se ignora")
-    end' "$mk" >&2
+    end' "$mk")"
+  [ -z "$warnings" ] || _kit_warn_once "$scope" "$warnings"
   if ! merged="$(jq -c -n --argjson ok "$_KIT_REPO_KEYS" \
       --slurpfile t "$_KIT_TEMPLATE" --slurpfile g "$global" --slurpfile r "$mk" '
       $t[0] as $t | ($g[0] // {}) as $g | $r[0] as $r |
@@ -83,7 +96,7 @@ _kit_config_file() {
 }
 
 kit_config() {
-  _kit_config_file "$1/.agents-kit.json" "$2"
+  _kit_config_file "$1/.agents-kit.json" "$2" "$1"
 }
 
 # kit_config_base <wt> <jq-filter> <ref>: like kit_config, but the repo layer is the marker at <ref> (the default
@@ -96,7 +109,7 @@ kit_config_base() {
   else
     echo '{}' > "$tmp"
   fi
-  _kit_config_file "$tmp" "$filter"; rc=$?
+  _kit_config_file "$tmp" "$filter" "$wt@$ref"; rc=$?
   rm -f "$tmp"
   return $rc
 }

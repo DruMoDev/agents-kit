@@ -38,6 +38,9 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 - `kit-plan <objetivo>`: acuerda contigo el comportamiento (una pregunta cada vez), propone el desglose y, cuando lo apruebas, crea los issues con la prioridad acordada (`prio:alta`, `prio:media` o `prio:baja`).
 - `kit-scout`: busca bugs, tests que faltan, deuda y docs obsoletas, y abre como máximo 5 issues `propuesta` (con prioridad puesta por el agente).
 - `kit-run`: coge los issues abiertos por orden (ver "Backlog") y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (o gate local si no corre ningún check sobre la PR), rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza. Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
+- `kit-run <N>`: lo mismo para un solo issue. Lo coge solo si `kit-run` también podría cogerlo (abierto, de tu cuenta y sin etiquetas que lo excluyan) y, si no, dice por qué. Sirve para lanzarlo en segundo plano desde una sesión contigo, por ejemplo para arreglar un bug que has aprobado sin parar lo que estáis haciendo.
+
+Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode). Si una regla del `AGENTS.md` del proyecto choca con una del kit, manda la del proyecto (sección `## Reglas del proyecto`). El límite: el código va por PR, con tests en verde y revisión, y el producto lo decides tú; eso no lo cambia un `AGENTS.md`. Las rutas que declares en `"contenido": ["docs/ideas/"]` pueden ir directas a la rama por defecto en una sesión contigo; `kit-run` siempre va por PR.
 
 Cómo se invocan:
 
@@ -80,7 +83,24 @@ Cada ronda tiene tres puestos de revisión (`revision.puestos` de `~/.agents-kit
 
 Los revisores se ejecutan sin supervisión y con todos los permisos locales, cada uno en un clon aislado del head de la PR: sin credenciales de GitHub, con `gh` y `git push` bloqueados y sin la configuración de agente que traiga la PR. Aun así pueden ejecutar código del repo en tu máquina: es el mismo nivel de confianza que el agente que implementa.
 
-Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode).
+### Configuración global
+
+`~/.agents-kit/config.json` (o la ruta de `KIT_CONFIG`) guarda lo que depende de ti y vale para todos tus repos; `kit-on` la crea desde `templates/config.json` si falta. Precedencia: valores del plugin < global < `.agents-kit.json` del repo.
+
+- `proveedores`: familias de modelos que pagas, cada una con su `cli` (`claude`, `opencode` o `codex`) y sus modelos `profundo` y `rapido`. Solo en el global.
+- `revision.puestos`: los puestos de revisión (ver "Revisores").
+- `implementador`: `{"familia": "claude", "nivel": "profundo"}`, el modelo que implementa en `kit-run`. Solo en el global.
+- `notify`: canal de avisos (ver "Avisos"). Solo en el global.
+- `autoMerge` y `maxReviewRounds`.
+
+Un repo solo puede definir en su marcador `autoMerge`, `maxReviewRounds`, `revision.puestos` (sustituye la lista entera), `contenido`, `protegido`, `setup`, `checks` y `changelog`. Cualquier otra clave se ignora con un aviso que dice dónde va (sale una vez por hora y repo, no en cada script).
+
+### Modelo de confianza
+
+- **Solo tus issues y tus comentarios.** `kit-run` solo coge issues abiertos por la cuenta de `gh` con la que corre, y lee cada issue con `kit-issue.sh leer`, que muestra solo los comentarios de esa cuenta y cuenta los demás sin enseñarlos: los comentarios de otras personas nunca son instrucciones, aunque digan venir de ti. En un repo público cualquiera puede abrir issues o comentar; nada de eso llega al agente como orden.
+- **Las puertas de fusión vienen de la rama por defecto.** `fusionar` lee `protegido`, `checks` y `revision.puestos` del marcador de la rama por defecto y ejecuta el `pre-merge` tal como está en ella: una PR no puede aflojar sus propias puertas.
+- **Lo tuyo no lo cambia un repo.** `proveedores`, `implementador`, `notify` y el tema de ntfy solo se leen de tu máquina: un repo no puede elegir qué CLI se ejecuta ni adónde van los avisos.
+- **Revisores aislados.** Cada revisor corre en un clon desechable sin credenciales, con `gh` y `git push` bloqueados (ver "Revisores"). El texto de la PR se le pasa como afirmaciones que tiene que comprobar.
 
 
 ### Ganchos por repo
@@ -92,6 +112,15 @@ En `.agents-kit.json` del repo (rutas relativas al repo, sin `..` ni absolutas; 
 - `"checks": {"pre-merge": "tools/pre-merge.sh"}`: `kit-pr.sh fusionar` lo ejecuta en el worktree; si falla, no fusiona y muestra su salida.
 
 `fusionar` lee `protegido`, `checks` y `revision.puestos` del marcador de la rama por defecto y ejecuta el script `pre-merge` tal como está en ella: una PR no puede aflojar sus propias puertas. `kit-worktree.sh barrer <raíz>` borra los worktrees limpios del kit ya terminados (PR fusionada con la punta de la rama, o issue cerrado sin commits propios) y su rama local; ante un fallo de gh no borra; `kit-run` lo ejecuta al terminar.
+
+### Migrar un repo desde la v2
+
+Tras actualizar el plugin, un repo activado con la v2 sigue funcionando; esto es lo que cambia:
+
+1. **Etiquetas.** `listo` ya no existe: cualquier issue abierto de tu cuenta entra en el reparto, así que antes de lanzar `kit-run` mira qué cogería con `scripts/kit-issue.sh reparto <raíz>` y aparca lo que no quieras con `scripts/kit-issue.sh aparcar <raíz> <N>...` (`someday`). `necesita-decision` pasa a llamarse `necesita-respuesta`; mientras tanto excluye igual. Para renombrarla en todos los issues de una vez, antes de crear las nuevas: `gh label edit necesita-decision --name necesita-respuesta --repo <owner/repo>`. Después, `scripts/kit-github-setup.sh <raíz>` crea las etiquetas que faltan (`necesita-respuesta`, `someday`, `registro`, `prio:*`) y marca el issue "📦 Changelog" con `registro`. Cuando ningún issue use `listo`, puedes borrarla (`gh label delete listo --repo <owner/repo>`).
+2. **Claves del marcador.** `reviewers` pasa a `revision.puestos` (en el global, o en el marcador si el repo necesita su propia lista); `implementer` pasa a `implementador` del global; `notify` va solo en el global. Mientras sigan en `.agents-kit.json` se ignoran con un aviso; quítalas por PR.
+3. **Proveedores.** Para cambiar de proveedor no se toca ningún repo: en el global, cambia el `cli` de una familia (`"gpt": {"cli": "codex", ...}`), sus modelos, o añade una familia nueva.
+4. **PRs a medias.** Una PR abierta con la v2 cuya última ronda no tiene revisión por puesto necesita una ronda nueva antes de fusionarse.
 
 ## Web de changelogs
 

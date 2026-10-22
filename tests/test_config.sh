@@ -71,6 +71,7 @@ out="$(kit_config "$d" '.notify' 2>/dev/null)"
 [ "$(kit_config "$d" 'has("otra")' 2>/dev/null)" = "false" ] || fail "clave desconocida no se ignora"
 [ "$(kit_config "$d" '.revision | has("extra")' 2>/dev/null)" = "false" ] || fail "revision.extra no se ignora"
 [ "$(kit_config "$d" '.revision.puestos | length' 2>/dev/null)" = "0" ] || fail "puestos vacío del repo"
+rm -rf "${KIT_AVISOS_DIR:?}"/*
 err="$(kit_config "$d" .notify 2>&1 >/dev/null)"
 for k in proveedores implementador notify otra revision.extra; do
   [ "$(grep -c "'$k'" <<<"$err")" = 1 ] || fail "aviso de '$k' (uno): '$err'"
@@ -86,6 +87,22 @@ grep -q "'implementer' es de la v2.*'implementador'" <<<"$err" || fail "aviso im
 grep -q "'notify'.*configuración global" <<<"$err" || fail "aviso notify: '$err'"
 [ "$(kit_config "$d" .maxReviewRounds 2>/dev/null)" = "3" ] || fail "v2: sigue leyendo lo admitido"
 [ "$(kit_config "$d" '.revision.puestos | length' 2>/dev/null)" = "3" ] || fail "v2: reviewers no sustituye puestos"
+
+# los avisos salen una vez: ni otra llamada ni otro proceso los repiten mientras el marcador no cambie
+err="$(kit_config "$d" .maxReviewRounds 2>&1 >/dev/null)"
+[ -z "$err" ] || fail "aviso repetido en la misma sesión: '$err'"
+err="$(bash -c 'source "$1/scripts/lib/config.sh"; kit_config "$2" .autoMerge' _ "$REPO_ROOT" "$d" 2>&1 >/dev/null)"
+[ -z "$err" ] || fail "aviso repetido en otro proceso: '$err'"
+echo '{"reviewers": {"claude": []}, "maxReviewRounds": 4}' > "$d/.agents-kit.json"
+err="$(kit_config "$d" .maxReviewRounds 2>&1 >/dev/null)"
+grep -q "'reviewers' es de la v2" <<<"$err" || fail "marcador cambiado: el aviso debe volver a salir: '$err'"
+d2="$(mk_repo)"; cp "$d/.agents-kit.json" "$d2/.agents-kit.json"
+err="$(kit_config "$d2" .maxReviewRounds 2>&1 >/dev/null)"
+grep -q "'reviewers' es de la v2" <<<"$err" || fail "otro repo: el aviso debe salir: '$err'"
+# sin poder recordarlos (directorio no escribible), se avisa siempre y la lectura sigue
+[ "$(KIT_AVISOS_DIR=/dev/null/x kit_config "$d" .maxReviewRounds 2>/dev/null)" = "4" ] || fail "sin directorio de avisos"
+err="$(KIT_AVISOS_DIR=/dev/null/x kit_config "$d" .maxReviewRounds 2>&1 >/dev/null)"
+grep -q "'reviewers' es de la v2" <<<"$err" || fail "sin directorio de avisos: debe avisar: '$err'"
 
 # KIT_CONFIG ausente: HOME/.agents-kit/config.json
 echo '{}' > "$d/.agents-kit.json"
