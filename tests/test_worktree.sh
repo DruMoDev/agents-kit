@@ -135,31 +135,39 @@ bash "$wt" abrir "$r" 42 tres >/dev/null 2>"$tmpe"; rc=$?
 git -C "$r" worktree remove --force "$KIT_WORKTREES/$name/issue-42-tres" 2>/dev/null; git -C "$r" branch -q -D issue-42-tres 2>/dev/null
 echo '{}' > "$r/.agents-kit.json"
 
-# barrer: only clean worktrees of the kit dir whose HEAD is an ancestor of origin/main
+# barrer: only clean worktrees of the kit dir that are finished (merged PR at the tip, or closed issue without commits)
 bash "$wt" barrer "$r" extra >/dev/null 2>&1; [ $? -eq 1 ] || fail "barrer con argumentos debe dar 1"
-out="$(bash "$wt" barrer "$r" 2>&1)" || fail "barrer 1: $out"
-[ "$(last_line "$out")" = "FIN: 1 borrados" ] || fail "barrer 1 FIN: $out"
-[ ! -e "$path31" ] || fail "barrer no borró 31 (main avanzó tras abrirlo)"
-git -C "$r" rev-parse -q --verify issue-31-bar >/dev/null && fail "barrer no borró la rama 31"
-bash "$wt" abrir "$r" 44 cinco >/dev/null 2>&1 || fail "abrir 44"
-p44="$KIT_WORKTREES/$name/issue-44-cinco"
-out="$(bash "$wt" barrer "$r" 2>&1)" || fail "barrer fresco: $out"
-[ "$(last_line "$out")" = "FIN: 0 borrados" ] || fail "barrer no borra un worktree recién abierto: $out"
-[ -d "$p44" ] || fail "barrer borró un worktree recién abierto"
-# main advances: 44 (clean, behind), 40 (dirty, behind), 43 (own commit, not an ancestor) and a worktree outside the kit dir
-bash "$wt" abrir "$r" 43 cuatro >/dev/null 2>&1 || fail "abrir 43"
-p43="$KIT_WORKTREES/$name/issue-43-cuatro"
-(cd "$p43" && echo z > z.txt && git add z.txt && git commit -q -m z) || fail "commit 43"
+for spec in "50 abierto" "51 cerrado" "52 fusionado" "53 sucio" "54 conpr" "55 ajeno"; do
+  bash "$wt" abrir "$r" ${spec% *} ${spec#* } >/dev/null 2>&1 || fail "abrir $spec"
+done
+kw() { echo "$KIT_WORKTREES/$name/issue-$1"; }
+(cd "$(kw 52-fusionado)" && echo m > m.txt && git add m.txt && git commit -q -m m) || fail "commit 52"
+(cd "$(kw 54-conpr)" && echo c > c.txt && git add c.txt && git commit -q -m c) || fail "commit 54"
+echo x > "$(kw 53-sucio)/sucio.txt"
 outside="$(mktemp -d)/fuera"
 git -C "$r" worktree add -q -b fuera --no-track "$outside" origin/main || fail "worktree fuera"
-(cd "$r" && echo n > nuevo.txt && git add nuevo.txt && git commit -q -m avanza && git push -q origin main) >/dev/null 2>&1 || fail "avanzar main"
-echo x > "$KIT_WORKTREES/$name/issue-40-uno/sucio.txt"
-out="$(bash "$wt" barrer "$r" 2>&1)" || fail "barrer 2: $out"
-[ "$(last_line "$out")" = "FIN: 1 borrados" ] || fail "barrer 2 FIN: $out"
-[ ! -e "$p44" ] || fail "barrer no borró 44"
-git -C "$r" rev-parse -q --verify issue-44-cinco >/dev/null && fail "barrer no borró la rama 44"
-[ -d "$KIT_WORKTREES/$name/issue-40-uno" ] || fail "barrer borró uno sucio"
-[ -d "$p43" ] || fail "barrer borró uno con commits propios"
+tip52="$(git -C "$(kw 52-fusionado)" rev-parse HEAD)"
+cat > "$GH_STATE/state.json" <<JSON
+{"issues":[{"number":50,"state":"OPEN","labels":[],"comments":[]},{"number":51,"state":"CLOSED","labels":[],"comments":[]},
+  {"number":52,"state":"CLOSED","labels":[],"comments":[]},{"number":53,"state":"CLOSED","labels":[],"comments":[]},
+  {"number":54,"state":"CLOSED","labels":[],"comments":[]},{"number":55,"state":"OPEN","labels":[],"comments":[]}],
+ "prs":[{"number":8,"headRefName":"issue-52-fusionado","state":"MERGED","headRefOid":"$tip52"}]}
+JSON
+# gh failure: nothing is deleted
+ghd="$(mktemp -d)"; realgh="$(command -v gh)"
+printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] && exit 1\nexec "%s" "$@"\n' "$realgh" > "$ghd/gh"; chmod +x "$ghd/gh"
+PATH="$ghd:$PATH" bash "$wt" barrer "$r" >"$tmpe.o" 2>"$tmpe"; rc=$?
+[ $rc -eq 0 ] && [ "$(last_line "$(cat "$tmpe.o")")" = "FIN: 0 borrados" ] || fail "barrer con gh roto: $rc $(cat "$tmpe.o")"
+grep -q "^aviso:" "$tmpe" || fail "sin aviso con gh roto"
+[ -d "$(kw 51-cerrado)" ] || fail "gh roto borró algo"
+out="$(bash "$wt" barrer "$r" 2>"$tmpe")" || fail "barrer: $out"
+[ "$(last_line "$out")" = "FIN: 2 borrados" ] || fail "barrer FIN: $out"
+[ ! -e "$(kw 51-cerrado)" ] && ! git -C "$r" rev-parse -q --verify issue-51-cerrado >/dev/null || fail "issue cerrado sin commits debe borrarse"
+[ ! -e "$(kw 52-fusionado)" ] && ! git -C "$r" rev-parse -q --verify issue-52-fusionado >/dev/null || fail "PR fusionada debe borrarse"
+[ -d "$(kw 50-abierto)" ] || fail "barrer borró un worktree vivo de un issue abierto sin commits"
+[ -d "$(kw 53-sucio)" ] || fail "barrer borró uno sucio"
+[ -d "$(kw 54-conpr)" ] || fail "barrer borró uno con commits y sin PR fusionada"
+[ -d "$(kw 55-ajeno)" ] || fail "barrer borró otro issue abierto"
 [ -d "$outside" ] && git -C "$r" rev-parse -q --verify fuera >/dev/null || fail "barrer tocó un worktree ajeno al kit"
 [ -d "$r" ] || fail "barrer tocó el árbol principal"
 echo "OK test_worktree"

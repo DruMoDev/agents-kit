@@ -70,7 +70,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 
 **Bloquear:** escribe el motivo y lo pendiente en un fichero y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" bloquear <raíz> <N> <id> <fichero>` (`FIN: bloqueado #<N>`). Si había PR, antes `gh pr ready --undo <pr> --repo <slug>`. El worktree se queda.
 
-**Barrido:** al terminar la tanda (cuando `siguiente` da exit 1), antes del resumen, ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" barrer <raíz>` (`FIN: <n> borrados`): borra los worktrees limpios del kit ya contenidos en la rama por defecto. Si falla, cuéntalo en el chat y sigue.
+**Barrido:** al terminar la tanda (cuando `siguiente` da exit 1), antes del resumen, ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" barrer <raíz>` (`FIN: <n> borrados`): borra los worktrees limpios del kit ya terminados (PR fusionada con esa punta, o issue cerrado sin commits propios). Si falla, cuéntalo en el chat y sigue.
 
 ## Resumen final
 

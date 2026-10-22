@@ -332,7 +332,7 @@ $cl_err") ;;
     # protegido: touched protected paths must be listed in the "## Zonas protegidas" section of the PR body.
     prot="$(kit_config_base "$wt" '(.protegido // []) | if type == "array" then map(select(type == "string" and . != "")) else [] end | .[]' "origin/$base")" || exit 2
     if [ -n "$prot" ]; then
-      changed="$(git diff --name-only "origin/$base...HEAD")" || { echo "error: git diff falló" >&2; exit 2; }
+      changed="$(git diff --name-only --no-renames "origin/$base...HEAD")" || { echo "error: git diff falló" >&2; exit 2; }
       section="$(printf '%s' "$pj" | jq -r '.body // ""' | awk '
         /^##[ \t]+Zonas protegidas[ \t]*$/ { on = 1; next }
         /^##[ \t]/ { on = 0 }
@@ -352,7 +352,10 @@ $cl_err") ;;
         if [ "$has_section" = false ]; then
           missing+=("$pre")
         else
-          printf '%s' "$section" | grep -Fq -- "$pre" || missing+=("$pre")
+          # whole token: not glued to a longer path or word on either side
+          esc="$(printf '%s' "$pre" | sed 's/[][\\.*^$+?(){}|]/\\&/g')"
+          case "$pre" in */) tail_re='' ;; *) tail_re='($|[^A-Za-z0-9_-])' ;; esac
+          printf '%s\n' "$section" | grep -Eq -- "(^|[^A-Za-z0-9_./-])${esc}${tail_re}" || missing+=("$pre")
         fi
       done <<< "$prot"
       if [ ${#missing[@]} -gt 0 ]; then
@@ -363,15 +366,20 @@ $cl_err") ;;
     # checks.pre-merge: script of the repo, run in the worktree over the head
     pm="$(kit_config_base "$wt" '(.checks // {}) | if type == "object" and (.["pre-merge"] | type) == "string" then .["pre-merge"] else empty end' "origin/$base")" || exit 2
     if [ -n "$pm" ]; then
-      pm_path="$(kit_hook_path "$wt" "$wt" checks.pre-merge "$pm")" || exit 2
-      kit_hook_run "$wt" "$pm_path"; pm_rc=$?
-      case $pm_rc in
-        0) ;;
-        142) reasons+=("checks.pre-merge agotó el tiempo (${KIT_HOOK_TIMEOUT:-1800}s):
+      kit_hook_rel checks.pre-merge "$pm" || exit 2
+      # the script runs as it is on the default branch: a PR cannot edit its own gate
+      if git show "origin/$base:$pm" > "$tmpd/pre-merge.sh" 2>/dev/null; then
+        kit_hook_run "$wt" "$tmpd/pre-merge.sh"; pm_rc=$?
+        case $pm_rc in
+          0) ;;
+          142) reasons+=("checks.pre-merge agotó el tiempo (${KIT_HOOK_TIMEOUT:-1800}s):
 $KIT_HOOK_OUT") ;;
-        *) reasons+=("checks.pre-merge falló (exit $pm_rc):
+          *) reasons+=("checks.pre-merge falló (exit $pm_rc):
 $KIT_HOOK_OUT") ;;
-      esac
+        esac
+      else
+        reasons+=("checks.pre-merge apunta a $pm, que no existe en origin/$base")
+      fi
     fi
 
     report

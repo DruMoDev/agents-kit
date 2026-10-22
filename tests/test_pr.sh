@@ -411,6 +411,37 @@ st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- lib/: motivo\n\nCierra #3
 okf="$(mktemp)"
 out="$(KIT_PM_OK="$okf" bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con ganchos cumplidos: $out"
 [ "$(pr_q .state)" = MERGED ] || fail "ganchos cumplidos: no fusionó"
+# the PR edits the pre-merge script to "exit 0": the base version still runs
+st ".prs[0].body = \"Cuerpo\\n\\n## Zonas protegidas\\n\\n- lib/: motivo\\n\\nCierra #3\""
+reset_open
+printf '#!/bin/sh\nexit 0\n' > "$wt/tools/pm.sh"
+(cd "$wt" && git add -A && git commit -q -m "debilita pre-merge" && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"checks.pre-merge falló"*"fallo de prueba"*) ;; *) fail "pre-merge editado por la PR: $err";; esac
+# pre-merge missing on the base branch is a rejection reason
+echo '{"checks":{"pre-merge":"tools/no-existe.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "pm inexistente" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"no existe en origin/main"*) ;; *) fail "pre-merge inexistente en la base: $err";; esac
+# protegido: a rename out of a protected path counts, and the prefix must be a whole token in the section
+mkdir -p "$r/lib" && echo a > "$r/lib/a.py"
+echo '{"protegido":["lib/"]}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "lib" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && mkdir -p otro && git mv lib/a.py otro/a.py \
+  && git commit -q -m mueve && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\" | .prs[0].body = \"Cuerpo\\nCierra #3\""
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas (lib/)"*) ;; *) fail "mover fuera de lib/ no activa la puerta: $err";; esac
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- mylib/ y src/lib/x: no es lo mismo\n\nCierra #3"'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas (lib/)"*) ;; *) fail "subcadena aceptada como mención: $err";; esac
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- `lib/a.py` salió de `lib/`: motivo\n\nCierra #3"'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas"*) fail "mención con comillas rechazada: $err";; esac
+
 # unsafe hook paths are environment errors; a slow hook times out
 reset_open
 echo '{"checks":{"pre-merge":"../fuera.sh"}}' > "$r/.agents-kit.json"

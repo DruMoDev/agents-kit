@@ -103,7 +103,9 @@ if [ "$sub" = barrer ]; then
   base="$(kit_default_branch)"
   [ -n "$base" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
   git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" || { echo "error: git fetch falló" >&2; exit 2; }
-  tip="$(git rev-parse "refs/remotes/origin/$base")" || exit 2
+  command -v gh >/dev/null 2>&1 || { echo "error: falta 'gh' en el PATH" >&2; exit 2; }
+  slug="$(kit_origin_slug)"
+  [ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
   dir="${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/$(basename "$root")"
   [ -d "$dir" ] || { echo "FIN: 0 borrados"; exit 0; }
   dir="$(cd "$dir" && pwd -P)"
@@ -114,15 +116,27 @@ if [ "$sub" = barrer ]; then
     rp="$(cd "$p" && pwd -P)"
     case "$rp" in "$dir"/*) ;; *) continue ;; esac   # only the kit's worktrees of this repo
     [ "$rp" != "$main" ] || continue
-    h="$(git -C "$p" rev-parse HEAD 2>/dev/null)" || continue
-    # a fresh worktree sits exactly on the tip of the default branch: it is not dead
-    [ "$h" != "$tip" ] || continue
-    git merge-base --is-ancestor "$h" "$tip" || continue
+    b="$(git -C "$p" symbolic-ref -q --short HEAD)" || continue
     st="$(git -C "$p" status --porcelain)" || continue
     [ -z "$st" ] || { echo "aviso: $p tiene cambios; no se borra" >&2; continue; }
-    b="$(git -C "$p" symbolic-ref -q --short HEAD)"
+    h="$(git -C "$p" rev-parse HEAD)" || continue
+    # dead = (a) merged PR whose head is the branch tip, or (b) closed issue and no commits beyond the base
+    dead=false
+    prs="$(gh pr list --repo "$slug" --head "$b" --state all --json number,state,headRefOid)" \
+      || { echo "aviso: gh pr list falló para $b; no se borra $p" >&2; continue; }
+    if printf '%s' "$prs" | jq -e --arg t "$h" 'any(.[]; .state == "MERGED" and .headRefOid == $t)' >/dev/null 2>&1; then
+      dead=true
+    elif [[ $b =~ ^issue-([0-9]+)- ]]; then
+      ist="$(gh issue view "${BASH_REMATCH[1]}" --repo "$slug" --json state --jq .state)" \
+        || { echo "aviso: gh issue view falló para $b; no se borra $p" >&2; continue; }
+      if [ "$ist" = CLOSED ]; then
+        ahead="$(git -C "$p" rev-list --count "refs/remotes/origin/$base..HEAD")" || continue
+        [ "$ahead" = 0 ] && dead=true
+      fi
+    fi
+    [ "$dead" = true ] || continue
     git worktree remove "$p" || { echo "aviso: no se pudo borrar $p" >&2; continue; }
-    [ -z "$b" ] || git branch -D "$b" >/dev/null 2>&1 || echo "aviso: no se pudo borrar la rama $b" >&2
+    git branch -D "$b" >/dev/null 2>&1 || echo "aviso: no se pudo borrar la rama $b" >&2
     echo "borrado: $p"
     count=$((count + 1))
   done < <(git worktree list --porcelain | sed -n 's/^worktree //p')

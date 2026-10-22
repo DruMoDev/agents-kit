@@ -91,7 +91,7 @@ En `.agents-kit.json` del repo (rutas relativas al repo, sin `..` ni absolutas; 
 - `"protegido": ["lib/", "cli/"]`: si la PR toca esas rutas, su cuerpo debe tener `## Zonas protegidas` nombrándolas.
 - `"checks": {"pre-merge": "tools/pre-merge.sh"}`: `kit-pr.sh fusionar` lo ejecuta en el worktree; si falla, no fusiona y muestra su salida.
 
-`fusionar` lee `protegido`, `checks` y `revision.puestos` del marcador de la rama por defecto: una PR no puede aflojar sus propias puertas. `kit-worktree.sh barrer <raíz>` borra los worktrees limpios del kit ya contenidos en `origin/<rama por defecto>` (y su rama local); `kit-run` lo ejecuta al terminar.
+`fusionar` lee `protegido`, `checks` y `revision.puestos` del marcador de la rama por defecto y ejecuta el script `pre-merge` tal como está en ella: una PR no puede aflojar sus propias puertas. `kit-worktree.sh barrer <raíz>` borra los worktrees limpios del kit ya terminados (PR fusionada con la punta de la rama, o issue cerrado sin commits propios) y su rama local; ante un fallo de gh no borra; `kit-run` lo ejecuta al terminar.
 
 ## Web de changelogs
 
