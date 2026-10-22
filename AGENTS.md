@@ -18,6 +18,7 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`; `transport.sh`, dónde corre la sesión).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node). `tests/fixtures/changelog/` es el contrato del formato de `CHANGELOG.md`: la web lo reutilizará para probar su parser.
+- `web/`: web de changelogs (Astro + Cloudflare Workers), app aparte con su `package.json`. Su parser (`web/src/lib/changelog.ts`) y el validador bash comparten `tests/fixtures/changelog/`: cambiar el formato es tocar los dos y los fixtures.
 - `docs/`: specs y planes.
 
 ## Flujo de issues
@@ -29,6 +30,7 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `tests/run.sh`: ejecuta todos los tests.
 - `scripts/release.sh <semver>`: escribe la versión en los manifiestos y el marketplace.
 - `claude plugin validate .`: valida manifiestos y skills.
+- `cd web && npm test && npm run e2e`: tests de la web (no los lanza `tests/run.sh`).
 
 ## Convenciones de scripts
 
@@ -123,3 +125,11 @@ Verificado de punta a punta el 2026-10-21 en el repo privado de pruebas con `cla
 - Issue `listo` → PR fusionada con entrada de `CHANGELOG.md` validada por `kit-changelog.sh validar`, revisores lanzados por `kit-review-all.sh`, comentario `kit-resumen` en el issue "📦 Changelog" y aviso por ntfy (`curl` a ntfy.sh; se comprobó leyendo el tema con `https://ntfy.sh/<tema>/json?poll=1`).
 - `PushNotification` de Claude Code es una herramienta del modelo: un script no puede llamarla y solo llega al móvil con Remote Control. Por eso el canal por defecto es ntfy y `claude-push` solo imprime `AVISO-CLAUDE:` para que la skill la llame.
 - Un bloque de bash con arrays dentro de una skill falla si el agente lo ejecuta en zsh (`bad substitution`): lo mecánico va en scripts, no en bloques inline.
+
+### Web de changelogs (fase 4)
+
+Desplegada el 2026-10-22 en `https://agents-kit-changelogs.dev-morera.workers.dev` (worker `agents-kit-changelogs`, KV `SEEN`), detrás de Cloudflare Access ("Todo el tráfico", solo el email de Dru). Verificado: sin sesión, Access redirige al login; con Access sin configurar, el worker responde 503.
+- `wrangler deploy` en un proyecto Astro usa la configuración compilada (`dist/server/wrangler.json`): sin compilar antes, sube la última compilación. Por eso `npm run deploy` compila y despliega.
+- Despliegue continuo con Workers Builds conectado al repo: raíz `web`, compilación `npm ci && npm run build`, despliegue `npx wrangler deploy`, solo `main` y rutas `web/*`.
+- En Astro 7 con @astrojs/cloudflare 14 los bindings se leen con `import { env } from "cloudflare:workers"`; la Cache API no sirve detrás de Access ni en workers.dev, así que la caché de repos va en KV.
+- `wrangler kv namespace create` pregunta en modo interactivo; sin terminal no termina.

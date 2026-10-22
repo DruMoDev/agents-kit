@@ -1,0 +1,93 @@
+[
+  {
+    "name": "recetario",
+    "url": "https://github.com/dru/recetario",
+    "isPrivate": true,
+    "lastDate": "2026-10-20",
+    "days": [
+      {
+        "date": "2026-10-20",
+        "entries": [
+          {
+            "type": "Nuevo",
+            "title": "Login con Google",
+            "pr": 14,
+            "url": "https://github.com/dru/recetario/pull/14",
+            "date": "2026-10-20",
+            "body": "Ahora puedes entrar con tu cuenta de Google en un clic.\n\nEn la pantalla de acceso aparece el botón **Continuar con Google**; si la cuenta ya existía con ese email, se vincula sola.\n\n![Pantalla de acceso](docs/changelog/14-login.png)"
+          },
+          {
+            "type": "Arreglo",
+            "title": "Las fotos ya no salen giradas",
+            "pr": 13,
+            "url": "https://github.com/dru/recetario/pull/13",
+            "date": "2026-10-20",
+            "body": "Las fotos hechas con el móvil en vertical se muestran con la orientación correcta."
+          }
+        ]
+      },
+      {
+        "date": "2026-10-12",
+        "entries": [
+          {
+            "type": "Mejora",
+            "title": "Buscador más rápido",
+            "pr": 11,
+            "url": "https://github.com/dru/recetario/pull/11",
+            "date": "2026-10-12",
+            "body": "Los resultados aparecen mientras escribes. Prueba a buscar `tortilla` o `sin gluten`."
+          },
+          {
+            "type": "Interno",
+            "title": "Actualización de dependencias",
+            "pr": 10,
+            "url": "https://github.com/dru/recetario/pull/10",
+            "date": "2026-10-12",
+            "body": ""
+          }
+        ]
+      },
+      {
+        "date": "2026-09-30",
+        "entries": [
+          {
+            "type": "Nuevo",
+            "title": "Lista de la compra",
+            "pr": 7,
+            "url": "https://github.com/dru/recetario/pull/7",
+            "date": "2026-09-30",
+            "body": "Desde cualquier receta puedes añadir sus ingredientes a la lista de la compra.\n\nEjemplo práctico:\n\n- Abre una receta.\n- Pulsa **Añadir a la lista**.\n- Tacha lo que ya tienes en casa."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "gastos-casa",
+    "url": "https://github.com/dru/gastos-casa",
+    "isPrivate": false,
+    "lastDate": "2026-10-05",
+    "days": [
+      {
+        "date": "2026-10-05",
+        "entries": [
+          {
+            "type": "Mejora",
+            "title": "Gráfico mensual más claro",
+            "pr": 3,
+            "url": "https://github.com/dru/gastos-casa/pull/3",
+            "date": "2026-10-05",
+            "body": "Cada categoría tiene su color y el total del mes se ve arriba."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "notas-rapidas",
+    "url": "https://github.com/dru/notas-rapidas",
+    "isPrivate": true,
+    "lastDate": null,
+    "days": []
+  }
+]

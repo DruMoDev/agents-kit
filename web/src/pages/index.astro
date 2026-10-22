@@ -1,0 +1,134 @@
+---
+import { env } from "cloudflare:workers";
+import Base from "../layouts/Base.astro";
+import AppCard from "../components/AppCard.astro";
+import ErrorView from "../components/ErrorView.astro";
+import Legend from "../components/Legend.astro";
+import { fetchRepos, GitHubError, type Repo } from "../lib/github";
+import { getSeen, unseenCount } from "../lib/seen";
+import { countLabel, sortApps, withoutRefresh } from "../lib/ui";
+import type { WebEnv } from "../lib/env";
+
+const e = env as unknown as WebEnv;
+const refresh = Astro.url.searchParams.get("refrescar") === "1";
+
+let error: string | null = null;
+let repos: Repo[] = [];
+try {
+  repos = await fetchRepos(e, { refresh });
+} catch (err) {
+  if (!(err instanceof GitHubError)) throw err;
+  error = err.message;
+  Astro.response.status = 502;
+}
+// tras refrescar, a la misma URL sin el parámetro: recargar después no vuelve a saltarse la caché
+if (refresh && !error) return Astro.redirect(withoutRefresh(Astro.url), 303);
+
+const items = sortApps(
+  await Promise.all(
+    repos.map(async (repo) => {
+      const seen = e.SEEN ? await getSeen(e.SEEN, repo.name) : new Set<number>();
+      return { repo, seen, unseen: unseenCount(repo, seen) };
+    }),
+  ),
+);
+const totalUnseen = items.reduce((n, i) => n + i.unseen, 0);
+const appsWithNews = items.filter((i) => i.unseen > 0).length;
+---
+
+<Base title={totalUnseen > 0 ? `(${totalUnseen}) Changelogs` : "Changelogs"}>
+  {
+    !error && (
+      <a slot="actions" class="btn" href="/?refrescar=1">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        Actualizar
+      </a>
+    )
+  }
+
+  {
+    error ? (
+      <ErrorView message={error} retryHref="/?refrescar=1" />
+    ) : (
+      <>
+        <section class="hero" aria-labelledby="resumen">
+          {totalUnseen > 0 ? (
+            <>
+              <h1 id="resumen">
+                <span class="hero-num">{totalUnseen}</span>
+                <span class="hero-label">{totalUnseen === 1 ? "cambio sin ver" : "cambios sin ver"}</span>
+              </h1>
+              <p class="hero-sub">
+                En {countLabel(appsWithNews, "app", "apps")} de {items.length}. Entra en una para leerlos.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 id="resumen">
+                <span class="hero-label">Todo al día</span>
+              </h1>
+              <p class="hero-sub">
+                {items.length > 0 ? "Has visto todos los cambios de tus apps." : "Ningún repo tiene agents-kit activado todavía."}
+              </p>
+            </>
+          )}
+        </section>
+
+        {items.length > 0 && (
+          <>
+            <Legend />
+            <ul class="grid" aria-label="Apps">
+              {items.map((i) => (
+                <AppCard repo={i.repo} seen={i.seen} unseen={i.unseen} />
+              ))}
+            </ul>
+          </>
+        )}
+        <p class="page-end">Los datos de GitHub se renuevan cada 5 minutos. Pulsa Actualizar para verlos ya.</p>
+      </>
+    )
+  }
+</Base>
+
+<style>
+  .hero {
+    padding-block: clamp(1.5rem, 6vw, 3.5rem) 1.25rem;
+  }
+  h1 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 0.75rem;
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .hero-num {
+    font-size: clamp(4rem, 2.5rem + 9vw, 8rem);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--signal);
+    line-height: 0.9;
+  }
+  .hero-label {
+    font-size: var(--step-4);
+  }
+  .hero-sub {
+    margin: 1rem 0 0;
+    color: var(--muted);
+    font-size: var(--step-1);
+    max-width: 40ch;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+    gap: 1rem;
+    margin: 1rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+</style>

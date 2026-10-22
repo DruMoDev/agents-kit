@@ -1,0 +1,43 @@
+---
+import "@fontsource-variable/bricolage-grotesque/wght.css";
+import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+const { title, description = "Qué ha cambiado en cada una de tus apps y qué te queda por ver." } = Astro.props;
+const icon =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#161e33"/><rect x="7" y="14" width="4" height="10" rx="2" fill="#4fd08f"/><rect x="14" y="7" width="4" height="17" rx="2" fill="#a68bff"/><rect x="21" y="11" width="4" height="13" rx="2" fill="#7fb0ff"/></svg>`,
+  );
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1320" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href={icon} />
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip" href="#contenido">Saltar al contenido</a>
+    <header class="wrap topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+        Changelogs
+      </a>
+      <slot name="actions" />
+    </header>
+    <main id="contenido" class="wrap">
+      <slot />
+    </main>
+  </body>
+</html>
