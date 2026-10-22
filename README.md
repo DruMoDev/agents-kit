@@ -78,7 +78,7 @@ Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/`
 
 - Desarrollo local con datos de ejemplo: `cd web && npm ci && cp .dev.vars.example .dev.vars && npm run dev`.
 - Tests: `npm test` (parser, lógica, Access) y `npm run e2e` (Playwright contra el build con su CSP, datos de ejemplo).
-- Despliegue: `npx wrangler deploy` desde `web/`. Necesita el KV `SEEN` (su id en `wrangler.jsonc`; guarda el estado visto y la caché de la lista de repos), el secreto `GITHUB_TOKEN` (token fine-grained de solo lectura: Contents en todos tus repos) puesto con `npx wrangler secret put GITHUB_TOKEN`, y Cloudflare Access delante con solo tu email; `ACCESS_TEAM_DOMAIN` y `ACCESS_AUD` en `wrangler.jsonc`. Sin Access configurado, la web responde 503.
+- Despliegue: `npm run deploy` desde `web/` (compila y despliega; `wrangler deploy` a secas usa la última compilación). Necesita el KV `SEEN` (su id en `wrangler.jsonc`; guarda el estado visto y la caché de la lista de repos), el secreto `GITHUB_TOKEN` (token fine-grained de solo lectura: Contents en todos tus repos) puesto con `npx wrangler secret put GITHUB_TOKEN`, y Cloudflare Access delante con solo tu email; `ACCESS_TEAM_DOMAIN` y `ACCESS_AUD` en `wrangler.jsonc`. Sin Access configurado, la web responde 503.
 
 ## Iterar
 

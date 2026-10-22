@@ -9,7 +9,8 @@
     "dev": "astro dev",
     "build": "astro build",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "deploy": "astro build && wrangler deploy"
   },
   "dependencies": {
     "@astrojs/cloudflare": "14.3.4",
