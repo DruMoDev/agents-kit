@@ -155,12 +155,14 @@ kit_seats "$d" claude >/dev/null 2>&1; [ $? -eq 1 ] || fail "seats puesto famili
 echo '{"revision": {"puestos": [{"foco": "x", "nivel": "lento", "familia": "misma"}]}}' > "$d/.agents-kit.json"
 kit_seats "$d" claude >/dev/null 2>&1; [ $? -eq 1 ] || fail "seats nivel desconocido"
 
-# kit_reviewers (compatibilidad hasta Task 3): puestos sin repetir cli/modelo, focos unidos
-echo '{}' > "$d/.agents-kit.json"
-got="$(env -u CODEX_THREAD_ID bash -c 'source "$1"; kit_reviewers "$2"' _ "$REPO_ROOT/scripts/lib/config.sh" "$d")"
-want="$(printf 'opencode\topenai/gpt-6.1-sol\tcorrección, casos límite y tests; fallos de uso real, seguridad y lo que otros darían por bueno\nclaude\tsonnet\tsimplicidad, reutilización y scope')"
-[ "$got" = "$want" ] || fail "reviewers: '$got'"
-got="$(CODEX_THREAD_ID=x bash -c 'source "$1"; kit_reviewers "$2"' _ "$REPO_ROOT/scripts/lib/config.sh" "$d" | cut -f1,2 | tr '\n\t' ' /')"
-[ "$got" = "claude/opus opencode/openai/gpt-6.1-sol " ] || fail "reviewers en codex: '$got'"
+# kit_implementer_family (lib/review-seats.sh): explicit value, else the calling harness
+fam() { env -u CODEX_THREAD_ID -u CLAUDECODE -u OPENCODE "$@" bash -c 'source "$1"; kit_implementer_family "${2:-}"' _ \
+  "$REPO_ROOT/scripts/lib/review-seats.sh" "${F:-}"; }
+[ "$(fam CLAUDECODE=1)" = claude ] || fail "implementador en Claude Code"
+[ "$(fam CODEX_THREAD_ID=t CLAUDECODE=1)" = gpt ] || fail "implementador en Codex"
+[ "$(F=claude fam CODEX_THREAD_ID=t)" = claude ] || fail "implementador explícito"
+fam OPENCODE=1 CLAUDECODE=1 >/dev/null 2>&1; [ $? -eq 2 ] || fail "implementador en OpenCode debe dar 2"
+fam X=1 >/dev/null 2>&1; [ $? -eq 2 ] || fail "implementador sin herramienta debe dar 2"
+grep -q 'kit_reviewers' "$REPO_ROOT/scripts/lib/config.sh" && fail "queda el shim kit_reviewers"
 
 echo "ok"

@@ -110,18 +110,3 @@ kit_seats() {
   rm -f "$err"
   [ -z "$out" ] || printf '%s\n' "$out"
 }
-
-# kit_reviewers <root>: compatibility shim until per-seat review lands (Task 3). One line per distinct
-# cli/model from kit_seats (foci of seats that share it joined with "; "): cli<TAB>model<TAB>focus.
-# The implementer family comes from the environment: CODEX_THREAD_ID -> gpt, otherwise claude.
-kit_reviewers() {
-  local impl=claude seats
-  [ -n "${CODEX_THREAD_ID:-}" ] && impl=gpt
-  seats="$(kit_seats "$1" "$impl")" || return $?
-  [ -n "$seats" ] || return 0
-  printf '%s\n' "$seats" | jq -R -r -s '
-    [split("\n")[] | select(length > 0) | split("\t") | {cli: .[2], modelo: .[3], foco: .[4]}]
-    | reduce .[] as $s ([]; (map(.cli == $s.cli and .modelo == $s.modelo) | index(true)) as $j
-        | if $j == null then . + [$s] else .[$j].foco += "; " + $s.foco end)
-    | .[] | [.cli, .modelo, .foco] | @tsv'
-}

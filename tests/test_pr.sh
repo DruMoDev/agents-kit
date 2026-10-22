@@ -273,6 +273,41 @@ st '.prs[0].comments |= map(select(.id != 96))'
 printf 'Ronda 3: 0 hallazgos de todos los revisores.\n' > "$tmp/r3"
 bash "$pr" ronda "$wt" $p 3 "$tmp/r3" >/dev/null 2>&1 || fail "ronda 3"
 
+# fusionar: every seat of revision.puestos (3 by default) needs an own confirmed kit-revision in the last round
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "ronda sin revisiones: exit $rc"
+case "$err" in *"la ronda 3 tiene puestos sin confirmar (1, 2, 3)"*) ;; *) fail "ronda sin revisiones msg: $err";; esac
+redo_r3() { # <jq-array of comments>: put them before a fresh kit-ronda 3
+  st ".prs[0].comments |= map(select(.body | startswith(\"<!-- kit-ronda: 3 -->\") | not)) + $1"
+  bash "$pr" ronda "$wt" $p 3 "$tmp/r3" >/dev/null 2>&1 || fail "ronda 3 otra vez"
+}
+redo_r3 '[{"id": 300, "body": "<!-- kit-revision: puesto 1 gpt/openai/x ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 301, "body": "<!-- kit-revision: puesto 2 gpt/openai/x ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 302, "body": "<!-- kit-revision: puesto 3 sin-confirmar ronda 3 -->\nsin confirmar"},
+  {"id": 303, "body": "<!-- kit-revision: puesto 3 claude/sonnet ronda 3 -->\nHALLAZGOS: 0", "author": {"login": "otro"}},
+  {"id": 304, "body": "<!-- kit-revision: puesto 3 claude/sonnet ronda 2 -->\nHALLAZGOS: 0"}]'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "puesto sin confirmar: exit $rc"
+case "$err" in *"la ronda 3 tiene puestos sin confirmar (3)"*) ;; *) fail "puesto sin confirmar msg: $err";; esac
+[ "$(pr_q .state)" = OPEN ] || fail "fusionó con un puesto sin confirmar"
+# a v2 round (reviews without puesto) is read as before; no seats configured needs none
+echo x > "$wt/sucio.txt"
+redo_r3 '[{"id": 305, "body": "<!-- kit-revision: claude/opus ronda 3 -->\nHALLAZGOS: 0"}]'
+st '.prs[0].comments |= map(select(.id < 300 or .id > 304 or .id == 305))'
+redo_r3 '[]'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"puestos sin confirmar"*) fail "ronda v2 tratada como incompleta: $err";; esac
+st '.prs[0].comments |= map(select(.id != 305))'
+redo_r3 '[]'
+set_global '{"revision": {"puestos": []}}'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"puestos sin confirmar"*) fail "sin puestos tratada como incompleta: $err";; esac
+rm -f "$KIT_CONFIG" "$wt/sucio.txt"
+redo_r3 '[{"id": 306, "body": "<!-- kit-revision: puesto 1 gpt/openai/x ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 307, "body": "<!-- kit-revision: puesto 2 claude/opus ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 308, "body": "<!-- kit-revision: puesto 3 sin-confirmar ronda 3 -->\nsin confirmar"},
+  {"id": 309, "body": "<!-- kit-revision: puesto 3 claude/sonnet ronda 3 -->\nHALLAZGOS: 0"}]'
+
 # fusionar: a push lands between the gates and the merge -> merge refused (all gates passed, round 3 included)
 GH_RACE_OID=0123456789abcdef0123456789abcdef01234567 bash "$pr" fusionar "$wt" $p 3 >/dev/null 2>&1; rc=$?
 [ $rc -eq 2 ] || fail "carrera: exit $rc"

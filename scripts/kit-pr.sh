@@ -112,13 +112,24 @@ OWN_JQ='[.comments[] | select(.author.login == $me) | .body // ""]'
 # kit-ronda bodies
 RONDAS_JQ="$OWN_JQ"' | map(select(test("^\\s*<!-- kit-ronda: [0-9]+ -->")))'
 # review state: sin-ronda | pendiente (a kit-revision after the last kit-ronda, by position)
-#   | aplicado (the last kit-ronda applied changes, so a new round is due) | ok
+#   | aplicado (the last kit-ronda applied changes, so a new round is due)
+#   | incompleta <r> <i,j...> (seats 1..$nseats without an own confirmed review in round <r>) | ok
+# Reviews: v3 "kit-revision: puesto <i> <familia>/<modelo> ronda <r>" (confirmed) or "... puesto <i> sin-confirmar
+# ronda <r>"; a round with v2 reviews only ("kit-revision: <herramienta>/<modelo> ronda <r>") is read as before.
 REVIEW_JQ="$OWN_JQ"' as $b
   | ([range(0; $b | length) | select($b[.] | test("^\\s*<!-- kit-ronda: [0-9]+ -->"))] | last // -1) as $r
   | if $r < 0 then "sin-ronda"
     elif any(range($r + 1; $b | length); $b[.] | test("^\\s*<!-- kit-revision: ")) then "pendiente"
     elif any($b[$r] | split("\n")[]; sub("\\s+$"; "") | endswith(" → aplicado")) then "aplicado"
-    else "ok" end'
+    else ($b[$r] | capture("^\\s*<!-- kit-ronda: (?<n>[0-9]+) -->").n) as $rn
+      | [$b[] | capture("^\\s*<!-- kit-revision: puesto (?<i>[0-9]+) (?<who>\\S+) ronda (?<r>[0-9]+) -->")
+         | select(.r == $rn)] as $v3
+      | ([$b[] | select(test("^\\s*<!-- kit-revision: (?!puesto )\\S+ ronda \($rn) -->"))] | length) as $v2
+      | [range(1; $nseats + 1) | tostring | select(. as $i | any($v3[]; .i == $i and (.who | contains("/"))) | not)] as $miss
+      | if ($v3 | length) == 0 and $v2 > 0 then "ok"
+        elif ($miss | length) > 0 then "incompleta \($rn) \($miss | join(", "))"
+        else "ok" end
+    end'
 
 case "$sub" in
   abrir)
@@ -277,14 +288,21 @@ Cierra #$n"
       esac
     fi
 
-    # review: at least one kit-ronda and no kit-revision after the last one (by position)
+    # review: at least one kit-ronda, no kit-revision after the last one (by position) and, in that round, an own
+    # confirmed review for every seat of revision.puestos
+    nseats="$(kit_config "$wt" '.revision.puestos // [] | length')" || exit 2
+    [[ $nseats =~ ^[0-9]+$ ]] || { echo "error: revision.puestos no es una lista" >&2; exit 2; }
     review_reason() { # <pr-json>: append the review reason, if any
       local rev
-      rev="$(printf '%s' "$1" | jq -r --arg me "$me" "$REVIEW_JQ")" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+      rev="$(printf '%s' "$1" | jq -r --arg me "$me" --argjson nseats "$nseats" "$REVIEW_JQ")" \
+        || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
       case "$rev" in
         sin-ronda) reasons+=("no hay ninguna ronda de revisión (kit-ronda)") ;;
         pendiente) reasons+=("hay una revisión posterior a la última ronda sin decisiones escritas") ;;
         aplicado) reasons+=("la última ronda aplicó cambios: falta una ronda nueva") ;;
+        incompleta*)
+          set -- $rev
+          reasons+=("la ronda $2 tiene puestos sin confirmar (${rev#incompleta $2 }): relanza esos puestos antes de publicar la ronda, o haz una ronda nueva") ;;
       esac
     }
     report() {

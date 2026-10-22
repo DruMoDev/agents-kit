@@ -76,7 +76,9 @@ Si un aviso falla, el flujo sigue y lo cuenta en el resumen.
 
 ### Revisores
 
-Los revisores (`revision.puestos` de `~/.agents-kit/config.json`, o del marcador del repo, que sustituye la lista) se ejecutan sin supervisión y con todos los permisos locales, cada uno en un clon aislado del head de la PR: sin credenciales de GitHub, con `gh` y `git push` bloqueados y sin la configuración de agente que traiga la PR. Aun así pueden ejecutar código del repo en tu máquina: es el mismo nivel de confianza que el agente que implementa.
+Cada ronda tiene tres puestos de revisión (`revision.puestos` de `~/.agents-kit/config.json`, o del marcador del repo, que sustituye la lista), cada uno con su foco, su nivel (`profundo` o `rapido`) y su familia: `otra` (distinta de la que implementó), `misma` o un nombre de `proveedores`. Los proveedores son lo que pagas y se cambian solo en el global: `"gpt": {"cli": "opencode", ...}` pasa a Codex cambiando `"cli": "codex"`, y una familia nueva es una entrada más (`cli` es `claude`, `opencode` o `codex`). Cuenta el proveedor cuyo CLI está en el PATH; si falla por login, modelo o cuota, el puesto prueba el siguiente y, agotados, la familia del implementador (`kit-run` te avisa del login pendiente). Un puesto que no entrega (tiempo agotado, respuesta inválida) queda "sin confirmar" y la PR no se fusiona hasta que entregue.
+
+Los revisores se ejecutan sin supervisión y con todos los permisos locales, cada uno en un clon aislado del head de la PR: sin credenciales de GitHub, con `gh` y `git push` bloqueados y sin la configuración de agente que traiga la PR. Aun así pueden ejecutar código del repo en tu máquina: es el mismo nivel de confianza que el agente que implementa.
 
 Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode).
 
