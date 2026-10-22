@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fetchRepos, GitHubError, type Repo } from "../src/lib/github";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchRepos, GitHubError, resetRepoCache, REPOS_CACHE_KEY, type Repo } from "../src/lib/github";
 import fixtureRepos from "../fixtures/repos.json";
 
 const CHANGELOG = [
@@ -30,19 +30,23 @@ function page(nodes: unknown[], hasNextPage = false, endCursor: string | null = 
   return { data: { viewer: { repositories: { pageInfo: { hasNextPage, endCursor }, nodes } } } };
 }
 
-function memoryCache() {
-  const store = new Map<string, Response>();
+function fakeKV() {
+  const data = new Map<string, string>();
+  const puts: { key: string; value: string; options?: { expirationTtl?: number } }[] = [];
   return {
-    store,
-    async match(key: Request | string) {
-      const k = typeof key === "string" ? key : key.url;
-      return store.get(k)?.clone();
+    data,
+    puts,
+    async get(key: string) {
+      return data.get(key) ?? null;
     },
-    async put(key: Request | string, res: Response) {
-      store.set(typeof key === "string" ? key : key.url, res.clone());
+    async put(key: string, value: string, options?: { expirationTtl?: number }) {
+      puts.push({ key, value, options });
+      data.set(key, value);
     },
   };
 }
+
+beforeEach(() => resetRepoCache());
 
 const env = { GITHUB_TOKEN: "ghp_secreto" };
 
@@ -58,7 +62,7 @@ describe("fetchRepos (GraphQL)", () => {
         ]),
       ),
     );
-    const repos = await fetchRepos(env, { fetch: fetchMock, cache: null });
+    const repos = await fetchRepos(env, { fetch: fetchMock, kv: null });
     expect(repos.map((r) => r.name)).toEqual(["app-a", "app-b", "app-c"]);
     const a = repos[0];
     expect(a.url).toBe("https://github.com/dru/app-a");
@@ -84,25 +88,112 @@ describe("fetchRepos (GraphQL)", () => {
       .fn()
       .mockResolvedValueOnce(Response.json(page([node("uno", { changelog: CHANGELOG })], true, "CUR1")))
       .mockResolvedValueOnce(Response.json(page([node("dos")], false, null)));
-    const repos = await fetchRepos(env, { fetch: fetchMock, cache: null });
+    const repos = await fetchRepos(env, { fetch: fetchMock, kv: null });
     expect(repos.map((r) => r.name)).toEqual(["uno", "dos"]);
     expect(JSON.parse(String((fetchMock.mock.calls[1] as unknown as [string, RequestInit])[1].body)).variables).toEqual({ after: "CUR1" });
   });
 
-  it("cachea la respuesta y ?refrescar=1 (refresh) la salta", async () => {
-    const cache = memoryCache();
+  it("cachea la lista en KV (cache:repos:v1, 300 s) y en memoria del isolate", async () => {
+    const kv = fakeKV();
     const fetchMock = vi.fn(async () => Response.json(page([node("app-a", { changelog: CHANGELOG })])));
-    await fetchRepos(env, { fetch: fetchMock, cache });
-    await fetchRepos(env, { fetch: fetchMock, cache });
+    const first = await fetchRepos(env, { fetch: fetchMock, kv });
+    const second = await fetchRepos(env, { fetch: fetchMock, kv });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const cached = [...cache.store.values()][0];
-    expect(cached.headers.get("cache-control")).toBe("max-age=300");
-    await fetchRepos(env, { fetch: fetchMock, cache, refresh: true });
+    expect(second).toEqual(first);
+    expect(REPOS_CACHE_KEY).toBe("cache:repos:v1");
+    expect(kv.puts).toHaveLength(1);
+    expect(kv.puts[0].key).toBe("cache:repos:v1");
+    expect(kv.puts[0].options).toEqual({ expirationTtl: 300 });
+    expect(JSON.parse(kv.puts[0].value)).toEqual(first);
+  });
+
+  it("otro isolate (memoria vacía) lee la lista de KV sin consultar GitHub", async () => {
+    const kv = fakeKV();
+    const fetchMock = vi.fn(async () => Response.json(page([node("app-a", { changelog: CHANGELOG })])));
+    const first = await fetchRepos(env, { fetch: fetchMock, kv });
+    resetRepoCache();
+    const get = vi.spyOn(kv, "get");
+    expect(await fetchRepos(env, { fetch: fetchMock, kv })).toEqual(first);
+    expect(get).toHaveBeenCalledWith("cache:repos:v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("la memoria del isolate caduca antes que KV y entonces se relee KV", async () => {
+    const kv = fakeKV();
+    let t = 1_000_000;
+    const now = () => t;
+    const fetchMock = vi.fn(async () => Response.json(page([node("app-a")])));
+    await fetchRepos(env, { fetch: fetchMock, kv, now });
+    const get = vi.spyOn(kv, "get");
+    t += 10_000;
+    await fetchRepos(env, { fetch: fetchMock, kv, now });
+    expect(get).not.toHaveBeenCalled();
+    t += 60_000;
+    await fetchRepos(env, { fetch: fetchMock, kv, now });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("usa el KV SEEN del entorno por defecto", async () => {
+    const kv = fakeKV();
+    const fetchMock = vi.fn(async () => Response.json(page([node("app-a")])));
+    await fetchRepos({ ...env, SEEN: kv }, { fetch: fetchMock });
+    expect(kv.data.has("cache:repos:v1")).toBe(true);
+  });
+
+  it("refresh (?refrescar=1) salta memoria y KV, consulta GitHub y reescribe ambas", async () => {
+    const kv = fakeKV();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(page([node("viejo")])))
+      .mockResolvedValueOnce(Response.json(page([node("nuevo")])));
+    await fetchRepos(env, { fetch: fetchMock, kv });
+    const fresh = await fetchRepos(env, { fetch: fetchMock, kv, refresh: true });
+    expect(fresh.map((r) => r.name)).toEqual(["nuevo"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(kv.data.get("cache:repos:v1")!).map((r: Repo) => r.name)).toEqual(["nuevo"]);
+    // memoria también actualizada: la siguiente carga normal no vuelve a GitHub
+    expect((await fetchRepos(env, { fetch: fetchMock, kv })).map((r) => r.name)).toEqual(["nuevo"]);
+    resetRepoCache();
+    expect((await fetchRepos(env, { fetch: fetchMock, kv })).map((r) => r.name)).toEqual(["nuevo"]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("KV caído o con basura: consulta GitHub y no rompe", async () => {
+    const fetchMock = vi.fn(async () => Response.json(page([node("app-a")])));
+    const broken = {
+      get: async () => {
+        throw new Error("KV GET failed");
+      },
+      put: async () => {
+        throw new Error("KV PUT failed: 429");
+      },
+    };
+    expect((await fetchRepos(env, { fetch: fetchMock, kv: broken })).map((r) => r.name)).toEqual(["app-a"]);
+    resetRepoCache();
+    const junk = fakeKV();
+    junk.data.set("cache:repos:v1", "{no json");
+    expect((await fetchRepos(env, { fetch: fetchMock, kv: junk })).map((r) => r.name)).toEqual(["app-a"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("errores GraphQL parciales con data: conserva los repos resueltos y omite los fallidos", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        ...page([node("app-a", { changelog: CHANGELOG }), null, node("app-b")]),
+        errors: [{ message: "Something went wrong while executing your query.", path: ["viewer", "repositories", "nodes", 1] }],
+      }),
+    );
+    const repos = await fetchRepos(env, { fetch: fetchMock, kv: null });
+    expect(repos.map((r) => r.name)).toEqual(["app-a", "app-b"]);
+    expect(warn).toHaveBeenCalled();
+    expect(String(warn.mock.calls[0])).not.toContain("ghp_secreto");
+    warn.mockRestore();
+  });
+
   it("token sin permisos: GitHubError en español sin el token", async () => {
-    const err = await fetchRepos(env, { fetch: async () => new Response("Bad credentials ghp_secreto", { status: 401 }), cache: null }).catch((e) => e);
+    const err = await fetchRepos(env, { fetch: async () => new Response("Bad credentials ghp_secreto", { status: 401 }), kv: null }).catch((e) => e);
     expect(err).toBeInstanceOf(GitHubError);
     expect(err.message).toMatch(/token/i);
     expect(err.message).not.toContain("ghp_secreto");
@@ -111,24 +202,24 @@ describe("fetchRepos (GraphQL)", () => {
   it("errores GraphQL y red caída: GitHubError", async () => {
     const e1 = await fetchRepos(env, {
       fetch: async () => Response.json({ errors: [{ message: "Resource not accessible by personal access token" }] }),
-      cache: null,
+      kv: null,
     }).catch((e) => e);
     expect(e1).toBeInstanceOf(GitHubError);
     const e2 = await fetchRepos(env, {
       fetch: async () => {
         throw new TypeError("fetch failed");
       },
-      cache: null,
+      kv: null,
     }).catch((e) => e);
     expect(e2).toBeInstanceOf(GitHubError);
     expect(e2.message).toContain("GitHub");
-    const e3 = await fetchRepos(env, { fetch: async () => new Response("boom", { status: 502 }), cache: null }).catch((e) => e);
+    const e3 = await fetchRepos(env, { fetch: async () => new Response("boom", { status: 502 }), kv: null }).catch((e) => e);
     expect(e3).toBeInstanceOf(GitHubError);
   });
 
   it("sin GITHUB_TOKEN: GitHubError claro sin llamar a la red", async () => {
     const fetchMock = vi.fn();
-    const err = await fetchRepos({}, { fetch: fetchMock, cache: null }).catch((e) => e);
+    const err = await fetchRepos({}, { fetch: fetchMock, kv: null }).catch((e) => e);
     expect(err).toBeInstanceOf(GitHubError);
     expect(fetchMock).not.toHaveBeenCalled();
   });

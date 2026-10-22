@@ -60,6 +60,25 @@ describe("POST /api/seen", () => {
     expect((await handleSeen(post({ repo: "demo", prs: [1] }), undefined, load)).status).toBe(503);
   });
 
+  it("KV rechaza la escritura (límite de 1/s por clave u otro fallo): 503 con Retry-After, nunca 500", async () => {
+    const kv = fakeKV();
+    kv.put = async () => {
+      throw new Error("KV PUT failed: 429 Too Many Requests");
+    };
+    const res = await handleSeen(post({ repo: "demo", prs: [1] }), kv, load);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("1");
+    expect(await res.text()).not.toContain("429 Too Many");
+  });
+
+  it("KV no se puede leer: 503", async () => {
+    const kv = fakeKV();
+    kv.get = async () => {
+      throw new Error("KV GET failed");
+    };
+    expect((await handleSeen(post({ repo: "demo", prs: [1] }), kv, load)).status).toBe(503);
+  });
+
   it("GitHub caído: 502 con mensaje en español", async () => {
     const res = await handleSeen(post({ repo: "demo", prs: [1] }), fakeKV(), async () => {
       throw new GitHubError("No se pudo conectar con GitHub.");

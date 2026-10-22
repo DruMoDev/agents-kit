@@ -48,13 +48,25 @@ function normalizeDomain(d: string): string {
   return d.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
+
+/** El bypass de desarrollo solo vale en local: una variable puesta por error en producción no abre la web. */
+function devBypass(request: Request, env: WebEnv): boolean {
+  if (env.DEV_BYPASS_ACCESS !== "1") return false;
+  try {
+    return LOCAL_HOSTS.has(new URL(request.url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** null = la petición pasa; si no, la respuesta que hay que devolver (403 o 503). */
 export async function verifyAccess(
   request: Request,
   env: WebEnv,
   deps: { fetch?: FetchLike; now?: () => number } = {},
 ): Promise<Response | null> {
-  if (env.DEV_BYPASS_ACCESS === "1") return null;
+  if (devBypass(request, env)) return null;
   const domain = normalizeDomain(env.ACCESS_TEAM_DOMAIN ?? "");
   const aud = (env.ACCESS_AUD ?? "").trim();
   if (!domain || !aud) return text(503, "Access sin configurar");

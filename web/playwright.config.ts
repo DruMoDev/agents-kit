@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// e2e contra `astro dev` (workerd, KV local) con datos de fixtures/repos.json y sin Access.
+// e2e contra el build (`astro build` + `astro preview`: workerd, KV local, CSP de verdad)
+// con datos de fixtures/repos.json y sin Access.
 // El estado de KV vive en .wrangler/e2e-state y se borra al arrancar el servidor:
 // cada ejecución empieza con todo "sin ver". Nunca toca la red.
 const PORT = 4329;

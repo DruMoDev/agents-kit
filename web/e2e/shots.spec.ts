@@ -23,6 +23,8 @@ for (const scheme of ["light", "dark"] as const) {
         const img = document.querySelector<HTMLImageElement>('details.entry[data-pr="14"] img');
         return !img || (img.complete && img.naturalWidth > 0);
       });
+      // el guardado falla (500) y la marca "Sin ver" vuelve; luego se borra el aviso
+      await page.waitForFunction(() => document.querySelector("[data-status]")?.textContent);
       await page.evaluate(() => document.querySelector<HTMLElement>("[data-status]")!.replaceChildren());
       await page.screenshot({ path: `${dir}/app-${width}-${scheme}.png`, fullPage: true });
     });

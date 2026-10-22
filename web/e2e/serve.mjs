@@ -1,7 +1,8 @@
-// Arranca `astro dev` para los e2e: KV local en un directorio propio que se borra antes,
-// DATA_SOURCE=fixtures y DEV_BYPASS_ACCESS=1 (llegan al worker por CLOUDFLARE_INCLUDE_PROCESS_ENV).
+// Construye la web y arranca `astro preview` (el worker del build en workerd, con la CSP real)
+// para los e2e: KV local en un directorio propio que se borra antes, DATA_SOURCE=fixtures y
+// DEV_BYPASS_ACCESS=1 (llegan al worker por CLOUDFLARE_INCLUDE_PROCESS_ENV; el bypass solo vale en localhost).
 import { rmSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const port = process.argv[2] ?? "4329";
@@ -18,8 +19,11 @@ Object.assign(env, {
   WEB_PERSIST_DIR: stateDir,
 });
 
+const build = spawnSync("npx", ["astro", "build"], { cwd: root, env, stdio: "inherit" });
+if (build.status !== 0) process.exit(build.status ?? 1);
+
 // --ignore-lock: primer plano siempre (Astro pasa a segundo plano si detecta un agente)
-const child = spawn("npx", ["astro", "dev", "--port", port, "--host", "localhost", "--ignore-lock"], { cwd: root, env, stdio: "inherit" });
+const child = spawn("npx", ["astro", "preview", "--port", port, "--host", "localhost", "--ignore-lock"], { cwd: root, env, stdio: "inherit" });
 const stop = () => child.kill("SIGTERM");
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);

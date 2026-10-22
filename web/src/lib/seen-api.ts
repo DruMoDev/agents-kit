@@ -1,4 +1,5 @@
 // POST /api/seen {repo, prs: number[]} => 204. El repo debe ser uno de los descubiertos.
+// Si KV no deja escribir (límite de 1/s por clave) => 503 con Retry-After.
 import { GitHubError, type Repo } from "./github";
 import { markSeen, type KVLike } from "./seen";
 
@@ -30,6 +31,14 @@ export async function handleSeen(request: Request, kv: KVLike | undefined, loadR
   }
   if (!repos.some((r) => r.name === repo)) return text(404, "Esa app no existe");
 
-  await markSeen(kv, repo, prs as number[]);
+  try {
+    await markSeen(kv, repo, prs as number[]);
+  } catch {
+    // KV limita a 1 escritura por segundo y clave (429) o puede fallar: el cliente reintenta
+    return new Response("No se pudo guardar ahora mismo. Inténtalo de nuevo en unos segundos.", {
+      status: 503,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "retry-after": "1" },
+    });
+  }
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }

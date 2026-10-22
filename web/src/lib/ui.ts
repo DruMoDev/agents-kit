@@ -61,3 +61,11 @@ export const TYPE_META: Record<EntryType, { slug: string; hint: string }> = {
   Arreglo: { slug: "arreglo", hint: "Algo que fallaba y ya funciona" },
   Interno: { slug: "interno", hint: "Cambios por dentro, sin efecto visible" },
 };
+
+/** La URL actual sin `refrescar` (ruta + query), para redirigir tras refrescar. */
+export function withoutRefresh(url: URL): string {
+  const params = new URLSearchParams(url.search);
+  params.delete("refrescar");
+  const qs = params.toString();
+  return url.pathname + (qs ? `?${qs}` : "");
+}

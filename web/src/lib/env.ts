@@ -8,7 +8,7 @@ export interface WebEnv {
   DATA_SOURCE?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
-  /** "1" = no exigir Access (solo desarrollo y e2e). */
+  /** "1" = no exigir Access (solo desarrollo y e2e, y solo si el host es localhost o 127.0.0.1). */
   DEV_BYPASS_ACCESS?: string;
   SEEN?: KVLike;
 }

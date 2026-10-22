@@ -74,11 +74,11 @@ Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/`
 
 ## Web de changelogs
 
-`web/` es una app aparte (Astro en Cloudflare Workers) donde ves, app por app, los cambios de cada repo con el kit activado y cuáles no has visto todavía. Lee en vivo de GitHub los repos de tu cuenta que tienen `.agents-kit.json` y su `CHANGELOG.md` (caché de 5 minutos; "Actualizar" la salta). El estado "visto" se guarda en Cloudflare KV, así que es el mismo en el móvil y en el Mac. Las capturas de repos privados las sirve el propio worker.
+`web/` es una app aparte (Astro en Cloudflare Workers) donde ves, app por app, los cambios de cada repo con el kit activado y cuáles no has visto todavía. Lee en vivo de GitHub los repos de tu cuenta que tienen `.agents-kit.json` y su `CHANGELOG.md` (caché de 5 minutos en KV; "Actualizar" la salta). El estado "visto" se guarda en Cloudflare KV, así que es el mismo en el móvil y en el Mac. Las capturas de repos privados las sirve el propio worker.
 
 - Desarrollo local con datos de ejemplo: `cd web && npm ci && cp .dev.vars.example .dev.vars && npm run dev`.
-- Tests: `npm test` (parser, lógica, Access) y `npm run e2e` (Playwright, datos de ejemplo).
-- Despliegue: `npx wrangler deploy` desde `web/`. Necesita el KV `SEEN` (su id en `wrangler.jsonc`), el secreto `GITHUB_TOKEN` (token fine-grained de solo lectura: Contents en todos tus repos) puesto con `npx wrangler secret put GITHUB_TOKEN`, y Cloudflare Access delante con solo tu email; `ACCESS_TEAM_DOMAIN` y `ACCESS_AUD` en `wrangler.jsonc`. Sin Access configurado, la web responde 503.
+- Tests: `npm test` (parser, lógica, Access) y `npm run e2e` (Playwright contra el build con su CSP, datos de ejemplo).
+- Despliegue: `npx wrangler deploy` desde `web/`. Necesita el KV `SEEN` (su id en `wrangler.jsonc`; guarda el estado visto y la caché de la lista de repos), el secreto `GITHUB_TOKEN` (token fine-grained de solo lectura: Contents en todos tus repos) puesto con `npx wrangler secret put GITHUB_TOKEN`, y Cloudflare Access delante con solo tu email; `ACCESS_TEAM_DOMAIN` y `ACCESS_AUD` en `wrangler.jsonc`. Sin Access configurado, la web responde 503.
 
 ## Iterar
 

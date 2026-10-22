@@ -1,5 +1,7 @@
-// Repos con agents-kit y sus changelogs: una consulta GraphQL (paginada) cacheada 5 minutos,
+// Repos con agents-kit y sus changelogs: una consulta GraphQL (paginada) cacheada 5 minutos
+// en KV (clave cache:repos:v1) y, por delante, unos segundos en la memoria del isolate;
 // o fixtures/repos.json con DATA_SOURCE=fixtures.
+// No se usa la Cache API: no funciona en *.workers.dev ni detrás de Cloudflare Access.
 import fixtureRepos from "../../fixtures/repos.json";
 import { parseChangelog, type Day } from "./changelog";
 import type { FetchLike, WebEnv } from "./env";
@@ -20,24 +22,34 @@ export class GitHubError extends Error {
   }
 }
 
-/** Lo mínimo de la Cache API que se usa (caches.default en Workers). */
-export interface CacheLike {
-  match(key: Request | string): Promise<Response | undefined>;
-  put(key: Request | string, res: Response): Promise<void>;
+/** Lo mínimo de KVNamespace que usa la caché de la lista. */
+export interface CacheKV {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
 }
 
 export interface FetchReposOptions {
   fetch?: FetchLike;
-  /** null = sin caché; por defecto caches.default si existe. */
-  cache?: CacheLike | null;
-  /** true = saltar la caché (?refrescar=1). */
+  /** null = sin KV; por defecto env.SEEN. */
+  kv?: CacheKV | null;
+  /** true = saltar las cachés y reescribirlas (?refrescar=1). */
   refresh?: boolean;
+  /** Reloj en ms (tests). */
+  now?: () => number;
 }
 
 const GRAPHQL_URL = "https://api.github.com/graphql";
-const CACHE_KEY = "https://agents-kit-changelogs.internal/repos/v1";
-const CACHE_TTL_S = 300;
+export const REPOS_CACHE_KEY = "cache:repos:v1";
+const KV_TTL_S = 300;
+const MEMORY_TTL_MS = 30_000;
 const MAX_PAGES = 20;
+
+let memory: { repos: Repo[]; expires: number } | null = null;
+
+/** Vacía la caché en memoria del isolate (tests). */
+export function resetRepoCache(): void {
+  memory = null;
+}
 
 const QUERY = `query($after: String) {
   viewer {
@@ -66,12 +78,7 @@ interface RepoNode {
 
 interface GraphQLPage {
   data?: { viewer?: { repositories?: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: (RepoNode | null)[] } } };
-  errors?: { message?: string; type?: string }[];
-}
-
-function defaultCache(): CacheLike | null {
-  const c = (globalThis as { caches?: { default?: CacheLike } }).caches;
-  return c?.default ?? null;
+  errors?: { message?: string; type?: string; path?: (string | number)[] }[];
 }
 
 function toRepo(node: RepoNode): Repo {
@@ -109,8 +116,13 @@ async function queryPage(token: string, after: string | null, doFetch: FetchLike
   } catch {
     throw new GitHubError("GitHub devolvió una respuesta ilegible.");
   }
-  if (body.errors?.length || !body.data?.viewer?.repositories) {
+  if (!body.data?.viewer?.repositories) {
     throw new GitHubError("GitHub no devolvió los repositorios: revisa que el token tenga permiso de lectura de contenidos y metadatos.");
+  }
+  // errores parciales: los repos que fallan llegan como null y se omiten; el resto se muestra
+  if (body.errors?.length) {
+    const detail = body.errors.map((e) => `${(e.path ?? []).join(".") || "?"}: ${e.message ?? e.type ?? "error"}`).join("; ");
+    console.warn(`GitHub devolvió ${body.errors.length} error(es) parciales; se omiten esos repos. ${detail}`);
   }
   return body;
 }
@@ -128,33 +140,42 @@ async function queryRepos(token: string, doFetch: FetchLike): Promise<Repo[]> {
   return repos;
 }
 
+function isRepoList(v: unknown): v is Repo[] {
+  return Array.isArray(v) && v.every((r) => r && typeof r.name === "string" && Array.isArray(r.days));
+}
+
 export async function fetchRepos(env: WebEnv, opts: FetchReposOptions = {}): Promise<Repo[]> {
   if (env.DATA_SOURCE === "fixtures") return structuredClone(fixtureRepos as Repo[]);
   const token = env.GITHUB_TOKEN?.trim();
   if (!token) throw new GitHubError("Falta el token de GitHub (secreto GITHUB_TOKEN).");
 
-  const cache = opts.cache === undefined ? defaultCache() : opts.cache;
-  if (cache && !opts.refresh) {
-    try {
-      const hit = await cache.match(CACHE_KEY);
-      if (hit) return (await hit.json()) as Repo[];
-    } catch {
-      // caché ilegible: se consulta GitHub
+  const now = opts.now ?? Date.now;
+  const kv = opts.kv === undefined ? env.SEEN ?? null : opts.kv;
+
+  if (!opts.refresh) {
+    if (memory && memory.expires > now()) return structuredClone(memory.repos);
+    if (kv) {
+      try {
+        const raw = await kv.get(REPOS_CACHE_KEY);
+        const cached: unknown = raw ? JSON.parse(raw) : null;
+        if (isRepoList(cached)) {
+          memory = { repos: cached, expires: now() + MEMORY_TTL_MS };
+          return structuredClone(cached);
+        }
+      } catch {
+        // KV caído o con basura: se consulta GitHub
+      }
     }
   }
 
   const repos = await queryRepos(token, opts.fetch ?? fetch);
-  if (cache) {
+  memory = { repos, expires: now() + MEMORY_TTL_MS };
+  if (kv) {
     try {
-      await cache.put(
-        CACHE_KEY,
-        new Response(JSON.stringify(repos), {
-          headers: { "content-type": "application/json", "cache-control": `max-age=${CACHE_TTL_S}` },
-        }),
-      );
+      await kv.put(REPOS_CACHE_KEY, JSON.stringify(repos), { expirationTtl: KV_TTL_S });
     } catch {
-      // sin caché no pasa nada
+      // límite de escritura o KV caído: la memoria basta hasta la próxima
     }
   }
-  return repos;
+  return structuredClone(repos);
 }

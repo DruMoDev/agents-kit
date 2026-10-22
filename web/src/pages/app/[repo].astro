@@ -7,7 +7,7 @@ import { ENTRY_TYPES } from "../../lib/changelog";
 import { fetchRepos, GitHubError, type Repo } from "../../lib/github";
 import { renderMarkdown } from "../../lib/markdown";
 import { getSeen, unseenCount } from "../../lib/seen";
-import { countLabel, filterDays, formatDate, formatShortDate, parseTypeFilter, TYPE_META } from "../../lib/ui";
+import { countLabel, filterDays, formatDate, formatShortDate, parseTypeFilter, TYPE_META, withoutRefresh } from "../../lib/ui";
 import type { WebEnv } from "../../lib/env";
 
 const e = env as unknown as WebEnv;
@@ -24,6 +24,8 @@ try {
   error = err.message;
   Astro.response.status = 502;
 }
+// tras refrescar, a la misma URL sin el parámetro: recargar después no vuelve a saltarse la caché
+if (refresh && !error) return Astro.redirect(withoutRefresh(Astro.url), 303);
 if (!error && !repo) Astro.response.status = 404;
 
 const seen = repo && e.SEEN ? await getSeen(e.SEEN, repo.name) : new Set<number>();
@@ -33,7 +35,6 @@ const days = repo ? filterDays(repo.days, typeFilter) : [];
 const countByType = Object.fromEntries(ENTRY_TYPES.map((t) => [t, allEntries.filter((x) => x.type === t).length]));
 const base = `/app/${encodeURIComponent(name)}`;
 const imgUrl = (path: string) => `/img/${encodeURIComponent(name)}/${path.split("/").map(encodeURIComponent).join("/")}`;
-const allPrs = allEntries.map((x) => x.pr);
 ---
 
 <Base title={repo ? `${repo.name} | Changelogs` : "Changelogs"}>
@@ -62,7 +63,7 @@ const allPrs = allEntries.map((x) => x.pr);
 
   {
     repo && (
-      <div class="app" data-repo-page={repo.name} data-all-prs={JSON.stringify(allPrs)}>
+      <div class="app" data-repo-page={repo.name}>
         <header class="app-head">
           <h1>{repo.name}</h1>
           {allEntries.length > 0 ? (
@@ -183,70 +184,81 @@ const allPrs = allEntries.map((x) => x.pr);
 
 <script>
   // Marcar visto: al abrir un cambio sin ver y con "Marcar todo como visto".
-  // Si falla, la marca se queda y se avisa; nada se pierde.
+  // La marca se quita al momento (optimista) y los PR van a una cola que los agrupa y
+  // reintenta (KV admite 1 escritura por segundo y clave). Si al final no se guarda,
+  // la marca vuelve y se avisa con discreción.
+  import { SeenQueue } from "../../lib/seen-queue";
+
   const page = document.querySelector<HTMLElement>("[data-repo-page]");
   if (page) {
     const repo = page.dataset.repoPage!;
     const total = page.querySelector<HTMLElement>("[data-unseen-total]");
     const status = page.querySelector<HTMLElement>("[data-status]");
     const markAll = page.querySelector<HTMLButtonElement>("[data-mark-all]");
-    let unseen = Number(total?.textContent ?? 0);
+    const entries = new Map<number, HTMLElement>();
+    page.querySelectorAll<HTMLElement>("details.entry").forEach((d) => entries.set(Number(d.dataset.pr), d));
 
     const say = (msg: string) => {
       if (status) status.textContent = msg;
     };
 
-    const post = async (prs: number[]) => {
-      const res = await fetch("/api/seen", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo, prs }),
-      });
-      if (res.status !== 204) throw new Error(String(res.status));
-    };
-
-    const markSeenUi = (el: HTMLElement) => {
-      if (!el.hasAttribute("data-unseen")) return;
-      el.removeAttribute("data-unseen");
-      el.querySelector(".entry-badge")?.remove();
-      unseen = Math.max(0, unseen - 1);
-    };
+    const unseenCount = () => page.querySelectorAll("details.entry[data-unseen]").length;
 
     const refresh = () => {
+      const unseen = unseenCount();
       if (total) total.textContent = String(unseen);
       total?.closest<HTMLElement>(".app-unseen")?.setAttribute("data-has-unseen", unseen > 0 ? "true" : "false");
-      if (markAll && unseen === 0) markAll.hidden = true;
+      if (markAll) {
+        markAll.hidden = unseen === 0;
+        markAll.disabled = false;
+      }
       document.title = document.title.replace(/^\(\d+\)\s*/, "");
     };
 
-    page.querySelectorAll<HTMLDetailsElement>("details.entry").forEach((d) => {
-      d.addEventListener("toggle", async () => {
-        if (!d.open || !d.hasAttribute("data-unseen") || d.dataset.saving) return;
-        d.dataset.saving = "1";
-        try {
-          await post([Number(d.dataset.pr)]);
-          markSeenUi(d);
-          refresh();
-        } catch {
-          say("No se pudo guardar que lo has visto. Se volverá a intentar al abrirlo otra vez.");
-        } finally {
-          delete d.dataset.saving;
-        }
+    const queue = new SeenQueue({
+      send: async (prs, keepalive) => {
+        const res = await fetch("/api/seen", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo, prs }),
+          keepalive,
+        });
+        return res.status;
+      },
+      onFail: (prs) => {
+        for (const pr of prs) entries.get(pr)?.setAttribute("data-unseen", "true");
+        refresh();
+        say("No se pudo guardar que lo has visto. Se volverá a intentar al abrirlo otra vez.");
+      },
+    });
+
+    const mark = (els: HTMLElement[]) => {
+      const prs: number[] = [];
+      for (const el of els) {
+        if (!el.hasAttribute("data-unseen")) continue;
+        el.removeAttribute("data-unseen");
+        prs.push(Number(el.dataset.pr));
+      }
+      if (prs.length === 0) return;
+      say("");
+      refresh();
+      queue.add(prs);
+    };
+
+    entries.forEach((d) => {
+      d.addEventListener("toggle", () => {
+        if ((d as HTMLDetailsElement).open) mark([d]);
       });
     });
 
-    markAll?.addEventListener("click", async () => {
-      markAll.disabled = true;
-      try {
-        await post(JSON.parse(page.dataset.allPrs ?? "[]"));
-        page.querySelectorAll<HTMLElement>("details.entry[data-unseen]").forEach(markSeenUi);
-        unseen = 0;
-        refresh();
-        say("Todo marcado como visto.");
-      } catch {
-        markAll.disabled = false;
-        say("No se pudo marcar todo como visto. Inténtalo de nuevo.");
-      }
+    markAll?.addEventListener("click", () => {
+      mark([...page.querySelectorAll<HTMLElement>("details.entry[data-unseen]")]);
+    });
+
+    // al salir de la página, lo pendiente se manda ya (keepalive)
+    window.addEventListener("pagehide", () => queue.flushNow());
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") queue.flushNow();
     });
   }
 
@@ -485,6 +497,9 @@ const allPrs = allEntries.map((x) => x.pr);
     font-size: var(--step-1);
     font-weight: 700;
     line-height: 1.3;
+  }
+  .entry:not([data-unseen]) .entry-badge {
+    display: none;
   }
   .entry:not([data-unseen]) .entry-title {
     font-weight: 600;

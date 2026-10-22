@@ -88,10 +88,19 @@ describe("verifyAccess", () => {
     expect((await verifyAccess(req(), {}))?.status).toBe(503);
   });
 
-  it("DEV_BYPASS_ACCESS=1: pasa sin cabecera y sin configuración", async () => {
-    expect(await verifyAccess(req(), { DEV_BYPASS_ACCESS: "1" })).toBeNull();
-    expect(await verifyAccess(req(), { ...env, DEV_BYPASS_ACCESS: "1" })).toBeNull();
-    expect((await verifyAccess(req(), { DEV_BYPASS_ACCESS: "0" }))?.status).toBe(503);
+  it("DEV_BYPASS_ACCESS=1 en localhost o 127.0.0.1: pasa sin cabecera y sin configuración", async () => {
+    const local = (host: string) => new Request(`http://${host}/app/x`);
+    expect(await verifyAccess(local("localhost:4329"), { DEV_BYPASS_ACCESS: "1" })).toBeNull();
+    expect(await verifyAccess(local("127.0.0.1:4321"), { ...env, DEV_BYPASS_ACCESS: "1" })).toBeNull();
+    expect((await verifyAccess(local("localhost"), { DEV_BYPASS_ACCESS: "0" }))?.status).toBe(503);
+  });
+
+  it("DEV_BYPASS_ACCESS=1 fuera de localhost: se ignora y se exige Access", async () => {
+    expect((await verifyAccess(req(), { DEV_BYPASS_ACCESS: "1" }))?.status).toBe(503);
+    expect((await verifyAccess(req(), { ...env, DEV_BYPASS_ACCESS: "1" }))?.status).toBe(403);
+    const tricky = new Request("https://localhost.evil.example.com/", {});
+    expect((await verifyAccess(tricky, { ...env, DEV_BYPASS_ACCESS: "1" }))?.status).toBe(403);
+    expect((await verifyAccess(new Request("https://x.workers.dev/"), { ...env, DEV_BYPASS_ACCESS: "1" }))?.status).toBe(403);
   });
 
   it("JWKS inalcanzable: 403 sin lanzar", async () => {

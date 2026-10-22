@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDate, formatShortDate, sortApps, filterDays, parseTypeFilter, countLabel } from "../src/lib/ui";
+import { formatDate, formatShortDate, sortApps, filterDays, parseTypeFilter, countLabel, withoutRefresh } from "../src/lib/ui";
 import type { Repo } from "../src/lib/github";
 
 const repo = (name: string, lastDate: string | null, prs: number[] = []): Repo => ({
@@ -60,5 +60,13 @@ describe("countLabel", () => {
     expect(countLabel(1, "cambio", "cambios")).toBe("1 cambio");
     expect(countLabel(0, "cambio", "cambios")).toBe("0 cambios");
     expect(countLabel(3, "cambio", "cambios")).toBe("3 cambios");
+  });
+});
+
+describe("withoutRefresh", () => {
+  it("quita refrescar y conserva el resto de parámetros", () => {
+    expect(withoutRefresh(new URL("http://x/?refrescar=1"))).toBe("/");
+    expect(withoutRefresh(new URL("http://x/app/recetario?refrescar=1&tipo=Arreglo"))).toBe("/app/recetario?tipo=Arreglo");
+    expect(withoutRefresh(new URL("http://x/app/a%20b?tipo=Nuevo&refrescar=1"))).toBe("/app/a%20b?tipo=Nuevo");
   });
 });

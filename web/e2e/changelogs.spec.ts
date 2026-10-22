@@ -6,6 +6,29 @@ test.describe.configure({ mode: "serial" });
 
 const card = (page: Page, name: string) => page.locator(`[data-repo="${name}"]`);
 
+// Toda página se prueba con la CSP del build: cualquier violación hace fallar el test.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __csp: string[] };
+    w.__csp = [];
+    document.addEventListener("securitypolicyviolation", (e) => w.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+});
+
+test.afterEach(async ({ page }) => {
+  if (page.url().startsWith("http")) {
+    expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)).toEqual([]);
+  }
+});
+
+const seenPosts = (page: Page) => {
+  const posts: number[][] = [];
+  page.on("request", (r) => {
+    if (r.url().endsWith("/api/seen") && r.method() === "POST") posts.push(JSON.parse(r.postData() ?? "{}").prs);
+  });
+  return posts;
+};
+
 async function noHorizontalScroll(page: Page) {
   const { scroll, client } = await page.evaluate(() => ({
     scroll: document.documentElement.scrollWidth,
@@ -51,7 +74,8 @@ test("filtro por tipo", async ({ page }) => {
   await expect(page.locator("details.entry")).toHaveCount(5);
 });
 
-test("abrir un cambio muestra la extendida, lo marca visto y baja el contador", async ({ page }) => {
+test("abrir cambios muestra la extendida, los marca vistos al momento y los guarda en un solo POST", async ({ page }) => {
+  const posts = seenPosts(page);
   await page.goto("/app/recetario");
   const entry = page.locator('details.entry[data-pr="11"]');
   await expect(entry).toHaveAttribute("data-unseen", "true");
@@ -60,14 +84,17 @@ test("abrir un cambio muestra la extendida, lo marca visto y baja el contador", 
 
   const saved = page.waitForResponse((r) => r.url().endsWith("/api/seen") && r.status() === 204);
   await entry.locator("summary").click();
-  await saved;
   await expect(entry.getByText("tortilla")).toBeVisible();
   await expect(entry).not.toHaveAttribute("data-unseen", "true");
+  await expect(entry.getByText("Sin ver")).toBeHidden();
   await expect(page.locator("[data-unseen-total]")).toHaveText("4");
 
   // la extendida con captura: la imagen pasa por /img y carga
   const login = page.locator('details.entry[data-pr="14"]');
   await login.locator("summary").press("Enter");
+  await expect(page.locator("[data-unseen-total]")).toHaveText("3");
+  await saved;
+  expect(posts).toEqual([[11, 14]]);
   const img = login.locator("img");
   await expect(img).toHaveAttribute("src", "/img/recetario/docs/changelog/14-login.png");
   await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBeGreaterThan(0);
@@ -78,10 +105,14 @@ test("abrir un cambio muestra la extendida, lo marca visto y baja el contador", 
 });
 
 test("marcar todo como visto deja el contador a 0", async ({ page }) => {
+  const posts = seenPosts(page);
   await page.goto("/app/recetario");
   const saved = page.waitForResponse((r) => r.url().endsWith("/api/seen") && r.status() === 204);
   await page.getByRole("button", { name: "Marcar todo como visto" }).click();
+  await expect(page.locator("[data-unseen-total]")).toHaveText("0");
   await saved;
+  // solo los que faltaban, por la misma cola
+  expect(posts.map((p) => [...p].sort((a, b) => a - b))).toEqual([[7, 10, 13]]);
   await expect(page.locator('details.entry[data-unseen="true"]')).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Marcar todo como visto" })).toBeHidden();
 
@@ -127,7 +158,60 @@ test("API e imágenes: validación", async ({ request }) => {
   expect((await request.get("/img/recetario/docs/changelog/%2e%2e/x.png")).status()).toBe(404);
 });
 
-test("las páginas no se guardan en caché del navegador", async ({ request }) => {
-  const res = await request.get("/");
-  expect(res.headers()["cache-control"]).toContain("no-store");
+test("si no se puede guardar, la marca vuelve y se avisa con discreción", async ({ page }) => {
+  await page.route("**/api/seen", (r) => r.fulfill({ status: 500, body: "boom" }));
+  await page.goto("/app/gastos-casa");
+  const entry = page.locator("details.entry[data-unseen]").first();
+  await entry.locator("summary").click();
+  await expect(page.locator("[data-unseen-total]")).toHaveText("0");
+  await expect(page.locator("[data-status]")).toContainText("No se pudo guardar");
+  await expect(entry).toHaveAttribute("data-unseen", "true");
+  await expect(entry.getByText("Sin ver")).toBeVisible();
+  await expect(page.locator("[data-unseen-total]")).toHaveText("1");
+  await expect(page.getByRole("button", { name: "Marcar todo como visto" })).toBeVisible();
+});
+
+test("503 (límite de KV): reintenta solo y acaba guardando", async ({ page }) => {
+  let calls = 0;
+  await page.route("**/api/seen", (r) => (++calls === 1 ? r.fulfill({ status: 503, body: "ocupado" }) : r.continue()));
+  await page.goto("/app/gastos-casa");
+  const saved = page.waitForResponse((r) => r.url().endsWith("/api/seen") && r.status() === 204);
+  await page.getByRole("button", { name: "Marcar todo como visto" }).click();
+  await saved;
+  expect(calls).toBe(2);
+  await expect(page.locator("[data-status]")).toBeEmpty();
+  await page.reload();
+  await expect(page.locator("details.entry[data-unseen]")).toHaveCount(0);
+});
+
+test("?refrescar=1 redirige (303) a la misma URL sin el parámetro", async ({ page, request }) => {
+  const res = await request.get("/app/recetario?refrescar=1&tipo=Arreglo", { maxRedirects: 0 });
+  expect(res.status()).toBe(303);
+  expect(res.headers()["location"]).toBe("/app/recetario?tipo=Arreglo");
+  await page.goto("/?refrescar=1");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator("[data-repo]")).toHaveCount(3);
+});
+
+test("cabeceras: sin caché, CSP sin inline libre, nosniff y referrer-policy", async ({ request }) => {
+  for (const path of ["/", "/app/recetario", "/app/no-existe"]) {
+    const h = (await request.get(path)).headers();
+    expect(h["cache-control"]).toContain("no-store");
+    expect(h["x-content-type-options"]).toBe("nosniff");
+    expect(h["referrer-policy"]).toBe("no-referrer");
+    const csp = h["content-security-policy"];
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("img-src 'self' https: data:");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).not.toContain("unsafe-inline");
+  }
+});
+
+test("DEV_BYPASS_ACCESS solo vale en localhost: con otro host se exige Access", async ({ request }) => {
+  // un host por IP llega al worker (Vite bloquea nombres desconocidos antes): el bypass se ignora
+  const res = await request.get("/", { headers: { host: "192.168.1.50:4329" } });
+  expect(res.status()).toBe(503);
+  expect(await res.text()).toContain("Access sin configurar");
 });

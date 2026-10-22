@@ -6,7 +6,7 @@ import ErrorView from "../components/ErrorView.astro";
 import Legend from "../components/Legend.astro";
 import { fetchRepos, GitHubError, type Repo } from "../lib/github";
 import { getSeen, unseenCount } from "../lib/seen";
-import { countLabel, sortApps } from "../lib/ui";
+import { countLabel, sortApps, withoutRefresh } from "../lib/ui";
 import type { WebEnv } from "../lib/env";
 
 const e = env as unknown as WebEnv;
@@ -21,6 +21,8 @@ try {
   error = err.message;
   Astro.response.status = 502;
 }
+// tras refrescar, a la misma URL sin el parámetro: recargar después no vuelve a saltarse la caché
+if (refresh && !error) return Astro.redirect(withoutRefresh(Astro.url), 303);
 
 const items = sortApps(
   await Promise.all(
