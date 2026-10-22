@@ -18,7 +18,7 @@ git -C "$r" status --porcelain -uall | grep -q '\.agents/skills/\.gitkeep' || fa
 [ "$(cat "$r/CLAUDE.md")" = "@AGENTS.md" ] || fail "CLAUDE.md should be exactly @AGENTS.md"
 [ "$(readlink "$r/.claude/skills")" = "../.agents/skills" ] || fail "wrong symlink target"
 [ "$(jq .maxReviewRounds "$r/.agents-kit.json")" = "10" ] || fail "maxReviewRounds != 10"
-[ "$(jq -r .notify "$r/.agents-kit.json")" = "claude-push" ] || fail "notify"
+[ "$(jq -r .notify "$r/.agents-kit.json")" = "ntfy" ] || fail "notify"
 [ "$(jq -r '.reviewers.claude | length' "$r/.agents-kit.json")" = "2" ] || fail "reviewers.claude"
 [ "$(last_line "$out")" = "FIN: 7" ] || fail "expected FIN: 7, got: $(last_line "$out")"
 grep -q "^# Changelog" "$r/CHANGELOG.md" || fail "CHANGELOG title"

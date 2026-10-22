@@ -52,6 +52,20 @@ Cómo se invocan:
 - **PR sin fusionar (`autoMerge` falso):** revísala y fusiónala tú. El issue se cierra solo, pero conserva las etiquetas `listo` y `en-curso`: quítalas a mano (`gh issue edit <n> --remove-label listo --remove-label en-curso`).
 - **Reclamo colgado:** el resumen de `kit-run` lista los issues `listo` con `en-curso` que no reclamó esa ejecución, con el comando `kit-issue.sh soltar` exacto. Suéltalo solo si ningún agente lo está trabajando.
 
+### Changelog
+
+Cada PR que cambia algo para quien usa la app añade su entrada en `CHANGELOG.md` (formato en la cabecera del fichero; capturas en `docs/changelog/` si el cambio es visual). `kit-pr.sh fusionar` no fusiona si el fichero está mal formado; se comprueba a mano con `scripts/kit-changelog.sh validar <raíz>`. Al terminar, `kit-run` deja el resumen como comentario en el issue fijado "📦 Changelog".
+
+### Avisos
+
+Te llegan al móvil cuando un issue pasa a `necesita-decision` o `bloqueado` y al terminar cada `kit-run` (si fusionó algo o hay issues esperándote). Canal en `notify` de `.agents-kit.json`:
+
+- `ntfy` (por defecto): instala la app ntfy y suscríbete al tema que te da `kit-on` (o `cat ~/.agents-kit/ntfy-topic`). El tema se genera una vez en tu máquina y sirve para todos tus repos; para usar otro, define `KIT_NTFY_TOPIC`. Un repo nunca elige el tema. El tema es el único secreto: los avisos pasan por ntfy.sh y quien lo conozca puede leerlos (llevan el nombre del repo y el título del issue).
+- `claude-push`: notificación de Claude Code al móvil. Solo funciona dentro de una sesión de Claude Code con Remote Control conectado; no en Codex, OpenCode ni `claude -p`.
+- `none`: sin avisos; todo queda en GitHub.
+
+Si un aviso falla, el flujo sigue y lo cuenta en el resumen.
+
 ### Revisores
 
 Los revisores de `.agents-kit.json` (`reviewers`) se ejecutan sin supervisión y con todos los permisos locales, cada uno en un clon aislado del head de la PR: sin credenciales de GitHub, con `gh` y `git push` bloqueados y sin la configuración de agente que traiga la PR. Aun así pueden ejecutar código del repo en tu máquina: es el mismo nivel de confianza que el agente que implementa.
@@ -73,4 +87,4 @@ tests/run.sh
 claude plugin validate .
 ```
 
-Próximas fases: changelog y avisos fuera de GitHub, web.
+Próxima fase: web de changelogs.

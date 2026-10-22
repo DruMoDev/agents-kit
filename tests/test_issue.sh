@@ -2,6 +2,10 @@
 # Tests for scripts/kit-issue.sh (stateful gh stub, git real).
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 issue="$REPO_ROOT/scripts/kit-issue.sh"
+# avisos: nunca a la red (curl con stub, tema y HOME temporales)
+export PATH="$TESTS_DIR/stubs/notify:$PATH"
+export HOME="$(mktemp -d)" CURL_LOG="$(mktemp)" KIT_NTFY_TOPIC=tema-test
+unset CURL_FAIL KIT_NTFY_SERVER
 
 mk_kit_repo() {
   local r; r="$(mk_repo)"
@@ -126,6 +130,41 @@ out="$(bash "$issue" bloquear "$r" 7 kit-aaaa1111 "$qfile" 2>&1)" || fail "bloqu
 flow_issue 7 '.comments[].body' | grep -q '^<!-- kit-bloqueado -->' || fail "bloquear: sin marcador"
 [ "$(flow_issue 7 '[.labels[].name] | index("bloqueado") != null')" = true ] || fail "bloquear: sin etiqueta"
 [ "$(flow_issue 7 '[.labels[].name] | index("en-curso") != null')" = false ] || fail "bloquear: queda en-curso"
+
+# --- avisos tras decision/bloquear
+seed7() { use_flow_gh; flow_add_issue 7 "tarea: rojo" listo en-curso; flow_add_comment 7 '<!-- kit-reclamado: kit-aaaa1111 -->'; }
+echo '{"notify":"none"}' > "$r/.agents-kit.json"
+seed7; : > "$CURL_LOG"
+out="$(bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>&1)" || fail "aviso none: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: necesita-decision #7" ] || fail "aviso none: '$out'"
+[ -s "$CURL_LOG" ] && fail "aviso none: llamó a curl"
+echo '{"notify":"ntfy"}' > "$r/.agents-kit.json"
+seed7; : > "$CURL_LOG"
+out="$(bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso ntfy: exit $?"
+[ "$(last_line "$out")" = "FIN: necesita-decision #7" ] || fail "aviso ntfy: '$out'"
+grep -qx "Title: demo: necesita decisión" "$CURL_LOG" || fail "aviso ntfy: título ($(cat "$CURL_LOG"))"
+grep -qx "#7 tarea: rojo" "$CURL_LOG" || fail "aviso ntfy: mensaje"
+grep -qx "Click: https://github.com/dru/demo/issues/7" "$CURL_LOG" || fail "aviso ntfy: url"
+seed7; : > "$CURL_LOG"
+out="$(bash "$issue" bloquear "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso bloquear: exit $?"
+grep -qx "Title: demo: bloqueado" "$CURL_LOG" || fail "aviso bloquear: título"
+seed7
+err="$(CURL_FAIL=1 bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>&1 >"$HOME/out")"; rc=$?
+[ $rc -eq 0 ] || fail "aviso fallido: exit $rc"
+case "$err" in *"aviso: no se pudo avisar (error: no se pudo enviar el aviso por ntfy)"*) ;; *) fail "aviso fallido: stderr '$err'";; esac
+[ "$(sed -n '$p' "$HOME/out")" = "FIN: necesita-decision #7" ] || fail "aviso fallido: FIN '$(cat "$HOME/out")'"
+# tema nuevo y envío fallido: la línea del tema no se pierde
+seed7
+out="$(HOME="$(mktemp -d)" CURL_FAIL=1 KIT_NTFY_TOPIC= bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)"; rc=$?
+[ $rc -eq 0 ] || fail "tema nuevo con fallo: exit $rc"
+printf '%s\n' "$out" | grep -q '^tema ntfy nuevo: agents-kit-' || fail "tema nuevo con fallo: se perdió la línea ($out)"
+[ "$(last_line "$out")" = "FIN: necesita-decision #7" ] || fail "tema nuevo con fallo: FIN '$out'"
+echo '{"notify":"claude-push"}' > "$r/.agents-kit.json"
+seed7
+out="$(bash "$issue" bloquear "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso push: exit $?"
+[ "$out" = "$(printf 'AVISO-CLAUDE: demo: bloqueado: #7 tarea: rojo https://github.com/dru/demo/issues/7\nFIN: bloqueado #7')" ] \
+  || fail "aviso push: '$out'"
+echo '{}' > "$r/.agents-kit.json"
 
 # --- crear
 use_flow_gh

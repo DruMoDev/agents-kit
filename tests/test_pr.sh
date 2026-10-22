@@ -305,4 +305,43 @@ GH_FAIL_ON="issue edit" bash "$pr" fusionar "$wt" $p 3 >"$GH_STATE/o" 2>"$GH_STA
 [ $rc -eq 0 ] || fail "etiquetas fallidas rompen la fusión: $rc $(cat "$GH_STATE/e")"
 [ "$(last_line "$(cat "$GH_STATE/o")")" = "FIN: ok" ] || fail "FIN con aviso de etiquetas"
 grep -q "etiquetas" "$GH_STATE/e" || fail "sin aviso de etiquetas: $(cat "$GH_STATE/e")"
+# fusionar: malformed CHANGELOG.md blocks the merge before gh pr merge
+st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
+  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+printf '# Changelog\n\n## 2026-10-18\n\n### Novedad: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
+: > "$GH_LOG"
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "changelog inválido debe dar 1: $rc $err"
+case "$err" in *"CHANGELOG.md mal formado"*"CHANGELOG.md:5: tipo inválido"*) ;; *) fail "changelog msg: $err";; esac
+grep -q "pr merge" "$GH_LOG" && fail "fusionó con el changelog inválido"
+[ "$(pr_q .state)" = OPEN ] || fail "changelog inválido: PR no abierta"
+rm "$wt/CHANGELOG.md"
+# fusionar with a valid CHANGELOG.md (kept out of git status) merges
+excl="$(git -C "$wt" rev-parse --git-common-dir)/info/exclude"; mkdir -p "$(dirname "$excl")"
+cp "$excl" "$tmp/exclude.bak" 2>/dev/null || : > "$tmp/exclude.bak"
+echo CHANGELOG.md >> "$excl"
+printf '# Changelog\n\n## 2026-10-18\n\n### Nuevo: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
+reset_open() {
+  st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
+    | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+}
+reset_open; : > "$GH_LOG"
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con changelog válido: $out"
+[ "$(last_line "$out")" = "FIN: ok" ] || fail "changelog válido FIN: $out"
+[ "$(pr_q .state)" = MERGED ] || fail "changelog válido: no fusionó"
+# kit-changelog exit 2 (awk roto) -> fusionar exit 2, sin fusionar
+reset_open; : > "$GH_LOG"
+awkd="$(mktemp -d)"; printf '#!/bin/sh\nexit 2\n' > "$awkd/awk"; chmod +x "$awkd/awk"
+err="$(PATH="$awkd:$PATH" bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "kit-changelog exit 2 debe dar 2: $rc $err"
+case "$err" in *"kit-changelog.sh falló"*) ;; *) fail "kit-changelog exit 2 msg: $err";; esac
+grep -q "pr merge" "$GH_LOG" && fail "fusionó con kit-changelog roto"
+# a marker that vanishes from the worktree is not reported as a malformed changelog
+reset_open
+realgit="$(command -v git)"; gitd="$(mktemp -d)"
+printf '#!/bin/sh\n[ "$1" = status ] && rm -f "%s/.agents-kit.json"\nexec "%s" "$@"\n' "$wt" "$realgit" > "$gitd/git"; chmod +x "$gitd/git"
+err="$(PATH="$gitd:$PATH" bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+case "$err" in *"mal formado"*) fail "marcador ausente informado como changelog mal formado: $err";; esac
+git -C "$wt" checkout -q -- .agents-kit.json || fail "restaurar marcador"
+rm "$wt/CHANGELOG.md"; cp "$tmp/exclude.bak" "$excl"
 echo "OK test_pr"

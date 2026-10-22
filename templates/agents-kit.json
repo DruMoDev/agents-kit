@@ -1,6 +1,6 @@
 {
   "maxReviewRounds": 10,
-  "notify": "claude-push",
+  "notify": "ntfy",
   "autoMerge": true,
   "implementer": {
     "claude": "opus"
