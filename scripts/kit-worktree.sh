@@ -2,6 +2,7 @@
 # Usage: scripts/kit-worktree.sh <subcomando> <root> [args...]
 #   abrir   <root> <N> <slug>
 #   limpiar <root> <N>
+#   barrer  <root>
 # Worktree per issue: ${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/<repo>/issue-<N>-<slug>.
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error.
 set -u
@@ -9,24 +10,26 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/default-branch.sh"
+source "$here/lib/repo-hook.sh"
 
 usage() {
-  echo "uso: $0 abrir <root> <N> <slug> | limpiar <root> <N>" >&2
+  echo "uso: $0 abrir <root> <N> <slug> | limpiar <root> <N> | barrer <root>" >&2
   exit 1
 }
 
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-case "$sub" in abrir|limpiar) ;; *) usage ;; esac
+case "$sub" in abrir|limpiar|barrer) ;; *) usage ;; esac
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 root="$(cd "$1" && pwd)"; shift
 kit_require_marker "$root" || exit $?
 case "$sub" in
   abrir) [ $# -eq 2 ] || usage ;;
   limpiar) [ $# -eq 1 ] || usage ;;
+  barrer) [ $# -eq 0 ] || usage ;;
 esac
-n="$1"
-[[ $n =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $n" >&2; exit 1; }
+n="${1:-}"
+[ "$sub" = barrer ] || [[ $n =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $n" >&2; exit 1; }
 if [ "$sub" = abrir ]; then
   [[ $2 =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || { echo "slug inválido: $2" >&2; exit 1; }
 fi
@@ -76,9 +79,54 @@ if [ "$sub" = abrir ]; then
       git worktree add -q -b "$branch" --no-track "$path" "$start" || exit 2
     fi
   fi
+  # setup of the repo: once per worktree (a marker in its git dir records success, so a retry after a failure runs it again)
+  setup="$(kit_config "$root" 'if (.setup | type) == "string" then .setup else empty end')" || exit 2
+  gd="$(git -C "$path" rev-parse --absolute-git-dir)" || exit 2
+  if [ -n "$setup" ] && [ ! -e "$gd/kit-setup-ok" ]; then
+    script="$(kit_hook_path "$root" "$path" setup "$setup")" || exit 2
+    kit_hook_run "$path" "$script"; src=$?
+    if [ "$src" -ne 0 ]; then
+      if [ "$src" -eq 142 ]; then echo "setup agotó el tiempo (${KIT_HOOK_TIMEOUT:-1800}s):" >&2
+      else echo "setup falló (exit $src):" >&2; fi
+      printf '%s\n' "$KIT_HOOK_OUT" >&2
+      exit 2
+    fi
+    : > "$gd/kit-setup-ok"
+  fi
   echo "worktree: $path"
   echo "rama: $branch"
   echo "FIN: $path"
+  exit 0
+fi
+
+if [ "$sub" = barrer ]; then
+  base="$(kit_default_branch)"
+  [ -n "$base" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
+  git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" || { echo "error: git fetch falló" >&2; exit 2; }
+  tip="$(git rev-parse "refs/remotes/origin/$base")" || exit 2
+  dir="${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/$(basename "$root")"
+  [ -d "$dir" ] || { echo "FIN: 0 borrados"; exit 0; }
+  dir="$(cd "$dir" && pwd -P)"
+  main="$(cd "$root" && pwd -P)"
+  count=0
+  while IFS= read -r p; do
+    [ -n "$p" ] && [ -d "$p" ] || continue
+    rp="$(cd "$p" && pwd -P)"
+    case "$rp" in "$dir"/*) ;; *) continue ;; esac   # only the kit's worktrees of this repo
+    [ "$rp" != "$main" ] || continue
+    h="$(git -C "$p" rev-parse HEAD 2>/dev/null)" || continue
+    # a fresh worktree sits exactly on the tip of the default branch: it is not dead
+    [ "$h" != "$tip" ] || continue
+    git merge-base --is-ancestor "$h" "$tip" || continue
+    st="$(git -C "$p" status --porcelain)" || continue
+    [ -z "$st" ] || { echo "aviso: $p tiene cambios; no se borra" >&2; continue; }
+    b="$(git -C "$p" symbolic-ref -q --short HEAD)"
+    git worktree remove "$p" || { echo "aviso: no se pudo borrar $p" >&2; continue; }
+    [ -z "$b" ] || git branch -D "$b" >/dev/null 2>&1 || echo "aviso: no se pudo borrar la rama $b" >&2
+    echo "borrado: $p"
+    count=$((count + 1))
+  done < <(git worktree list --porcelain | sed -n 's/^worktree //p')
+  echo "FIN: $count borrados"
   exit 0
 fi
 

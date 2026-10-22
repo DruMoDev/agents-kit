@@ -4,6 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 wt="$REPO_ROOT/scripts/kit-worktree.sh"
 use_flow_gh
 export KIT_WORKTREES; KIT_WORKTREES="$(mktemp -d)"
+tmpe="$(mktemp)"
 last_line() { printf '%s\n' "$1" | sed -n '$p'; }
 
 r="$(mk_repo)"; o="$(mktemp -d)"
@@ -109,4 +110,56 @@ while IFS= read -r line; do case "$line" in *"dru/demo"*) ;; *) fail "gh sin rep
 
 # nothing to clean
 bash "$wt" limpiar "$r" 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin worktree debe dar 1"
+# setup: runs once in the new worktree; failure -> exit 2 with the output; unsafe path -> exit 2
+mkdir -p "$r/tools"
+printf '#!/bin/sh\necho "preparado" >> "$SETUP_LOG"\n[ -e "$SETUP_OK" ] || { echo "no hay entorno"; exit 1; }\n' > "$r/tools/setup.sh"
+echo '{"setup":"tools/setup.sh"}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m setup && git push -q origin main) >/dev/null 2>&1 || fail "push setup"
+export SETUP_LOG; SETUP_LOG="$(mktemp)"; export SETUP_OK="$(mktemp -d)/ok"
+err="$(bash "$wt" abrir "$r" 40 uno 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "setup fallido debe dar 2: $rc"
+case "$err" in *"setup falló (exit 1)"*"no hay entorno"*) ;; *) fail "setup msg: $err";; esac
+[ -d "$KIT_WORKTREES/$name/issue-40-uno" ] || fail "el worktree debe quedarse tras setup fallido"
+touch "$SETUP_OK"
+out="$(bash "$wt" abrir "$r" 40 uno 2>&1)" || fail "reintento con setup: $out"
+[ "$(last_line "$out")" = "FIN: $KIT_WORKTREES/$name/issue-40-uno" ] || fail "reintento sin FIN"
+bash "$wt" abrir "$r" 40 uno >/dev/null 2>&1 || fail "tercera apertura"
+[ "$(grep -c preparado "$SETUP_LOG")" -eq 2 ] || fail "setup debe correr hasta tener éxito y una sola vez: $(cat "$SETUP_LOG")"
+echo '{"setup":"../x.sh"}' > "$r/.agents-kit.json"
+bash "$wt" abrir "$r" 41 dos >/dev/null 2>"$tmpe"; rc=$?
+[ $rc -eq 2 ] && grep -q "'\.\.'" "$tmpe" || fail "setup con .. debe dar 2: $rc"
+git -C "$r" worktree remove --force "$KIT_WORKTREES/$name/issue-41-dos" 2>/dev/null; git -C "$r" branch -q -D issue-41-dos 2>/dev/null
+echo '{"setup":"/bin/true"}' > "$r/.agents-kit.json"
+bash "$wt" abrir "$r" 42 tres >/dev/null 2>"$tmpe"; rc=$?
+[ $rc -eq 2 ] && grep -q absoluta "$tmpe" || fail "setup absoluto debe dar 2: $rc"
+git -C "$r" worktree remove --force "$KIT_WORKTREES/$name/issue-42-tres" 2>/dev/null; git -C "$r" branch -q -D issue-42-tres 2>/dev/null
+echo '{}' > "$r/.agents-kit.json"
+
+# barrer: only clean worktrees of the kit dir whose HEAD is an ancestor of origin/main
+bash "$wt" barrer "$r" extra >/dev/null 2>&1; [ $? -eq 1 ] || fail "barrer con argumentos debe dar 1"
+out="$(bash "$wt" barrer "$r" 2>&1)" || fail "barrer 1: $out"
+[ "$(last_line "$out")" = "FIN: 1 borrados" ] || fail "barrer 1 FIN: $out"
+[ ! -e "$path31" ] || fail "barrer no borró 31 (main avanzó tras abrirlo)"
+git -C "$r" rev-parse -q --verify issue-31-bar >/dev/null && fail "barrer no borró la rama 31"
+bash "$wt" abrir "$r" 44 cinco >/dev/null 2>&1 || fail "abrir 44"
+p44="$KIT_WORKTREES/$name/issue-44-cinco"
+out="$(bash "$wt" barrer "$r" 2>&1)" || fail "barrer fresco: $out"
+[ "$(last_line "$out")" = "FIN: 0 borrados" ] || fail "barrer no borra un worktree recién abierto: $out"
+[ -d "$p44" ] || fail "barrer borró un worktree recién abierto"
+# main advances: 44 (clean, behind), 40 (dirty, behind), 43 (own commit, not an ancestor) and a worktree outside the kit dir
+bash "$wt" abrir "$r" 43 cuatro >/dev/null 2>&1 || fail "abrir 43"
+p43="$KIT_WORKTREES/$name/issue-43-cuatro"
+(cd "$p43" && echo z > z.txt && git add z.txt && git commit -q -m z) || fail "commit 43"
+outside="$(mktemp -d)/fuera"
+git -C "$r" worktree add -q -b fuera --no-track "$outside" origin/main || fail "worktree fuera"
+(cd "$r" && echo n > nuevo.txt && git add nuevo.txt && git commit -q -m avanza && git push -q origin main) >/dev/null 2>&1 || fail "avanzar main"
+echo x > "$KIT_WORKTREES/$name/issue-40-uno/sucio.txt"
+out="$(bash "$wt" barrer "$r" 2>&1)" || fail "barrer 2: $out"
+[ "$(last_line "$out")" = "FIN: 1 borrados" ] || fail "barrer 2 FIN: $out"
+[ ! -e "$p44" ] || fail "barrer no borró 44"
+git -C "$r" rev-parse -q --verify issue-44-cinco >/dev/null && fail "barrer no borró la rama 44"
+[ -d "$KIT_WORKTREES/$name/issue-40-uno" ] || fail "barrer borró uno sucio"
+[ -d "$p43" ] || fail "barrer borró uno con commits propios"
+[ -d "$outside" ] && git -C "$r" rev-parse -q --verify fuera >/dev/null || fail "barrer tocó un worktree ajeno al kit"
+[ -d "$r" ] || fail "barrer tocó el árbol principal"
 echo "OK test_worktree"

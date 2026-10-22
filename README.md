@@ -82,6 +82,17 @@ Los revisores se ejecutan sin supervisión y con todos los permisos locales, cad
 
 Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode).
 
+
+### Ganchos por repo
+
+En `.agents-kit.json` del repo (rutas relativas al repo, sin `..` ni absolutas; tiempo máximo `KIT_HOOK_TIMEOUT`, 1800 s por defecto):
+
+- `"setup": "tools/preparar.sh"`: se ejecuta con `bash` en cada worktree nuevo (`kit-worktree.sh abrir`); si falla, `kit-run` bloquea el issue con su salida.
+- `"protegido": ["lib/", "cli/"]`: si la PR toca esas rutas, su cuerpo debe tener `## Zonas protegidas` nombrándolas.
+- `"checks": {"pre-merge": "tools/pre-merge.sh"}`: `kit-pr.sh fusionar` lo ejecuta en el worktree; si falla, no fusiona y muestra su salida.
+
+`fusionar` lee `protegido`, `checks` y `revision.puestos` del marcador de la rama por defecto: una PR no puede aflojar sus propias puertas. `kit-worktree.sh barrer <raíz>` borra los worktrees limpios del kit ya contenidos en `origin/<rama por defecto>` (y su rama local); `kit-run` lo ejecuta al terminar.
+
 ## Web de changelogs
 
 `web/` es una app aparte (Astro en Cloudflare Workers) donde ves, app por app, los cambios de cada repo con el kit activado y cuáles no has visto todavía. Lee en vivo de GitHub los repos de tu cuenta que tienen `.agents-kit.json` y su `CHANGELOG.md` (caché de 5 minutos en KV; "Actualizar" la salta). El estado "visto" se guarda en Cloudflare KV, así que es el mismo en el móvil y en el Mac. Las capturas de repos privados las sirve el propio worker.

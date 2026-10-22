@@ -37,9 +37,9 @@ kit_global_init() {
 # kit_config <root> <jq-filter>: run the filter (jq -r) over plugin < global < repo.
 # Repo keys outside the whitelist are ignored with one warning per key on stderr (v2 keys name their new key).
 # Return: 0 ok, 2 marker or global config is not a JSON object.
-kit_config() {
-  local root="$1" filter="$2" g global merged
-  if ! jq -e 'type == "object"' "$root/.agents-kit.json" >/dev/null 2>&1; then
+_kit_config_file() {
+  local mk="$1" filter="$2" g global merged
+  if ! jq -e 'type == "object"' "$mk" >/dev/null 2>&1; then
     echo "error: .agents-kit.json no es JSON válido" >&2
     return 2
   fi
@@ -68,9 +68,9 @@ kit_config() {
     elif $k == "notify" then warn("\($q)notify\($q) se ignora; el canal de avisos va en \($q)notify\($q) de la configuración global (\($g))")
     elif $k == "proveedores" or $k == "implementador" then warn("\($q)\($k)\($q) solo se lee de la configuración global (\($g)); se ignora")
     else warn("clave \($q)\($k)\($q) no admitida en el repo; se ignora")
-    end' "$root/.agents-kit.json" >&2
+    end' "$mk" >&2
   if ! merged="$(jq -c -n --argjson ok "$_KIT_REPO_KEYS" \
-      --slurpfile t "$_KIT_TEMPLATE" --slurpfile g "$global" --slurpfile r "$root/.agents-kit.json" '
+      --slurpfile t "$_KIT_TEMPLATE" --slurpfile g "$global" --slurpfile r "$mk" '
       $t[0] as $t | ($g[0] // {}) as $g | $r[0] as $r |
       (($r | with_entries(select(.key as $k | $ok | index([$k]))))
         + (if ($r.revision | type) == "object" and ($r.revision.puestos | type) == "array"
@@ -80,6 +80,25 @@ kit_config() {
     return 2
   fi
   printf '%s' "$merged" | jq -r "$filter"
+}
+
+kit_config() {
+  _kit_config_file "$1/.agents-kit.json" "$2"
+}
+
+# kit_config_base <wt> <jq-filter> <ref>: like kit_config, but the repo layer is the marker at <ref> (the default
+# branch, e.g. origin/main), so a PR cannot weaken the merge gates by editing its own marker. No marker there = {}.
+kit_config_base() {
+  local wt="$1" filter="$2" ref="$3" tmp rc
+  tmp="$(mktemp)" || return 2
+  if git -C "$wt" cat-file -e "$ref:.agents-kit.json" 2>/dev/null; then
+    git -C "$wt" show "$ref:.agents-kit.json" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 2; }
+  else
+    echo '{}' > "$tmp"
+  fi
+  _kit_config_file "$tmp" "$filter"; rc=$?
+  rm -f "$tmp"
+  return $rc
 }
 
 # kit_seats <root> <familia-implementador>: one line per review seat, in revision.puestos order:

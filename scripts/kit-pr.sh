@@ -15,6 +15,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/default-branch.sh"
+source "$here/lib/repo-hook.sh"
 
 usage() {
   echo "uso: $0 abrir <wt> <N> <titulo> <fichero-cuerpo> | esperar-ci <wt> <pr> |" \
@@ -242,7 +243,7 @@ Cierra #$n"
     n="$2"
     reasons=()
     own_login
-    pj="$(pr_json isDraft,state,headRefOid,url,comments)" || exit 2
+    pj="$(pr_json isDraft,state,headRefOid,url,comments,body)" || exit 2
     printf '%s' "$pj" | jq -e '(.comments | type) == "array" and (.isDraft | type) == "boolean"' >/dev/null 2>&1 \
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     state="$(printf '%s' "$pj" | jq -r .state)"
@@ -290,7 +291,7 @@ Cierra #$n"
 
     # review: at least one kit-ronda, no kit-revision after the last one (by position) and, in that round, an own
     # confirmed review for every seat of revision.puestos
-    nseats="$(kit_config "$wt" '.revision.puestos // [] | length')" || exit 2
+    nseats="$(kit_config_base "$wt" '.revision.puestos // [] | length' "origin/$base")" || exit 2
     [[ $nseats =~ ^[0-9]+$ ]] || { echo "error: revision.puestos no es una lista" >&2; exit 2; }
     review_reason() { # <pr-json>: append the review reason, if any
       local rev
@@ -324,6 +325,52 @@ Cierra #$n"
         1) reasons+=("CHANGELOG.md mal formado:
 $cl_err") ;;
         *) echo "error: kit-changelog.sh falló: $cl_err" >&2; exit 2 ;;
+      esac
+    fi
+
+    # Gates from the default branch's marker (a PR cannot weaken them by editing its own).
+    # protegido: touched protected paths must be listed in the "## Zonas protegidas" section of the PR body.
+    prot="$(kit_config_base "$wt" '(.protegido // []) | if type == "array" then map(select(type == "string" and . != "")) else [] end | .[]' "origin/$base")" || exit 2
+    if [ -n "$prot" ]; then
+      changed="$(git diff --name-only "origin/$base...HEAD")" || { echo "error: git diff falló" >&2; exit 2; }
+      section="$(printf '%s' "$pj" | jq -r '.body // ""' | awk '
+        /^##[ \t]+Zonas protegidas[ \t]*$/ { on = 1; next }
+        /^##[ \t]/ { on = 0 }
+        on { print }')"
+      has_section=false
+      printf '%s' "$pj" | jq -r '.body // ""' | grep -Eq '^##[[:space:]]+Zonas protegidas[[:space:]]*$' && has_section=true
+      missing=()
+      while IFS= read -r pre; do
+        [ -n "$pre" ] || continue
+        pn="${pre%/}"
+        hit=false
+        while IFS= read -r f; do
+          [ -n "$f" ] || continue
+          if [ "$f" = "$pn" ] || [ "${f#"$pn"/}" != "$f" ]; then hit=true; break; fi
+        done <<< "$changed"
+        [ "$hit" = true ] || continue
+        if [ "$has_section" = false ]; then
+          missing+=("$pre")
+        else
+          printf '%s' "$section" | grep -Fq -- "$pre" || missing+=("$pre")
+        fi
+      done <<< "$prot"
+      if [ ${#missing[@]} -gt 0 ]; then
+        reasons+=("la PR toca rutas protegidas (${missing[*]}) y su cuerpo no las menciona bajo '## Zonas protegidas'")
+      fi
+    fi
+
+    # checks.pre-merge: script of the repo, run in the worktree over the head
+    pm="$(kit_config_base "$wt" '(.checks // {}) | if type == "object" and (.["pre-merge"] | type) == "string" then .["pre-merge"] else empty end' "origin/$base")" || exit 2
+    if [ -n "$pm" ]; then
+      pm_path="$(kit_hook_path "$wt" "$wt" checks.pre-merge "$pm")" || exit 2
+      kit_hook_run "$wt" "$pm_path"; pm_rc=$?
+      case $pm_rc in
+        0) ;;
+        142) reasons+=("checks.pre-merge agotó el tiempo (${KIT_HOOK_TIMEOUT:-1800}s):
+$KIT_HOOK_OUT") ;;
+        *) reasons+=("checks.pre-merge falló (exit $pm_rc):
+$KIT_HOOK_OUT") ;;
       esac
     fi
 

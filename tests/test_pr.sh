@@ -379,4 +379,57 @@ err="$(PATH="$gitd:$PATH" bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$
 case "$err" in *"mal formado"*) fail "marcador ausente informado como changelog mal formado: $err";; esac
 git -C "$wt" checkout -q -- .agents-kit.json || fail "restaurar marcador"
 rm "$wt/CHANGELOG.md"; cp "$tmp/exclude.bak" "$excl"
+
+# fusionar: gates read the default branch's marker, not the PR's (protegido, checks.pre-merge, revision.puestos)
+reset_open
+mkdir -p "$r/tools" && printf '#!/bin/sh\n[ -e "$KIT_PM_OK" ] || { echo "pre-merge: fallo de prueba"; exit 1; }\n' > "$r/tools/pm.sh"
+echo '{"protegido":["lib/"],"checks":{"pre-merge":"tools/pm.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "marcador con ganchos" && git push -q origin main) >/dev/null 2>&1 || fail "push marcador base"
+(cd "$wt" && git fetch -q origin && git rebase -q origin/main \
+  && echo '{"revision":{"puestos":[]},"protegido":[],"checks":{}}' > .agents-kit.json \
+  && mkdir -p lib && echo x > lib/x.txt && git add -A && git commit -q -m "toca lib y debilita el marcador" \
+  && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1 || fail "preparar rama debilitada"
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\" | .prs[0].body = \"Cuerpo\\nCierra #3\""
+unset KIT_PM_OK
+: > "$GH_LOG"
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "ganchos de base: exit $rc $err"
+case "$err" in *"rutas protegidas (lib/)"*"## Zonas protegidas"*) ;; *) fail "protegido no exigido: $err";; esac
+case "$err" in *"checks.pre-merge falló (exit 1)"*"pre-merge: fallo de prueba"*) ;; *) fail "pre-merge no exigido: $err";; esac
+grep -q "pr merge" "$GH_LOG" && fail "fusionó con ganchos fallando"
+# revision.puestos: [] in the PR marker does not lower the seats required by the base
+saved_c="$(pr_q '.comments')"
+st '.prs[0].comments |= map(select(.id != 307))'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"puestos sin confirmar"*) ;; *) fail "puestos del marcador de la PR: $err";; esac
+st ".prs[0].comments = $saved_c"
+# section present but missing the prefix is still refused; with it and a passing pre-merge, it merges
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- cli/ nada\n\n## Otra\nlib/\nCierra #3"'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas (lib/)"*) ;; *) fail "prefijo fuera de la sección: $err";; esac
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- lib/: motivo\n\nCierra #3"'
+okf="$(mktemp)"
+out="$(KIT_PM_OK="$okf" bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con ganchos cumplidos: $out"
+[ "$(pr_q .state)" = MERGED ] || fail "ganchos cumplidos: no fusionó"
+# unsafe hook paths are environment errors; a slow hook times out
+reset_open
+echo '{"checks":{"pre-merge":"../fuera.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "ruta mala" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+bash "$pr" fusionar "$wt" $p 3 >/dev/null 2>"$tmp/e"; rc=$?
+[ $rc -eq 2 ] && grep -q "'\.\.'" "$tmp/e" || fail "ruta con .. debe dar 2: $rc $(cat "$tmp/e")"
+sed -i.bak 's|\.\./fuera\.sh|/etc/passwd|' "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "ruta absoluta" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+bash "$pr" fusionar "$wt" $p 3 >/dev/null 2>"$tmp/e"; rc=$?
+[ $rc -eq 2 ] && grep -q "absoluta" "$tmp/e" || fail "ruta absoluta debe dar 2: $rc $(cat "$tmp/e")"
+printf '#!/bin/sh\nsleep 30\n' > "$r/tools/pm.sh"
+echo '{"checks":{"pre-merge":"tools/pm.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "lento" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(KIT_HOOK_TIMEOUT=1 bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"checks.pre-merge agotó el tiempo"*) ;; *) fail "timeout de pre-merge: $err";; esac
 echo "OK test_pr"

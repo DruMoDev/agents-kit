@@ -40,9 +40,10 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    - Escribe en el chat 4 líneas: qué pide; sigue vigente (con la evidencia); qué vas a hacer; qué NO tocas.
 3. **Implementar.**
    - Rama: si ya existe una `issue-<N>-*` (`git -C <raíz> branch --list 'issue-<N>-*'` o `git -C <raíz> ls-remote --heads origin 'issue-<N>-*'`), es un issue retomado: reutiliza su `<slug-rama>` tal cual. Si no, sácalo del título (minúsculas, `a-z0-9` y guiones).
-   - `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" abrir <raíz> <N> <slug-rama>`. La ruta es la línea `FIN: <wt>`; trabaja solo con esa ruta absoluta. Si la rama solo existe en origin, el worktree parte de `origin/<rama>`.
+   - `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" abrir <raíz> <N> <slug-rama>`. La ruta es la línea `FIN: <wt>`; trabaja solo con esa ruta absoluta. Si la rama solo existe en origin, el worktree parte de `origin/<rama>`. Si el repo declara `setup`, el script lo ejecuta en el worktree nuevo; exit 2 con `setup falló` (o ruta de `setup` insegura) es un bloqueo: bloquea el issue con esa salida (ver abajo).
    - Tests primero (unitarios, e2e y casos límite), luego el código. Tests, lint y build de `AGENTS.md` en verde en local.
    - `.implementador` (`familia` y `nivel`) dice el modelo que implementa: `.proveedores[familia].modelos[nivel]`. Si la sesión no corre con ese modelo, delega la implementación en un subagente con ese modelo cuando la herramienta lo permita, pasándole la ruta del worktree, el issue y tus 4 líneas.
+   - Si el diff toca rutas de `.protegido` (de `.agents-kit.json`, leído de la rama por defecto), el cuerpo de la PR lleva una sección `## Zonas protegidas` que nombra cada ruta protegida tocada y por qué; `fusionar` lo exige.
    - Automejora en la misma PR: si aprendiste algo, actualiza `AGENTS.md` y las skills del proyecto.
 4. **PR.** Commit en el worktree y `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" abrir <wt> <N> "<título>" <fichero-cuerpo>` (empuja; añade `Cierra #<N>` si falta; si la rama ya tiene una PR abierta, como en un issue retomado, la reutiliza sin crear otra). La primera línea es `<pr>`. Si esa PR está en borrador (`gh pr view <pr> --repo <slug> --json isDraft`), quítaselo con `gh pr ready <pr> --repo <slug>`. Después añade la entrada de `CHANGELOG.md` con el formato del comentario de cabecera del propio fichero (ya con el número y la URL de la PR) y comprueba el formato con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-changelog.sh" validar <wt>` hasta que salga 0 (exit 1 señala `CHANGELOG.md:<línea>: <motivo>`: corrígelo). Si el cambio es visual, durante la comprobación e2e del estado final haz capturas con el navegador automatizado, solo las que aportan, guárdalas en `<wt>/docs/changelog/<pr>-<nombre>.png` comprimidas por debajo de 500 KB y enlázalas en la versión extendida de la entrada; sin cambio visual, sin capturas. Commit y `git -C <wt> push -q`. Entonces la puerta de CI:
    - `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" esperar-ci <wt> <pr>`. `FIN: verde`: sigue.
@@ -61,12 +62,15 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    - Si `r` llega a `.maxReviewRounds` (o un issue retomado ya trae `k` rondas en el límite) y aún queda una ronda nueva por hacer: confirma y empuja lo que haya, `gh pr ready --undo <pr> --repo <slug>`, bloquea el issue con un resumen de lo pendiente y siguiente issue.
 6. **Fusionar.** Con `.autoMerge` verdadero: `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-pr.sh" fusionar <wt> <pr> <N>`.
    - Exit 0: guarda la línea `PR fusionado: <url>` para el resumen y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" limpiar <raíz> <N>` (`FIN: limpio`).
+   - `fusionar` también ejecuta `checks.pre-merge` del repo y exige `## Zonas protegidas` si procede; todos los motivos salen juntos. Las puertas leen el marcador de la rama por defecto, no el de la PR.
    - Exit 1 con `rebasada sobre ...`: el script ya rebasó y empujó. Vuelve a la puerta de CI del paso 4 y reintenta.
    - Otro exit 1: lee cada motivo. Corrige lo que puedas (conflicto, CI, ronda pendiente) y reintenta; si no, bloquea. `la última ronda aplicó cambios: falta una ronda nueva` significa volver al paso 5 con la ronda siguiente. `la ronda <r> tiene puestos sin confirmar (...)`: sigue "Puestos sin confirmar" de `references/ronda.md`.
    - Con `.autoMerge` falso: deja la PR lista sin fusionar ni limpiar; el issue sigue `en-curso` y se cierra solo al fusionarla Dru. Anótala para el resumen.
 7. **Duda de producto, en cualquier paso.** Si ya hay PR, `gh pr ready --undo <pr> --repo <slug>`. Escribe la pregunta (contexto, opciones y lo que propones) en un fichero y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" decision <raíz> <N> <id> <fichero>` (`FIN: necesita-respuesta #<N>`; pone `necesita-respuesta`). El worktree se queda, si lo había. Siguiente issue.
 
 **Bloquear:** escribe el motivo y lo pendiente en un fichero y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" bloquear <raíz> <N> <id> <fichero>` (`FIN: bloqueado #<N>`). Si había PR, antes `gh pr ready --undo <pr> --repo <slug>`. El worktree se queda.
+
+**Barrido:** al terminar la tanda (cuando `siguiente` da exit 1), antes del resumen, ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-worktree.sh" barrer <raíz>` (`FIN: <n> borrados`): borra los worktrees limpios del kit ya contenidos en la rama por defecto. Si falla, cuéntalo en el chat y sigue.
 
 ## Resumen final
 
