@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["veredicto", "resumen", "hallazgos", "comprobado"],
+  "properties": {
+    "veredicto": {
+      "type": "string",
+      "enum": ["sin_hallazgos", "hallazgos", "bloqueado"],
+      "description": "bloqueado = no pudiste revisar de verdad (diff ilegible, falta acceso); explica por qué en resumen"
+    },
+    "resumen": { "type": "string", "description": "2 a 4 frases: valoración general y el riesgo principal, si lo hay" },
+    "hallazgos": {
+      "type": "array",
+      "description": "Solo defectos con un escenario concreto que falla. Vacío es un resultado válido y esperable.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severidad", "confianza", "fichero", "linea", "titulo", "escenario", "evidencia", "sugerencia"],
+        "properties": {
+          "severidad": { "type": "string", "enum": ["grave", "medio", "menor"] },
+          "confianza": { "type": "string", "enum": ["alta", "media", "baja"] },
+          "fichero": { "type": "string", "description": "ruta relativa a la raíz del repo" },
+          "linea": { "type": ["integer", "null"] },
+          "titulo": { "type": "string" },
+          "escenario": { "type": "string", "description": "entrada o estado concreto -> resultado incorrecto o fallo" },
+          "evidencia": { "type": "string", "description": "código leído o comando ejecutado que lo demuestra, con ruta:línea; si no lo reprodujiste, dilo" },
+          "sugerencia": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "comprobado": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "qué verificaste y cómo, para que 'sin hallazgos' tenga evidencia detrás"
+    }
+  }
+}

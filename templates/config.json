@@ -1,0 +1,17 @@
+{
+  "proveedores": {
+    "claude": { "cli": "claude", "modelos": { "profundo": "opus", "rapido": "sonnet" } },
+    "gpt": { "cli": "opencode", "modelos": { "profundo": "openai/gpt-6.1-sol", "rapido": "openai/gpt-6.1-sol" } }
+  },
+  "revision": {
+    "puestos": [
+      { "foco": "corrección, casos límite y tests", "nivel": "profundo", "familia": "otra" },
+      { "foco": "fallos de uso real, seguridad y lo que otros darían por bueno", "nivel": "profundo", "familia": "otra" },
+      { "foco": "simplicidad, reutilización y scope", "nivel": "rapido", "familia": "misma" }
+    ]
+  },
+  "implementador": { "familia": "claude", "nivel": "profundo" },
+  "notify": "ntfy",
+  "autoMerge": true,
+  "maxReviewRounds": 10
+}

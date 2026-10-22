@@ -1,18 +1,1 @@
-{
-  "maxReviewRounds": 10,
-  "notify": "ntfy",
-  "autoMerge": true,
-  "implementer": {
-    "claude": "opus"
-  },
-  "reviewers": {
-    "claude": [
-      { "model": "opus", "focus": "corrección, casos límite y tests" },
-      { "model": "sonnet", "focus": "simplicidad, reutilización y scope" }
-    ],
-    "opencode": [
-      { "model": "openai/gpt-6.1-sol", "focus": "fallos de uso real, seguridad y lo que otros revisores darían por bueno" }
-    ],
-    "codex": []
-  }
-}
+{}

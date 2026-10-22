@@ -15,6 +15,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/default-branch.sh"
+source "$here/lib/repo-hook.sh"
 
 usage() {
   echo "uso: $0 abrir <wt> <N> <titulo> <fichero-cuerpo> | esperar-ci <wt> <pr> |" \
@@ -112,13 +113,24 @@ OWN_JQ='[.comments[] | select(.author.login == $me) | .body // ""]'
 # kit-ronda bodies
 RONDAS_JQ="$OWN_JQ"' | map(select(test("^\\s*<!-- kit-ronda: [0-9]+ -->")))'
 # review state: sin-ronda | pendiente (a kit-revision after the last kit-ronda, by position)
-#   | aplicado (the last kit-ronda applied changes, so a new round is due) | ok
+#   | aplicado (the last kit-ronda applied changes, so a new round is due)
+#   | incompleta <r> <i,j...> (seats 1..$nseats without an own confirmed review in round <r>) | ok
+# Reviews: v3 "kit-revision: puesto <i> <familia>/<modelo> ronda <r>" (confirmed) or "... puesto <i> sin-confirmar
+# ronda <r>"; a round with v2 reviews only ("kit-revision: <herramienta>/<modelo> ronda <r>") is read as before.
 REVIEW_JQ="$OWN_JQ"' as $b
   | ([range(0; $b | length) | select($b[.] | test("^\\s*<!-- kit-ronda: [0-9]+ -->"))] | last // -1) as $r
   | if $r < 0 then "sin-ronda"
     elif any(range($r + 1; $b | length); $b[.] | test("^\\s*<!-- kit-revision: ")) then "pendiente"
     elif any($b[$r] | split("\n")[]; sub("\\s+$"; "") | endswith(" → aplicado")) then "aplicado"
-    else "ok" end'
+    else ($b[$r] | capture("^\\s*<!-- kit-ronda: (?<n>[0-9]+) -->").n) as $rn
+      | [$b[] | capture("^\\s*<!-- kit-revision: puesto (?<i>[0-9]+) (?<who>\\S+) ronda (?<r>[0-9]+) -->")
+         | select(.r == $rn)] as $v3
+      | ([$b[] | select(test("^\\s*<!-- kit-revision: (?!puesto )\\S+ ronda \($rn) -->"))] | length) as $v2
+      | [range(1; $nseats + 1) | tostring | select(. as $i | any($v3[]; .i == $i and (.who | contains("/"))) | not)] as $miss
+      | if ($v3 | length) == 0 and $v2 > 0 then "ok"
+        elif ($miss | length) > 0 then "incompleta \($rn) \($miss | join(", "))"
+        else "ok" end
+    end'
 
 case "$sub" in
   abrir)
@@ -231,7 +243,7 @@ Cierra #$n"
     n="$2"
     reasons=()
     own_login
-    pj="$(pr_json isDraft,state,headRefOid,url,comments)" || exit 2
+    pj="$(pr_json isDraft,state,headRefOid,url,comments,body)" || exit 2
     printf '%s' "$pj" | jq -e '(.comments | type) == "array" and (.isDraft | type) == "boolean"' >/dev/null 2>&1 \
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     state="$(printf '%s' "$pj" | jq -r .state)"
@@ -277,14 +289,21 @@ Cierra #$n"
       esac
     fi
 
-    # review: at least one kit-ronda and no kit-revision after the last one (by position)
+    # review: at least one kit-ronda, no kit-revision after the last one (by position) and, in that round, an own
+    # confirmed review for every seat of revision.puestos
+    nseats="$(kit_config_base "$wt" '.revision.puestos // [] | length' "origin/$base")" || exit 2
+    [[ $nseats =~ ^[0-9]+$ ]] || { echo "error: revision.puestos no es una lista" >&2; exit 2; }
     review_reason() { # <pr-json>: append the review reason, if any
       local rev
-      rev="$(printf '%s' "$1" | jq -r --arg me "$me" "$REVIEW_JQ")" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+      rev="$(printf '%s' "$1" | jq -r --arg me "$me" --argjson nseats "$nseats" "$REVIEW_JQ")" \
+        || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
       case "$rev" in
         sin-ronda) reasons+=("no hay ninguna ronda de revisión (kit-ronda)") ;;
         pendiente) reasons+=("hay una revisión posterior a la última ronda sin decisiones escritas") ;;
         aplicado) reasons+=("la última ronda aplicó cambios: falta una ronda nueva") ;;
+        incompleta*)
+          set -- $rev
+          reasons+=("la ronda $2 tiene puestos sin confirmar (${rev#incompleta $2 }): relanza esos puestos antes de publicar la ronda, o haz una ronda nueva") ;;
       esac
     }
     report() {
@@ -297,9 +316,11 @@ Cierra #$n"
     }
     review_reason "$pj"
 
-    # CHANGELOG.md, when the repo has one, must keep the fixed format (a PR without a new entry is fine).
+    # CHANGELOG.md, when the repo has one, must keep the fixed format (a PR without a new entry is fine), unless the
+    # default branch's marker says "changelog": false (the project keeps its own changelog, in its own format).
     # Without the marker kit-changelog refuses for that reason, not for the format: skip it (the dirty tree stops the merge).
-    if [ -f "$wt/CHANGELOG.md" ] && [ -f "$wt/.agents-kit.json" ]; then
+    cl="$(kit_config_base "$wt" '.changelog' "origin/$base")" || exit 2
+    if [ "$cl" != false ] && [ -f "$wt/CHANGELOG.md" ] && [ -f "$wt/.agents-kit.json" ]; then
       cl_err="$("$here/kit-changelog.sh" validar "$wt" 2>&1 >/dev/null)"; cl_rc=$?
       case $cl_rc in
         0) ;;
@@ -307,6 +328,69 @@ Cierra #$n"
 $cl_err") ;;
         *) echo "error: kit-changelog.sh falló: $cl_err" >&2; exit 2 ;;
       esac
+    fi
+
+    # Gates from the default branch's marker (a PR cannot weaken them by editing its own).
+    # protegido: touched protected paths must be listed in the "## Zonas protegidas" section of the PR body.
+    prot="$(kit_config_base "$wt" '(.protegido // []) | if type == "array" then map(select(type == "string" and . != "")) else [] end | .[]' "origin/$base")" || exit 2
+    if [ -n "$prot" ]; then
+      changed="$(git diff --name-only --no-renames "origin/$base...HEAD")" || { echo "error: git diff falló" >&2; exit 2; }
+      section="$(printf '%s' "$pj" | jq -r '.body // ""' | awk '
+        /^##[ \t]+Zonas protegidas[ \t]*$/ { on = 1; next }
+        /^##[ \t]/ { on = 0 }
+        on { print }')"
+      has_section=false
+      printf '%s' "$pj" | jq -r '.body // ""' | grep -Eq '^##[[:space:]]+Zonas protegidas[[:space:]]*$' && has_section=true
+      missing=()
+      while IFS= read -r pre; do
+        [ -n "$pre" ] || continue
+        pn="${pre%/}"
+        hit=false
+        while IFS= read -r f; do
+          [ -n "$f" ] || continue
+          if [ "$f" = "$pn" ] || [ "${f#"$pn"/}" != "$f" ]; then hit=true; break; fi
+        done <<< "$changed"
+        [ "$hit" = true ] || continue
+        if [ "$has_section" = false ]; then
+          missing+=("$pre")
+        else
+          # whole token: not glued to a longer path or word on either side
+          esc="$(printf '%s' "$pre" | sed 's/[][\\.*^$+?(){}|]/\\&/g')"
+          case "$pre" in */) tail_re='' ;; *) tail_re='($|[^A-Za-z0-9_-])' ;; esac
+          printf '%s\n' "$section" | grep -Eq -- "(^|[^A-Za-z0-9_./-])${esc}${tail_re}" || missing+=("$pre")
+        fi
+      done <<< "$prot"
+      if [ ${#missing[@]} -gt 0 ]; then
+        reasons+=("la PR toca rutas protegidas (${missing[*]}) y su cuerpo no las menciona bajo '## Zonas protegidas'")
+      fi
+    fi
+
+    # checks.pre-merge: script of the repo, run in the worktree over the head. The path comes from the default branch's
+    # marker and the file must be exactly the default branch's version (a PR cannot edit its own gate); it runs in place,
+    # so it can find its sibling files through $0.
+    pm="$(kit_config_base "$wt" '(.checks // {}) | if type == "object" and (.["pre-merge"] | type) == "string" then .["pre-merge"] else empty end' "origin/$base")" || exit 2
+    if [ -n "$pm" ]; then
+      kit_hook_rel checks.pre-merge "$pm" || exit 2
+      pm_base="$(git rev-parse -q --verify "origin/$base:$pm" 2>/dev/null)"
+      pm_head="$(git rev-parse -q --verify "HEAD:$pm" 2>/dev/null)"
+      git diff --quiet "origin/$base...HEAD" -- "$pm"; pm_diff=$?
+      [ $pm_diff -le 1 ] || { echo "error: git diff falló" >&2; exit 2; }
+      if [ -z "$pm_base" ]; then
+        reasons+=("checks.pre-merge apunta a $pm, que no existe en origin/$base")
+      elif [ $pm_diff -eq 1 ]; then
+        reasons+=("la PR modifica el script de checks.pre-merge ($pm): una PR no puede cambiar su propia puerta; deshaz ese cambio en la rama")
+      elif [ "$pm_head" = "$pm_base" ] && [ "$clean" = true ]; then
+        # (a different blob not changed by the PR = the branch lacks origin/$base: the rebase reason already stops it)
+        pm_path="$(kit_hook_path "$wt" "$wt" checks.pre-merge "$pm")" || exit 2
+        kit_hook_run "$wt" "$pm_path"; pm_rc=$?
+        case $pm_rc in
+          0) ;;
+          142) reasons+=("checks.pre-merge agotó el tiempo (${KIT_HOOK_TIMEOUT:-1800}s):
+$KIT_HOOK_OUT") ;;
+          *) reasons+=("checks.pre-merge falló (exit $pm_rc):
+$KIT_HOOK_OUT") ;;
+        esac
+      fi
     fi
 
     report
@@ -328,9 +412,14 @@ $cl_err") ;;
       gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
         || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
     fi
-    # the issue is done: drop the work labels; a failure only warns, the merge already happened
-    gh issue edit "$n" --repo "$slug" --remove-label en-curso --remove-label listo >/dev/null \
-      || echo "aviso: PR fusionada y issue cerrado, pero no se pudieron quitar las etiquetas en-curso y listo del issue #$n" >&2
+    # the claim is over: an own kit-soltado (so a reopened issue can be claimed again), then drop en-curso; a failure
+    # only warns, the merge already happened
+    printf '<!-- kit-soltado: fusionar -->\nPR #%s fusionada: este issue queda libre.\n' "$p" > "$tmpd/soltado"
+    gh issue comment "$n" --repo "$slug" --body-file "$tmpd/soltado" >/dev/null \
+      || echo "aviso: PR fusionada, pero no se pudo publicar kit-soltado en el issue #$n" >&2
+    # the issue is done: drop en-curso (a v2 listo stays: never remove a label the repo may not have); a failure only warns, the merge already happened
+    gh issue edit "$n" --repo "$slug" --remove-label en-curso >/dev/null \
+      || echo "aviso: PR fusionada y issue cerrado, pero no se pudo quitar la etiqueta en-curso del issue #$n" >&2
     echo "PR fusionado: $url"
     echo "FIN: ok"
     ;;

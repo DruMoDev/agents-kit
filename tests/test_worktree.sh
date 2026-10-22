@@ -4,6 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 wt="$REPO_ROOT/scripts/kit-worktree.sh"
 use_flow_gh
 export KIT_WORKTREES; KIT_WORKTREES="$(mktemp -d)"
+tmpe="$(mktemp)"
 last_line() { printf '%s\n' "$1" | sed -n '$p'; }
 
 r="$(mk_repo)"; o="$(mktemp -d)"
@@ -109,4 +110,64 @@ while IFS= read -r line; do case "$line" in *"dru/demo"*) ;; *) fail "gh sin rep
 
 # nothing to clean
 bash "$wt" limpiar "$r" 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin worktree debe dar 1"
+# setup: runs once in the new worktree; failure -> exit 2 with the output; unsafe path -> exit 2
+mkdir -p "$r/tools"
+printf '#!/bin/sh\necho "preparado" >> "$SETUP_LOG"\n[ -e "$SETUP_OK" ] || { echo "no hay entorno"; exit 1; }\n' > "$r/tools/setup.sh"
+echo '{"setup":"tools/setup.sh"}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m setup && git push -q origin main) >/dev/null 2>&1 || fail "push setup"
+export SETUP_LOG; SETUP_LOG="$(mktemp)"; export SETUP_OK="$(mktemp -d)/ok"
+err="$(bash "$wt" abrir "$r" 40 uno 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "setup fallido debe dar 2: $rc"
+case "$err" in *"setup falló (exit 1)"*"no hay entorno"*) ;; *) fail "setup msg: $err";; esac
+[ -d "$KIT_WORKTREES/$name/issue-40-uno" ] || fail "el worktree debe quedarse tras setup fallido"
+touch "$SETUP_OK"
+out="$(bash "$wt" abrir "$r" 40 uno 2>&1)" || fail "reintento con setup: $out"
+[ "$(last_line "$out")" = "FIN: $KIT_WORKTREES/$name/issue-40-uno" ] || fail "reintento sin FIN"
+bash "$wt" abrir "$r" 40 uno >/dev/null 2>&1 || fail "tercera apertura"
+[ "$(grep -c preparado "$SETUP_LOG")" -eq 2 ] || fail "setup debe correr hasta tener éxito y una sola vez: $(cat "$SETUP_LOG")"
+echo '{"setup":"../x.sh"}' > "$r/.agents-kit.json"
+bash "$wt" abrir "$r" 41 dos >/dev/null 2>"$tmpe"; rc=$?
+[ $rc -eq 2 ] && grep -q "'\.\.'" "$tmpe" || fail "setup con .. debe dar 2: $rc"
+git -C "$r" worktree remove --force "$KIT_WORKTREES/$name/issue-41-dos" 2>/dev/null; git -C "$r" branch -q -D issue-41-dos 2>/dev/null
+echo '{"setup":"/bin/true"}' > "$r/.agents-kit.json"
+bash "$wt" abrir "$r" 42 tres >/dev/null 2>"$tmpe"; rc=$?
+[ $rc -eq 2 ] && grep -q absoluta "$tmpe" || fail "setup absoluto debe dar 2: $rc"
+git -C "$r" worktree remove --force "$KIT_WORKTREES/$name/issue-42-tres" 2>/dev/null; git -C "$r" branch -q -D issue-42-tres 2>/dev/null
+echo '{}' > "$r/.agents-kit.json"
+
+# barrer: only clean worktrees of the kit dir that are finished (merged PR at the tip, or closed issue without commits)
+bash "$wt" barrer "$r" extra >/dev/null 2>&1; [ $? -eq 1 ] || fail "barrer con argumentos debe dar 1"
+for spec in "50 abierto" "51 cerrado" "52 fusionado" "53 sucio" "54 conpr" "55 ajeno"; do
+  bash "$wt" abrir "$r" ${spec% *} ${spec#* } >/dev/null 2>&1 || fail "abrir $spec"
+done
+kw() { echo "$KIT_WORKTREES/$name/issue-$1"; }
+(cd "$(kw 52-fusionado)" && echo m > m.txt && git add m.txt && git commit -q -m m) || fail "commit 52"
+(cd "$(kw 54-conpr)" && echo c > c.txt && git add c.txt && git commit -q -m c) || fail "commit 54"
+echo x > "$(kw 53-sucio)/sucio.txt"
+outside="$(mktemp -d)/fuera"
+git -C "$r" worktree add -q -b fuera --no-track "$outside" origin/main || fail "worktree fuera"
+tip52="$(git -C "$(kw 52-fusionado)" rev-parse HEAD)"
+cat > "$GH_STATE/state.json" <<JSON
+{"issues":[{"number":50,"state":"OPEN","labels":[],"comments":[]},{"number":51,"state":"CLOSED","labels":[],"comments":[]},
+  {"number":52,"state":"CLOSED","labels":[],"comments":[]},{"number":53,"state":"CLOSED","labels":[],"comments":[]},
+  {"number":54,"state":"CLOSED","labels":[],"comments":[]},{"number":55,"state":"OPEN","labels":[],"comments":[]}],
+ "prs":[{"number":8,"headRefName":"issue-52-fusionado","state":"MERGED","headRefOid":"$tip52"}]}
+JSON
+# gh failure: nothing is deleted
+ghd="$(mktemp -d)"; realgh="$(command -v gh)"
+printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] && exit 1\nexec "%s" "$@"\n' "$realgh" > "$ghd/gh"; chmod +x "$ghd/gh"
+PATH="$ghd:$PATH" bash "$wt" barrer "$r" >"$tmpe.o" 2>"$tmpe"; rc=$?
+[ $rc -eq 0 ] && [ "$(last_line "$(cat "$tmpe.o")")" = "FIN: 0 borrados" ] || fail "barrer con gh roto: $rc $(cat "$tmpe.o")"
+grep -q "^aviso:" "$tmpe" || fail "sin aviso con gh roto"
+[ -d "$(kw 51-cerrado)" ] || fail "gh roto borró algo"
+out="$(bash "$wt" barrer "$r" 2>"$tmpe")" || fail "barrer: $out"
+[ "$(last_line "$out")" = "FIN: 2 borrados" ] || fail "barrer FIN: $out"
+[ ! -e "$(kw 51-cerrado)" ] && ! git -C "$r" rev-parse -q --verify issue-51-cerrado >/dev/null || fail "issue cerrado sin commits debe borrarse"
+[ ! -e "$(kw 52-fusionado)" ] && ! git -C "$r" rev-parse -q --verify issue-52-fusionado >/dev/null || fail "PR fusionada debe borrarse"
+[ -d "$(kw 50-abierto)" ] || fail "barrer borró un worktree vivo de un issue abierto sin commits"
+[ -d "$(kw 53-sucio)" ] || fail "barrer borró uno sucio"
+[ -d "$(kw 54-conpr)" ] || fail "barrer borró uno con commits y sin PR fusionada"
+[ -d "$(kw 55-ajeno)" ] || fail "barrer borró otro issue abierto"
+[ -d "$outside" ] && git -C "$r" rev-parse -q --verify fuera >/dev/null || fail "barrer tocó un worktree ajeno al kit"
+[ -d "$r" ] || fail "barrer tocó el árbol principal"
 echo "OK test_worktree"

@@ -7,8 +7,8 @@ export HOME="$(mktemp -d)"
 export CURL_LOG="$(mktemp)"
 unset CURL_FAIL KIT_NTFY_SERVER CLAUDE_CODE_REMOTE
 
-mk() { # mk <json>: repo with marker
-  local r; r="$(mk_repo)"; echo "$1" > "$r/.agents-kit.json"; echo "$r"
+mk() { # mk <json>: repo with marker {} and <json> as the global config
+  local r; r="$(mk_repo)"; echo '{}' > "$r/.agents-kit.json"; set_global "$1"; echo "$r"
 }
 
 # sin marcador
@@ -54,7 +54,7 @@ grep -q "^Click:" "$CURL_LOG" && fail "Click sin url"
 [ "$(cat "$f")" = "$topic" ] || fail "tema cambió"
 
 # tema por variable de entorno; el marcador del repo no puede desviarlo
-r="$(mk '{"notify":"ntfy","ntfyTopic":"del-repo"}')"; : > "$CURL_LOG"
+r="$(mk '{"notify":"ntfy"}')"; echo '{"ntfyTopic":"del-repo"}' > "$r/.agents-kit.json"; : > "$CURL_LOG"
 KIT_NTFY_TOPIC=mi-tema bash "$N" "$r" T M >/dev/null || fail "mi-tema rc"
 grep -qx "https://ntfy.sh/mi-tema" "$CURL_LOG" || fail "URL mi-tema"
 : > "$CURL_LOG"; bash "$N" "$r" T M >/dev/null || fail "repo rc"
@@ -109,6 +109,15 @@ source "$REPO_ROOT/scripts/lib/transport.sh"
 [ "$(CLAUDE_CODE_REMOTE=true kit_transport)" = nube ] || fail "transporte nube"
 [ "$(kit_transport)" = local ] || fail "transporte local"
 
-# plantilla
-[ "$(jq -r .notify "$REPO_ROOT/templates/agents-kit.json")" = ntfy ] || fail "plantilla"
+# el canal del repo se ignora con aviso: manda el global
+r="$(mk '{"notify":"none"}')"; echo '{"notify":"claude-push"}' > "$r/.agents-kit.json"
+out="$(bash "$N" "$r" T M 2>&1)"; rc=$?
+[ $rc -eq 0 ] || fail "notify del repo rc=$rc"
+[ "$(tail -n1 <<<"$out")" = "FIN: sin-aviso" ] || fail "notify del repo no se ignora: $out"
+grep -q "aviso: .agents-kit.json: 'notify'" <<<"$out" || fail "notify del repo sin aviso: $out"
+# global ausente: el canal de la plantilla
+r="$(mk_repo)"; echo '{}' > "$r/.agents-kit.json"; rm -f "$KIT_CONFIG"; : > "$CURL_LOG"
+KIT_NTFY_TOPIC=t bash "$N" "$r" T M >/dev/null || fail "plantilla rc"
+grep -qx "https://ntfy.sh/t" "$CURL_LOG" || fail "plantilla: no usó ntfy"
+[ "$(jq -r .notify "$REPO_ROOT/templates/config.json")" = ntfy ] || fail "plantilla"
 echo "OK test_notify"

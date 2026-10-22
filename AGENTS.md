@@ -13,17 +13,17 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `hooks/`: `hooks.json` y el script `session-start`.
 - `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso y reglas).
 - `rules/`: reglas inyectadas en las sesiones.
-- `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout` y `kit-run` (con `references/`: plantilla de issue, prompt del revisor y formato de ronda).
-- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-review.sh` y `kit-review-all.sh`, `kit-changelog.sh`, `kit-notify.sh`...) y `release.sh`.
-- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`; `transport.sh`, dónde corre la sesión).
-- `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
+- `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout` y `kit-run` (con `references/`: plantilla de issue, prompt del revisor, esquema JSON de la revisión y formato de ronda).
+- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-ship-pr.sh` (worktree temporal de `kit-on`/`kit-off`), `kit-agents-md.sh` (diff del reordenado de `AGENTS.md`), `kit-review.sh` y `kit-review-all.sh`, `kit-changelog.sh`, `kit-notify.sh`, `kit-skills-check.sh` (citas rotas a ficheros en las skills; los tests lo pasan sobre el propio kit)...) y `release.sh`.
+- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`, configuración en tres capas; `review-seats.sh`, familia del implementador y candidatos de cada puesto de revisión; `default-branch.sh`; `transport.sh`, dónde corre la sesión; `repo-hook.sh`, scripts `setup` y `checks.pre-merge` del repo).
+- `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`) y `config.json`, valores por defecto del kit y plantilla de la configuración global `~/.agents-kit/config.json` (o `KIT_CONFIG`). Precedencia: plugin < global < marcador del repo, que solo puede definir las claves de la lista blanca de `scripts/lib/config.sh`.
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node). `tests/fixtures/changelog/` es el contrato del formato de `CHANGELOG.md`: la web lo reutilizará para probar su parser.
 - `web/`: web de changelogs (Astro + Cloudflare Workers), app aparte con su `package.json`. Su parser (`web/src/lib/changelog.ts`) y el validador bash comparten `tests/fixtures/changelog/`: cambiar el formato es tocar los dos y los fixtures.
 - `docs/`: specs y planes.
 
 ## Flujo de issues
 
-`kit-plan` y `kit-scout` crean issues (`listo` o `propuesta`); `kit-run` los lleva hasta `main`. El estado vive en GitHub: etiquetas `listo`, `propuesta`, `en-curso`, `necesita-decision`, `bloqueado` y marcadores HTML en los comentarios de issues y PRs. Los avisos salen de `kit-notify.sh` (`ntfy`, `claude-push` o `none`); el tema de ntfy solo lo pone el usuario (`~/.agents-kit/ntfy-topic` o `KIT_NTFY_TOPIC`), nunca el repo.
+`kit-plan` y `kit-scout` crean issues con `kit-issue.sh crear` (con `--prio`; los de `kit-scout`, `propuesta`); `kit-run` coge cualquier issue abierto fuera de `en-curso`, `necesita-respuesta`, `bloqueado`, `propuesta`, `someday` y `registro` (por `prio:*` y antigüedad) y lo lleva hasta `main`; `kit-run <N>` lleva solo ese issue (`kit-issue.sh siguiente <raíz> <N>` dice si se puede coger). Solo cuentan los issues y comentarios de la cuenta de `gh` del kit: `siguiente` filtra por autor y `kit-issue.sh leer` omite los comentarios de otras cuentas. `listo` y `necesita-decision` son de la v2: el primero ya no cuenta y el segundo excluye como `necesita-respuesta`. El estado vive en GitHub: esas etiquetas y marcadores HTML en los comentarios de issues y PRs. Los avisos salen de `kit-notify.sh` (`ntfy`, `claude-push` o `none`); el tema de ntfy solo lo pone el usuario (`~/.agents-kit/ntfy-topic` o `KIT_NTFY_TOPIC`), nunca el repo.
 
 ## Comandos
 
@@ -133,3 +133,21 @@ Desplegada el 2026-10-22 en `https://agents-kit-changelogs.dev-morera.workers.de
 - Despliegue continuo con Workers Builds conectado al repo: raíz `web`, compilación `npm ci && npm run build`, despliegue `npx wrangler deploy`, solo `main` y rutas `web/*`.
 - En Astro 7 con @astrojs/cloudflare 14 los bindings se leen con `import { env } from "cloudflare:workers"`; la Cache API no sirve detrás de Access ni en workers.dev, así que la caché de repos va en KV.
 - `wrangler kv namespace create` pregunta en modo interactivo; sin terminal no termina.
+
+### Revisores por familias (v3)
+
+Ayuda (`--help`) leída el 2026-10-22 con Claude Code 2.1.308, opencode 1.19.0 y codex-cli 0.163.0. Sin revisión real contra la red salvo donde se dice.
+- Un proveedor es `{"cli": "<adaptador>", "modelos": {...}}` en `proveedores` del global; los adaptadores son `claude`, `opencode` y `codex` (`kit-review.sh`). Disponible = CLI en el PATH; un fallo de login, modelo o cuota en ejecución (motivo `acceso`) pasa al siguiente candidato del puesto.
+- Las tres invocaciones corren en el clon desechable, con stdin cerrado, sin `GH_TOKEN`/`GITHUB_TOKEN`, con `GH_CONFIG_DIR` vacío, `GIT_CONFIG_GLOBAL=/dev/null`, `credential.helper` vacío y sin variables `CLAUDE*`, `CODEX_*`, `OPENCODE*` de la sesión (se conservan `CLAUDE_CONFIG_DIR` y `CODEX_HOME`, que guardan el login).
+- `claude -p --model <m> --permission-mode bypassPermissions --setting-sources user --strict-mcp-config --no-session-persistence --disallowedTools "Bash(git push:*)" "Bash(gh:*)" --output-format json --json-schema <esquema> <prompt>`. Banderas en la ayuda. Sin verificar aquí: que la respuesta traiga `structured_output` e `is_error` (lo usa la skill `peer-review` de Aikosmo).
+- `opencode run --pure --format json -m <m> [-s <sesión>] <prompt>` con `OPENCODE_CONFIG_CONTENT` que niega `gh *` y `git push*`. Banderas en la ayuda (`--format json` = eventos JSON en crudo; `--pure` = sin plugins externos). Sin verificar aquí: los eventos `text` (`part.text`, `part.messageID`), `error` y `sessionID` (de `peer-review`). Sin esquema nativo: va en el prompt, y una respuesta fuera de esquema tiene un reintento en la misma sesión (`-s`).
+- `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox workspace-write -c 'approval_policy="never"' -c sandbox_workspace_write.network_access=false --color never -m <m> -C <clon> --output-schema <fichero> -o <fichero> <prompt>`. Banderas en la ayuda; codex-cli 0.163.0 aceptó esta línea completa (arrancó con `approval: never` y salió con código 1 con un modelo inexistente; fue una ejecución accidental de un test). `gh` y `git push` quedan bloqueados porque el sandbox `workspace-write` no tiene red (y no hay credenciales); `--ignore-user-config` evita servidores MCP del usuario con tokens. Sin verificar: que `approval_policy` y `sandbox_workspace_write.network_access` sean las claves exactas en 0.163.0, que el sandbox bloquee la red en macOS en ejecución anidada, y que `-o` escriba el JSON del esquema. Codex lee stdin aunque sea `/dev/null` ("Reading additional input from stdin..."), sin efecto.
+- Entorno del implementador: `CODEX_THREAD_ID` en Codex y `CLAUDECODE` en Claude Code (los usa `peer-review`); `OPENCODE` en OpenCode, sin verificar aquí.
+
+### agents-kit v3
+
+Verificado de punta a punta el 2026-10-22 en el repo privado de pruebas (`claude -p`, Claude Code 2.1.302, opencode 1.19.0, codex-cli 0.163.0):
+- `kit-on` sobre un repo v2 con el árbol sucio: modo actualizar por PR desde un worktree temporal, sin tocar el árbol; etiquetas v3 creadas, claves v2 fuera del marcador, `~/.agents-kit/config.json` creado. `kit-issue.sh comprobar` rechaza el repo hasta el `git pull`.
+- `kit-run` con los puestos por defecto e implementador Claude: puestos 1 y 2 a `gpt/openai/gpt-6.1-sol` por OpenCode, puesto 3 a `claude/sonnet`; marcadores `kit-revision: puesto <i> ...` y ronda completa aceptada por `fusionar`.
+- Fallback real: con `gpt` en `cli: "codex"`, Codex rechazó el modelo (`not supported when using Codex with a ChatGPT account`); los puestos `otra` cayeron en Claude, la ronda lo anotó y el resumen pidió cambiar `proveedores.gpt.modelos`.
+- Con la cuenta de ChatGPT de Dru, `codex exec` rechazó todos los modelos probados (también su `model` por defecto), dentro y fuera del kit: no se pudo verificar una revisión completa por Codex.

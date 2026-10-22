@@ -3,17 +3,17 @@
 Lo leen `kit-run` y los revisores sin más contexto: todo lo acordado tiene que estar aquí. Frases cortas, sin relleno. Borra los comentarios.
 
 ```markdown
-## Objetivo
+## Problema
 
-<!-- Una o dos frases: qué cambia para quien usa la app y por qué. -->
+<!-- Una o dos frases: qué falla o falta para quien usa la app y por qué importa. El problema, no la solución; si Dru ya decidió la solución, escríbela explícita para que nadie la vuelva a discutir. -->
 
-## Comportamiento acordado
+## Decisiones de producto
 
-<!-- Lo decidido con Dru: flujo, casos, mensajes exactos que se ven. -->
+<!-- Lo decidido con Dru: comportamiento esperado, cómo se usa, cómo debe verse, mensajes exactos. -->
 
 ## Criterios de aceptación
 
-<!-- Observables desde fuera, uno por línea, comprobables con un sí o un no. -->
+<!-- Cómo se sabe que está hecho: observables desde fuera, uno por línea, comprobables con un sí o un no. "Que funcione bien" no vale. -->
 - [ ] ...
 
 ## Cómo se comprueba
@@ -22,14 +22,17 @@ Lo leen `kit-run` y los revisores sin más contexto: todo lo acordado tiene que 
 
 ## Qué NO entra
 
-<!-- Lo que queda fuera aunque parezca relacionado. -->
+<!-- La frontera del alcance: lo que queda fuera aunque parezca relacionado. Si al escribirlo salen dos cosas, son dos issues. -->
 
-## Rutas relevantes
+## Dónde toca
 
-<!-- Ficheros o directorios que probablemente se tocan. -->
+<!-- Rutas concretas (`lib/x/daemon.py`, no "el daemon"). -->
 
-## Verificado y supuesto
+## Lo verificado
 
-- Verificado: <!-- lo comprobado en el código o ejecutando, con la evidencia (ruta:línea, comando y salida). -->
-- Supuesto: <!-- lo que se cree pero no se ha comprobado. -->
+<!-- Lo comprobado en el código o ejecutando, con la evidencia: ruta:línea, comando y salida. -->
+
+## Lo que solo se cree
+
+<!-- Suposiciones (sobre el código o sobre una herramienta externa: git, una API...), cada una marcada como "sin verificar". Un supuesto escrito como hecho manda a construir sobre arena; escrito como supuesto, lo primero que se hace es comprobarlo. -->
 ```

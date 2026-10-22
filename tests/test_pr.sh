@@ -273,6 +273,41 @@ st '.prs[0].comments |= map(select(.id != 96))'
 printf 'Ronda 3: 0 hallazgos de todos los revisores.\n' > "$tmp/r3"
 bash "$pr" ronda "$wt" $p 3 "$tmp/r3" >/dev/null 2>&1 || fail "ronda 3"
 
+# fusionar: every seat of revision.puestos (3 by default) needs an own confirmed kit-revision in the last round
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "ronda sin revisiones: exit $rc"
+case "$err" in *"la ronda 3 tiene puestos sin confirmar (1, 2, 3)"*) ;; *) fail "ronda sin revisiones msg: $err";; esac
+redo_r3() { # <jq-array of comments>: put them before a fresh kit-ronda 3
+  st ".prs[0].comments |= map(select(.body | startswith(\"<!-- kit-ronda: 3 -->\") | not)) + $1"
+  bash "$pr" ronda "$wt" $p 3 "$tmp/r3" >/dev/null 2>&1 || fail "ronda 3 otra vez"
+}
+redo_r3 '[{"id": 300, "body": "<!-- kit-revision: puesto 1 gpt/openai/x ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 301, "body": "<!-- kit-revision: puesto 2 gpt/openai/x ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 302, "body": "<!-- kit-revision: puesto 3 sin-confirmar ronda 3 -->\nsin confirmar"},
+  {"id": 303, "body": "<!-- kit-revision: puesto 3 claude/sonnet ronda 3 -->\nHALLAZGOS: 0", "author": {"login": "otro"}},
+  {"id": 304, "body": "<!-- kit-revision: puesto 3 claude/sonnet ronda 2 -->\nHALLAZGOS: 0"}]'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "puesto sin confirmar: exit $rc"
+case "$err" in *"la ronda 3 tiene puestos sin confirmar (3)"*) ;; *) fail "puesto sin confirmar msg: $err";; esac
+[ "$(pr_q .state)" = OPEN ] || fail "fusionó con un puesto sin confirmar"
+# a v2 round (reviews without puesto) is read as before; no seats configured needs none
+echo x > "$wt/sucio.txt"
+redo_r3 '[{"id": 305, "body": "<!-- kit-revision: claude/opus ronda 3 -->\nHALLAZGOS: 0"}]'
+st '.prs[0].comments |= map(select(.id < 300 or .id > 304 or .id == 305))'
+redo_r3 '[]'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"puestos sin confirmar"*) fail "ronda v2 tratada como incompleta: $err";; esac
+st '.prs[0].comments |= map(select(.id != 305))'
+redo_r3 '[]'
+set_global '{"revision": {"puestos": []}}'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"puestos sin confirmar"*) fail "sin puestos tratada como incompleta: $err";; esac
+rm -f "$KIT_CONFIG" "$wt/sucio.txt"
+redo_r3 '[{"id": 306, "body": "<!-- kit-revision: puesto 1 gpt/openai/x ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 307, "body": "<!-- kit-revision: puesto 2 claude/opus ronda 3 -->\nHALLAZGOS: 0"},
+  {"id": 308, "body": "<!-- kit-revision: puesto 3 sin-confirmar ronda 3 -->\nsin confirmar"},
+  {"id": 309, "body": "<!-- kit-revision: puesto 3 claude/sonnet ronda 3 -->\nHALLAZGOS: 0"}]'
+
 # fusionar: a push lands between the gates and the merge -> merge refused (all gates passed, round 3 included)
 GH_RACE_OID=0123456789abcdef0123456789abcdef01234567 bash "$pr" fusionar "$wt" $p 3 >/dev/null 2>&1; rc=$?
 [ $rc -eq 2 ] || fail "carrera: exit $rc"
@@ -282,7 +317,7 @@ grep -q -- "--match-head-commit $sha" "$GH_LOG" || fail "merge sin --match-head-
 # fusionar: everything fine with green CI (no gate-local) -> merge and close the issue
 st '.workflows = 1 | .checks = [{"name":"ci","id":7,"status":"completed","conclusion":"success"}]
   | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-  | (.issues[] | select(.number == 3) | .labels) += [{name: "listo"}, {name: "otra"}]'
+  | (.issues[] | select(.number == 3) | .labels) += [{name: "otra"}]'
 : > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar: $out"
 grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA de la PR"
@@ -290,24 +325,25 @@ grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA
 case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac
 [ "$(pr_q .state)" = MERGED ] || fail "no fusionó"
 [ "$(flow_issue 3 .state)" = CLOSED ] || fail "no cerró el issue"
-[ "$(flow_issue 3 '.comments[-1].body')" = "Resuelto en #$p." ] || fail "comentario de cierre"
-[ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra ] || fail "no quitó en-curso y listo: $(flow_issue 3 '.labels')"
-grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso --remove-label listo" "$GH_LOG" || fail "issue edit sin las etiquetas"
+[ "$(flow_issue 3 '.comments[-2].body')" = "Resuelto en #$p." ] || fail "comentario de cierre"
+case "$(flow_issue 3 '.comments[-1].body')" in "<!-- kit-soltado: fusionar -->"*"#$p"*) ;; *) fail "kit-soltado tras fusionar";; esac
+[ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra ] || fail "no quitó en-curso: $(flow_issue 3 '.labels')"
+grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso$" "$GH_LOG" || fail "issue edit sin las etiquetas"
 grep -q -- "pr merge $p.*--squash" "$GH_LOG" || fail "merge sin --squash"
 grep -q -- "--delete-branch" "$GH_LOG" && fail "merge con --delete-branch"
 while IFS= read -r line; do case "$line" in *"dru/demo"*|"api user --jq .login") ;; *) fail "gh sin repo: $line";; esac; done < "$GH_LOG"
 
 # fusionar: a failing label cleanup is only a warning, the merge still counts
 st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}])'
 rm -f "$GH_STATE/.failed"
 GH_FAIL_ON="issue edit" bash "$pr" fusionar "$wt" $p 3 >"$GH_STATE/o" 2>"$GH_STATE/e"; rc=$?
 [ $rc -eq 0 ] || fail "etiquetas fallidas rompen la fusión: $rc $(cat "$GH_STATE/e")"
 [ "$(last_line "$(cat "$GH_STATE/o")")" = "FIN: ok" ] || fail "FIN con aviso de etiquetas"
-grep -q "etiquetas" "$GH_STATE/e" || fail "sin aviso de etiquetas: $(cat "$GH_STATE/e")"
+grep -q "etiqueta en-curso" "$GH_STATE/e" || fail "sin aviso de etiquetas: $(cat "$GH_STATE/e")"
 # fusionar: malformed CHANGELOG.md blocks the merge before gh pr merge
 st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}])'
 printf '# Changelog\n\n## 2026-10-18\n\n### Novedad: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
 : > "$GH_LOG"
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
@@ -323,7 +359,7 @@ echo CHANGELOG.md >> "$excl"
 printf '# Changelog\n\n## 2026-10-18\n\n### Nuevo: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
 reset_open() {
   st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-    | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+    | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}])'
 }
 reset_open; : > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con changelog válido: $out"
@@ -344,4 +380,124 @@ err="$(PATH="$gitd:$PATH" bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$
 case "$err" in *"mal formado"*) fail "marcador ausente informado como changelog mal formado: $err";; esac
 git -C "$wt" checkout -q -- .agents-kit.json || fail "restaurar marcador"
 rm "$wt/CHANGELOG.md"; cp "$tmp/exclude.bak" "$excl"
+
+# fusionar: gates read the default branch's marker, not the PR's (protegido, checks.pre-merge, revision.puestos)
+reset_open
+mkdir -p "$r/tools" && printf '#!/bin/sh\n[ -e "$KIT_PM_OK" ] || { echo "pre-merge: fallo de prueba"; exit 1; }\n' > "$r/tools/pm.sh"
+echo '{"protegido":["lib/"],"checks":{"pre-merge":"tools/pm.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "marcador con ganchos" && git push -q origin main) >/dev/null 2>&1 || fail "push marcador base"
+(cd "$wt" && git fetch -q origin && git rebase -q origin/main \
+  && echo '{"revision":{"puestos":[]},"protegido":[],"checks":{}}' > .agents-kit.json \
+  && mkdir -p lib && echo x > lib/x.txt && git add -A && git commit -q -m "toca lib y debilita el marcador" \
+  && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1 || fail "preparar rama debilitada"
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\" | .prs[0].body = \"Cuerpo\\nCierra #3\""
+unset KIT_PM_OK
+: > "$GH_LOG"
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "ganchos de base: exit $rc $err"
+case "$err" in *"rutas protegidas (lib/)"*"## Zonas protegidas"*) ;; *) fail "protegido no exigido: $err";; esac
+case "$err" in *"checks.pre-merge falló (exit 1)"*"pre-merge: fallo de prueba"*) ;; *) fail "pre-merge no exigido: $err";; esac
+grep -q "pr merge" "$GH_LOG" && fail "fusionó con ganchos fallando"
+# revision.puestos: [] in the PR marker does not lower the seats required by the base
+saved_c="$(pr_q '.comments')"
+st '.prs[0].comments |= map(select(.id != 307))'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"puestos sin confirmar"*) ;; *) fail "puestos del marcador de la PR: $err";; esac
+st ".prs[0].comments = $saved_c"
+# section present but missing the prefix is still refused; with it and a passing pre-merge, it merges
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- cli/ nada\n\n## Otra\nlib/\nCierra #3"'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas (lib/)"*) ;; *) fail "prefijo fuera de la sección: $err";; esac
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- lib/: motivo\n\nCierra #3"'
+okf="$(mktemp)"
+out="$(KIT_PM_OK="$okf" bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con ganchos cumplidos: $out"
+[ "$(pr_q .state)" = MERGED ] || fail "ganchos cumplidos: no fusionó"
+# the PR edits the pre-merge script to "exit 0": rejected (a PR cannot edit its own gate), and it never runs
+st ".prs[0].body = \"Cuerpo\\n\\n## Zonas protegidas\\n\\n- lib/: motivo\\n\\nCierra #3\""
+reset_open
+pmran="$(mktemp -d)/ran"
+printf '#!/bin/sh\ntouch "%s"\nexit 0\n' "$pmran" > "$wt/tools/pm.sh"
+(cd "$wt" && git add -A && git commit -q -m "debilita pre-merge" && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(KIT_PM_OK="$okf" bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "pre-merge editado por la PR: exit $rc $err"
+case "$err" in *"la PR modifica el script de checks.pre-merge (tools/pm.sh)"*) ;; *) fail "pre-merge editado por la PR: $err";; esac
+[ ! -e "$pmran" ] || fail "ejecutó el pre-merge editado por la PR"
+# pre-merge missing on the base branch is a rejection reason
+echo '{"checks":{"pre-merge":"tools/no-existe.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "pm inexistente" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"no existe en origin/main"*) ;; *) fail "pre-merge inexistente en la base: $err";; esac
+# protegido: a rename out of a protected path counts, and the prefix must be a whole token in the section
+mkdir -p "$r/lib" && echo a > "$r/lib/a.py"
+echo '{"protegido":["lib/"]}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "lib" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && mkdir -p otro && git mv lib/a.py otro/a.py \
+  && git commit -q -m mueve && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\" | .prs[0].body = \"Cuerpo\\nCierra #3\""
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas (lib/)"*) ;; *) fail "mover fuera de lib/ no activa la puerta: $err";; esac
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- mylib/ y src/lib/x: no es lo mismo\n\nCierra #3"'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas (lib/)"*) ;; *) fail "subcadena aceptada como mención: $err";; esac
+st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- `lib/a.py` salió de `lib/`: motivo\n\nCierra #3"'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"rutas protegidas"*) fail "mención con comillas rechazada: $err";; esac
+
+# unsafe hook paths are environment errors; a slow hook times out
+reset_open
+echo '{"checks":{"pre-merge":"../fuera.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "ruta mala" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+bash "$pr" fusionar "$wt" $p 3 >/dev/null 2>"$tmp/e"; rc=$?
+[ $rc -eq 2 ] && grep -q "'\.\.'" "$tmp/e" || fail "ruta con .. debe dar 2: $rc $(cat "$tmp/e")"
+sed -i.bak 's|\.\./fuera\.sh|/etc/passwd|' "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "ruta absoluta" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+bash "$pr" fusionar "$wt" $p 3 >/dev/null 2>"$tmp/e"; rc=$?
+[ $rc -eq 2 ] && grep -q "absoluta" "$tmp/e" || fail "ruta absoluta debe dar 2: $rc $(cat "$tmp/e")"
+printf '#!/bin/sh\nsleep 30\n' > "$r/tools/pm.sh"
+echo '{"checks":{"pre-merge":"tools/pm.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "lento" && git push -q origin main) >/dev/null 2>&1
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(KIT_HOOK_TIMEOUT=1 bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"checks.pre-merge agotó el tiempo"*) ;; *) fail "timeout de pre-merge: $err";; esac
+
+# checks.pre-merge runs as the worktree's own file (unchanged from the base), so it can find its sibling files
+reset_open
+printf '#!/bin/sh\n. "$(dirname "$0")/pmlib.sh"\npm_lib_ok || exit 1\n' > "$r/tools/pm.sh"
+printf 'pm_lib_ok() { echo "lib hermana cargada"; }\n' > "$r/tools/pmlib.sh"
+echo '{"checks":{"pre-merge":"tools/pm.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "pm con lib" && git push -q origin main) >/dev/null 2>&1 || fail "push pm con lib"
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "pre-merge con fichero hermano: $out"
+[ "$(pr_q .state)" = MERGED ] || fail "pre-merge con fichero hermano: no fusionó"
+# after merging, the claim is released with an own kit-soltado (a reopened issue can be claimed again)
+[ "$(flow_issue 3 '[.comments[] | select(.body | startswith("<!-- kit-soltado: "))] | length')" -ge 1 ] \
+  || fail "fusionar no publicó kit-soltado: $(flow_issue 3 '.comments')"
+
+# changelog: false in the base marker: a CHANGELOG.md of the project's own format never blocks the merge
+reset_open
+printf '# Changelog\n\n## [1.2.0] - 2024-01-01\n\n### Added\n- algo\n' > "$r/CHANGELOG.md"
+echo '{"changelog":false}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "changelog propio" && git push -q origin main) >/dev/null 2>&1 || fail "push changelog propio"
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "changelog false con fichero propio: $out"
+[ "$(pr_q .state)" = MERGED ] || fail "changelog false: no fusionó"
+# ...but the PR cannot turn the validation off by editing its own marker
+reset_open
+echo '{}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "changelog del kit" && git push -q origin main) >/dev/null 2>&1 || fail "push changelog kit"
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && echo '{"changelog":false}' > .agents-kit.json \
+  && git add -A && git commit -q -m "apaga changelog" && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"CHANGELOG.md mal formado"*) ;; *) fail "changelog false en la PR: $err";; esac
 echo "OK test_pr"
