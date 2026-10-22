@@ -36,9 +36,9 @@ for f in "$REPO_ROOT"/skills/*/references/*.md; do
   grep -Eq '\| *(head|tail)\b' "$f" && fail "$f: pipes output through head/tail"
 done
 
-# kit-on / kit-off specifics from the brief
+# kit-on / kit-off: everything in a temporary worktree of origin/<default>, never in Dru's tree
 on="$REPO_ROOT/skills/kit-on/SKILL.md"; off="$REPO_ROOT/skills/kit-off/SKILL.md"
-for sc in kit-activate.sh kit-github-setup.sh kit-ship-pr.sh; do
+for sc in kit-activate.sh kit-github-setup.sh kit-ship-pr.sh kit-agents-md.sh kit-issue.sh; do
   grep -q "scripts/$sc" "$on" || fail "kit-on must use scripts/$sc"
 done
 for sc in kit-deactivate.sh kit-ship-pr.sh; do
@@ -46,28 +46,30 @@ for sc in kit-deactivate.sh kit-ship-pr.sh; do
 done
 grep -q '"chore: activar agents-kit"' "$on" || fail "kit-on PR title"
 grep -q '"chore: desactivar agents-kit"' "$off" || fail "kit-off PR title"
-grep -q 'CLAUDE_PLUGIN_ROOT' "$on" || fail "kit-on must resolve CLAUDE_PLUGIN_ROOT"
-grep -q 'CLAUDE_PLUGIN_ROOT' "$off" || fail "kit-off must resolve CLAUDE_PLUGIN_ROOT"
-grep -q 'git status --porcelain' "$on" || fail "kit-on must define dirty tree"
-grep -q 'git status --porcelain' "$off" || fail "kit-off must define dirty tree"
-grep -q 'git ls-files --error-unmatch .agents-kit.json' "$on" || fail "kit-on must detect an uncommitted marker (interrupted run)"
-grep -q 'git ls-files --error-unmatch .agents-kit.json' "$off" || fail "kit-off must detect an interrupted run"
-grep -q 'rama `kit-on`' "$on" || fail "kit-on must mention a leftover kit-on branch"
-grep -q 'rama `kit-off`' "$off" || fail "kit-off must mention a leftover kit-off branch"
-for pth in .agents-kit.json CHANGELOG.md AGENTS.md CLAUDE.md .agents/ .claude/; do
-  grep -qF "\`$pth\`" "$on" || fail "kit-on resume guard must list $pth"
-done
-grep -q 'no relacionad' "$on" || fail "kit-on must stop on unrelated changes when resuming"
-grep -q 'creado: AGENTS.md' "$on" || fail "kit-on step 4 gate must use 'creado: AGENTS.md'"
-grep -q 'borrado del marcador pendiente' "$off" || fail "kit-off must report dirty tree + pending marker deletion"
+grep -q 'kit-ship-pr.sh" abrir <raíz> kit-on sin-marcador' "$on" || fail "kit-on must open its worktree with abrir"
+grep -q 'kit-ship-pr.sh" enviar <raíz> kit-on' "$on" || fail "kit-on must ship with enviar"
+grep -q 'kit-ship-pr.sh" descartar <raíz> kit-on' "$on" || fail "kit-on must know descartar"
+grep -q 'kit-ship-pr.sh" abrir <raíz> kit-off con-marcador' "$off" || fail "kit-off must open its worktree with abrir"
+grep -q 'kit-ship-pr.sh" enviar <raíz> kit-off' "$off" || fail "kit-off must ship with enviar"
+grep -q 'kit-activate.sh" <wt> --changelog' "$on" || fail "kit-on must activate in the worktree with --changelog"
+grep -q 'kit-deactivate.sh" <wt>' "$off" || fail "kit-off must deactivate in the worktree"
 for sk in "$on" "$off"; do
-  grep -q 'sin el prefijo `origin/`' "$sk" || fail "$sk: falta aclarar que la rama por defecto va sin origin/"
+  grep -q 'CLAUDE_PLUGIN_ROOT' "$sk" || fail "$sk must resolve CLAUDE_PLUGIN_ROOT"
+  grep -q 'El árbol de Dru no se toca' "$sk" || fail "$sk must say Dru's tree is never touched"
+  grep -q 'FIN: PR abierto' "$sk" || fail "$sk must handle a PR left open"
+  grep -q 'ya existía' "$sk" || fail "$sk must handle a resumed worktree"
+  grep -Eq 'git status --porcelain` no está vacío|confirme o guarde' "$sk" && fail "$sk still requires a clean tree"
+  grep -q 'git stash apply\|stash, dale' "$sk" && fail "$sk still talks about the stash flow"
 done
-grep -q 'interrumpida: haz solo la comprobación de al día' "$off" || fail "kit-off retomado debe comprobar al día"
-for sk in "$on" "$off"; do
-  grep -q 'el árbol NO quedó limpio' "$sk" || fail "$sk: debe retransmitir el estado real del árbol"
-  grep -q 'a salvo ahí y el árbol quedó limpio' "$sk" && fail "$sk: afirma árbol limpio sin condición"
-done
+grep -q 'creado: AGENTS.md' "$on" || fail "kit-on step gate must use 'creado: AGENTS.md'"
+grep -q 'kit-agents-md.sh" diff <wt>' "$on" && grep -q 'kit-agents-md.sh" aplicar <wt>' "$on" \
+  || fail "kit-on must show the AGENTS.md reorder as a diff and apply it only with OK"
+grep -q '## Reglas del proyecto' "$on" || fail "kit-on must keep the project rules section"
+grep -q 'kit-issue.sh" reparto <wt>' "$on" && grep -q 'kit-issue.sh" aparcar <wt>' "$on" && grep -q 'someday' "$on" \
+  || fail "kit-on must list the open issues and park the ones Dru says in someday"
+grep -q 'configuración global' "$on" || fail "kit-on must relay the global config creation"
+grep -q -- '--setup' "$on" || fail "kit-on must offer --setup when the repo has git hooks"
+grep -q 'git pull' "$on" || fail "kit-on must tell Dru the marker arrives with git pull"
 
 # phase 2 flow skills
 plan="$REPO_ROOT/skills/kit-plan/SKILL.md"; run="$REPO_ROOT/skills/kit-run/SKILL.md"; scout="$REPO_ROOT/skills/kit-scout/SKILL.md"

@@ -68,6 +68,37 @@ bash "$issue" siguiente "$r" >/dev/null 2>&1; rc=$?
 [ $rc -eq 2 ] || fail "siguiente con gh roto: exit $rc"
 unset GH_FAIL_ON
 
+# --- reparto: the open issues siguiente would pick, in its order; aparcar sends them to someday
+use_flow_gh
+flow_add_issue 1 "prop" propuesta
+flow_add_issue 2 "cogido" en-curso
+flow_add_issue 5 "algún día" someday
+flow_add_issue 8 "📦 Changelog"
+flow_add_issue 9 "baja" prio:baja
+flow_add_issue 11 "sin prio" area
+flow_add_issue 13 "media" prio:media
+FLOW_AUTHOR=desconocido flow_add_issue 17 "ajena" prio:alta
+out="$(bash "$issue" reparto "$r" 2>&1)" || fail "reparto: exit $? ($out)"
+exp="$(printf '#13\tprio:media\tmedia\n#11\tsin prio\tsin prio\n#9\tprio:baja\tbaja\nde otras cuentas (nunca entran): #17\nFIN: 3')"
+[ "$out" = "$exp" ] || fail "reparto: salida '$out'"
+grep -q '^issue edit' "$GH_LOG" && fail "reparto: no debe tocar nada"
+use_flow_gh
+out="$(bash "$issue" reparto "$r" 2>&1)" || fail "reparto vacío: exit $?"
+[ "$out" = "FIN: 0" ] || fail "reparto vacío: '$out'"
+use_flow_gh; GH_FAIL_ON="issue list" bash "$issue" reparto "$r" >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] || fail "reparto con gh roto: exit $rc"
+use_flow_gh
+flow_add_issue 9 "baja" prio:baja
+flow_add_issue 11 "sin prio"
+out="$(bash "$issue" aparcar "$r" 9 11 2>&1)" || fail "aparcar: exit $? ($out)"
+[ "$(flow_issue 9 '[.labels[].name] | index("someday") != null')" = true ] || fail "aparcar: #9 sin someday"
+[ "$(flow_issue 11 '[.labels[].name] | index("someday") != null')" = true ] || fail "aparcar: #11 sin someday"
+[ "$(last_line "$out")" = "FIN: 2 aparcados" ] || fail "aparcar: '$out'"
+grep -q '^issue edit 9 .*--repo dru/demo' "$GH_LOG" || fail "aparcar sin --repo"
+bash "$issue" aparcar "$r" >/dev/null 2>&1; [ $? -eq 1 ] || fail "aparcar sin números debe salir 1"
+bash "$issue" aparcar "$r" 9 x >/dev/null 2>&1; [ $? -eq 1 ] || fail "aparcar número inválido debe salir 1"
+GH_FAIL_ON="issue edit" bash "$issue" aparcar "$r" 9 >/dev/null 2>&1; [ $? -eq 2 ] || fail "aparcar con gh roto debe salir 2"
+
 # --- reclamar: en-curso without any kit marker (another flow) -> exit 1, nothing published
 use_flow_gh
 flow_add_issue 7 "tarea" en-curso
@@ -239,7 +270,7 @@ case "$err" in *"--prio"*) ;; *) fail "crear v2 sin --prio: mensaje '$err'";; es
 # --- no marker: every subcommand refuses
 nr="$(mk_repo)"; git -C "$nr" remote add origin https://github.com/dru/demo.git
 use_flow_gh
-for args in "siguiente" "reclamar 7 kit-a" "soltar 7 kit-a" "decision 7 kit-a $qfile" \
+for args in "siguiente" "reparto" "aparcar 7" "reclamar 7 kit-a" "soltar 7 kit-a" "decision 7 kit-a $qfile" \
             "bloquear 7 kit-a $qfile" "crear x $qfile --prio alta"; do
   set -- $args
   sub="$1"; shift

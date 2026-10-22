@@ -92,168 +92,196 @@ GH_STUB_MODE=ok bash "$setup" "$r" >/dev/null 2>&1; rc=$?
 [ $rc -eq 2 ] || fail "marcador roto: exit $rc"
 rm "$r/.agents-kit.json"
 
-# --- ship: trunk default
-r="$(mk_with_origin trunk)"; : > "$GH_LOG"
-echo change > "$r/new.txt"; echo more >> "$r/README.md"
-out="$(GH_STUB_MODE=default-branch-trunk bash "$ship" "$r" kit/cambio "feat: algo" "cuerpo" 2>&1)" || fail "ship: exit $? ($out)"
-grep -q '^pr create .*--base trunk' "$GH_LOG" || fail "pr create sin --base trunk"
-grep -q '^pr merge .*--squash' "$GH_LOG" || fail "pr merge sin --squash"
-[ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = trunk ] || fail "no termina en trunk"
-git -C "$r" show-ref --verify -q refs/heads/kit/cambio && fail "rama local no borrada"
-git -C "$r" ls-remote --exit-code --heads origin kit/cambio >/dev/null 2>&1 && fail "rama remota no borrada tras el merge"
-git -C "$r" show-ref --verify -q refs/remotes/origin/kit/cambio && fail "queda ref de seguimiento obsoleto"
-case "$out" in *"PR fusionado: https://github.com/dru/demo/pull/1"*"FIN: ok"*) ;; *) fail "salida sin URL/FIN: $out";; esac
-
-grep -q '^pr create .*--repo dru/demo' "$GH_LOG" || fail "pr create sin --repo"
-grep -q '^pr merge .*--repo dru/demo' "$GH_LOG" || fail "pr merge sin --repo"
-
-# --- ship: merge exits 1 but PR is MERGED -> success
-r="$(mk_with_origin main)"; echo c > "$r/f.txt"
-out="$(GH_STUB_MODE=merge-fails-merged bash "$ship" "$r" kit/mf t b 2>&1)" || fail "merge falla pero MERGED: exit $? ($out)"
-case "$out" in *"PR fusionado"*"FIN: ok"*) ;; *) fail "merge falla pero MERGED: salida '$out'";; esac
-
-# --- ship: non-GitHub origin -> exit 1
-r="$(mk_with_origin main)"; echo c > "$r/f.txt"
-git -C "$r" config remote.origin.url https://example.com/x/y.git
-err="$(bash "$ship" "$r" kit/ng t b 2>&1 >/dev/null)"; rc=$?
-[ $rc -eq 1 ] || fail "origin no GitHub: exit $rc"
-case "$err" in *"sin remoto de GitHub"*) ;; *) fail "origin no GitHub: stderr '$err'";; esac
-
-# --- ship: stale local default, origin edited a file / added a colliding one -> exit 2, clean tree, stash kept
-for kind in edit collide; do
-  r="$(mk_with_origin main)"
-  o="$(git -C "$r" config --get-regexp '^url\..*\.insteadof$' | sed -E 's/^url\.(.*)\.insteadof .*/\1/')"
-  w="$(mktemp -d)"; git clone -q "$o" "$w" 2>/dev/null
-  (cd "$w" && git config user.name T && git config user.email t@e.c \
-    && if [ $kind = edit ]; then echo upstream > README.md; else echo upstream > CHANGELOG.md; fi \
-    && git add -A && git commit -q -m up && git push -q origin main) || fail "stale: setup upstream"
-  if [ $kind = edit ]; then echo mine > "$r/README.md"; else echo mine > "$r/CHANGELOG.md"; fi
-  echo extra > "$r/extra.txt"
-  out="$(bash "$ship" "$r" kit/stale t b 2>&1)"; rc=$?
-  [ $rc -eq 2 ] || fail "stale $kind: exit $rc ($out)"
-  [ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = main ] || fail "stale $kind: debe volver a main"
-  [ -z "$(git -C "$r" status --porcelain)" ] || fail "stale $kind: árbol sucio: $(git -C "$r" status --porcelain)"
-  sha="$(git -C "$r" rev-parse refs/stash)"
-  case "$out" in *"$sha"*"git pull"*) ;; *) fail "stale $kind: mensaje sin sha/pull: $out";; esac
-  git -C "$r" show "$sha^3:extra.txt" >/dev/null 2>&1 || fail "stale $kind: stash sin los cambios"
-  git -C "$r" show-ref --verify -q refs/heads/kit/stale && fail "stale $kind: rama no borrada"
-done
-
-# upstream_commit <repo> <cmds>: clone origin, run cmds in the clone, commit, push
-upstream_commit() {
-  local r="$1" o w; shift
-  o="$(git -C "$r" config --get-regexp '^url\..*\.insteadof$' | sed -E 's/^url\.(.*)\.insteadof .*/\1/')"
-  w="$(mktemp -d)"; git clone -q "$o" "$w" 2>/dev/null
-  (cd "$w" && git config user.name T && git config user.email t@e.c && eval "$@" \
-    && git add -A && git commit -q -m up && git push -q origin main) >/dev/null 2>&1 || fail "upstream_commit: $*"
+export KIT_WORKTREES="$(mktemp -d)"
+bare_of() { git -C "$1" config --get-regexp '^url\..*\.insteadof$' | sed -E 's/^url\.(.*)\.insteadof .*/\1/'; }
+snap() { git -C "$1" rev-parse HEAD; git -C "$1" symbolic-ref -q HEAD; git -C "$1" status --porcelain -uall; git -C "$1" stash list; }
+# dirty_main <repo>: Dru's tree with edits, untracked files and an unpublished commit on a feature branch
+dirty_main() {
+  (cd "$1" && git checkout -q -b feature && echo wip > wip.txt && git add wip.txt && git commit -q -m wip \
+    && echo mine >> README.md && echo nuevo > suelto.txt) || fail "dirty_main"
 }
 
-# --- ship: failed apply never deletes a tracked file whose name differs only by case
-r="$(mk_with_origin main)"
-upstream_commit "$r" 'echo upstream > README.md; echo up > Notes.md'
-echo mine > "$r/README.md"; echo mynotes > "$r/notes.md"
-out="$(bash "$ship" "$r" kit/case t b 2>&1)"; rc=$?
-[ $rc -eq 2 ] || fail "case: exit $rc ($out)"
-[ -z "$(git -C "$r" status --porcelain)" ] || fail "case: árbol sucio: $(git -C "$r" status --porcelain) / $out"
-git -C "$r" ls-files --error-unmatch Notes.md >/dev/null 2>&1 || fail "case: Notes.md ya no está trackeado"
-[ -f "$r/Notes.md" ] && [ "$(cat "$r/Notes.md")" = up ] || fail "case: Notes.md borrado o alterado"
-[ -z "$(git -C "$r" ls-files -o --exclude-standard)" ] || fail "case: quedan untracked"
-case "$out" in *"el árbol quedó limpio"*) ;; *) fail "case: sin mensaje de árbol limpio: $out";; esac
+# --- ship: abrir + enviar from a dirty main tree (trunk default): Dru's tree is never touched
+r="$(mk_with_origin trunk)"; dirty_main "$r"; : > "$GH_LOG"
+before="$(snap "$r")"
+out="$(GH_STUB_MODE=default-branch-trunk bash "$ship" abrir "$r" kit-on sin-marcador 2>&1)" || fail "abrir: exit $? ($out)"
+wt="$KIT_WORKTREES/$(basename "$r")/kit-on"
+case "$out" in *"worktree: $wt"*"base: trunk"*"FIN: $wt") ;; *) fail "abrir: salida '$out'";; esac
+[ "$(git -C "$wt" rev-parse HEAD)" = "$(git -C "$r" rev-parse origin/trunk)" ] || fail "abrir: el worktree no sale de origin/trunk"
+[ "$(git -C "$wt" symbolic-ref --short HEAD)" = kit-on ] || fail "abrir: rama del worktree"
+[ ! -e "$wt/wip.txt" ] && [ ! -e "$wt/suelto.txt" ] || fail "abrir: el worktree arrastra cambios de Dru"
+bash "$REPO_ROOT/scripts/kit-activate.sh" "$wt" >/dev/null 2>&1 || fail "activate en el worktree"
+[ "$(snap "$r")" = "$before" ] || fail "abrir/activar tocó el árbol de Dru"
+out="$(GH_STUB_MODE=default-branch-trunk bash "$ship" enviar "$r" kit-on "chore: activar agents-kit" "cuerpo" 2>&1)" || fail "enviar: exit $? ($out)"
+grep -q '^pr create .*--base trunk.*--head kit-on' "$GH_LOG" || fail "pr create sin --base trunk --head kit-on"
+grep -q '^pr merge .*--squash' "$GH_LOG" || fail "pr merge sin --squash"
+grep -q '^pr merge .*--delete-branch' "$GH_LOG" && fail "pr merge con --delete-branch (gh tocaría ramas locales)"
+case "$out" in *"PR fusionado: https://github.com/dru/demo/pull/1"*"FIN: ok") ;; *) fail "enviar: salida '$out'";; esac
+[ ! -e "$wt" ] || fail "enviar: el worktree no se borró"
+git -C "$r" show-ref --verify -q refs/heads/kit-on && fail "enviar: rama local no borrada"
+git -C "$r" ls-remote --exit-code --heads origin kit-on >/dev/null 2>&1 && fail "enviar: rama remota no borrada"
+[ "$(snap "$r")" = "$before" ] || fail "enviar tocó el árbol de Dru"
+grep -q '^pr create .*--repo dru/demo' "$GH_LOG" || fail "pr create sin --repo"
+grep -q '^pr merge .*--repo dru/demo' "$GH_LOG" || fail "pr merge sin --repo"
+while IFS= read -r line; do
+  case "$line" in "auth status"*) continue;; esac
+  case "$line" in *"dru/demo"*) ;; *) fail "gh sin repo explícito: $line";; esac
+done < "$GH_LOG"
 
-# --- ship: failed apply never writes/removes through a symlinked directory
-r="$(mk_with_origin main)"; outside="$(mktemp -d)"; echo precious > "$outside/a.txt"
-upstream_commit "$r" "echo upstream > README.md; ln -s '$outside' d"
-echo mine > "$r/README.md"; mkdir "$r/d"; echo mine > "$r/d/a.txt"
-out="$(bash "$ship" "$r" kit/sym t b 2>&1)"; rc=$?
-[ $rc -eq 2 ] || fail "symlink: exit $rc ($out)"
-[ "$(cat "$outside/a.txt" 2>/dev/null)" = precious ] || fail "symlink: se tocó un archivo fuera del repo"
-[ -L "$r/d" ] || fail "symlink: d ya no es symlink"
 
-# --- ship: nothing to ship
+# --- real repo shape (tiktok-editor): CLAUDE.md -> AGENTS.md, .claude/skills symlink, core.hooksPath, dirty main tree
 r="$(mk_with_origin main)"
-err="$(bash "$ship" "$r" kit/x t b 2>&1 >/dev/null)"; rc=$?
+(cd "$r" && printf '# proyecto\n\n## Reglas duras\n\n- no tocar lib/\n' > AGENTS.md && ln -s AGENTS.md CLAUDE.md \
+  && mkdir -p .agents/skills/x .claude tools/hooks && echo s > .agents/skills/x/SKILL.md && ln -s ../.agents/skills .claude/skills \
+  && printf '#!/bin/sh\nexit 1\n' > tools/hooks/pre-commit && chmod +x tools/hooks/pre-commit \
+  && echo '{}' > .claude/settings.json && git add -A && git commit -q -m base && git push -q origin main \
+  && git config core.hooksPath tools/hooks) || fail "repo real: setup"
+(cd "$r" && echo "cambio de Dru" >> AGENTS.md && echo x > notas.txt)
+before="$(snap "$r")"; agents_before="$(cat "$r/AGENTS.md")"
+out="$(bash "$ship" abrir "$r" kit-on sin-marcador 2>&1)" || fail "repo real abrir: $out"
+wt="$KIT_WORKTREES/$(basename "$r")/kit-on"
+err="$(bash "$REPO_ROOT/scripts/kit-activate.sh" "$wt" --changelog false 2>&1 >/dev/null)" || fail "repo real activar: $err"
+case "$err" in *core.hooksPath=tools/hooks*) ;; *) fail "repo real: sin aviso de hooks ($err)";; esac
+[ -L "$wt/CLAUDE.md" ] && [ -L "$wt/.claude/skills" ] || fail "repo real: symlinks tocados"
+grep -qx '## Reglas del proyecto' "$wt/AGENTS.md" && grep -q 'no tocar lib/' "$wt/AGENTS.md" || fail "repo real: AGENTS.md mínimo"
+grep -q 'cambio de Dru' "$wt/AGENTS.md" && fail "repo real: el worktree arrastra cambios de Dru"
+[ ! -e "$wt/CHANGELOG.md" ] || fail "repo real: changelog false creó CHANGELOG.md"
+GH_STUB_MODE=labels-exist bash "$setup" "$wt" >/dev/null 2>&1 || fail "repo real: github setup"
+out="$(bash "$ship" enviar "$r" kit-on "chore: activar agents-kit" b 2>&1)" || fail "repo real enviar: $out"
+[ "$(snap "$r")" = "$before" ] && [ "$(cat "$r/AGENTS.md")" = "$agents_before" ] || fail "repo real: se tocó el árbol de Dru"
+[ ! -e "$wt" ] || fail "repo real: worktree no borrado"
+
+# --- abrir: marker state on origin/<base> must match
+r="$(mk_with_origin main)"
+err="$(bash "$ship" abrir "$r" kit-off con-marcador 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "con-marcador sin marcador: exit $rc"
+case "$err" in *"no está activo"*) ;; *) fail "con-marcador: '$err'";; esac
+(cd "$r" && echo '{}' > .agents-kit.json && git add . && git commit -q -m on && git push -q origin main) || fail setup
+err="$(bash "$ship" abrir "$r" kit-on sin-marcador 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "sin-marcador con marcador: exit $rc"
+case "$err" in *"ya está activo"*) ;; *) fail "sin-marcador: '$err'";; esac
+[ ! -e "$KIT_WORKTREES/$(basename "$r")/kit-on" ] || fail "rechazo: creó el worktree"
+bash "$ship" abrir "$r" kit-on otra-cosa >/dev/null 2>&1; [ $? -eq 1 ] || fail "estado inválido debe salir 1"
+
+# --- kit-off from a dirty tree: deactivation in the worktree, marker gone from origin
+dirty_main "$r"; before="$(snap "$r")"
+out="$(bash "$ship" abrir "$r" kit-off con-marcador 2>&1)" || fail "kit-off abrir: $out"
+wt="$KIT_WORKTREES/$(basename "$r")/kit-off"
+bash "$REPO_ROOT/scripts/kit-deactivate.sh" "$wt" >/dev/null || fail "kit-off deactivate"
+out="$(bash "$ship" enviar "$r" kit-off "chore: desactivar agents-kit" b 2>&1)" || fail "kit-off enviar: $out"
+[ "$(snap "$r")" = "$before" ] || fail "kit-off tocó el árbol de Dru"
+[ ! -e "$wt" ] || fail "kit-off: worktree no borrado"
+
+# --- abrir: open PR for the branch -> exit 1 with its URL
+r="$(mk_with_origin main)"
+err="$(GH_STUB_MODE=pr-open bash "$ship" abrir "$r" kit-on sin-marcador 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "PR abierto: exit $rc"
+case "$err" in *"https://github.com/dru/demo/pull/5"*) ;; *) fail "PR abierto: '$err'";; esac
+
+# --- abrir: leftover local branch or remote branch without a worktree -> exit 1
+git -C "$r" branch kit-on
+err="$(bash "$ship" abrir "$r" kit-on sin-marcador 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "rama local vieja: exit $rc"
+case "$err" in *"git branch -D kit-on"*) ;; *) fail "rama local vieja: '$err'";; esac
+(cd "$r" && git push -q origin kit-on && git branch -q -D kit-on) >/dev/null 2>&1
+err="$(bash "$ship" abrir "$r" kit-on sin-marcador 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "rama remota vieja: exit $rc"
+case "$err" in *"git push origin --delete kit-on"*) ;; *) fail "rama remota vieja: '$err'";; esac
+
+# --- enviar: nothing to send -> exit 1, worktree kept; descartar removes it
+r="$(mk_with_origin main)"
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1 || fail "abrir vacío"
+wt="$KIT_WORKTREES/$(basename "$r")/kit-on"
+err="$(bash "$ship" enviar "$r" kit-on t b 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "sin cambios: exit $rc"
-case "$err" in *"nada que enviar"*) ;; *) fail "sin cambios: stderr '$err'";; esac
+case "$err" in *"nada que enviar"*) ;; *) fail "sin cambios: '$err'";; esac
+[ -d "$wt" ] || fail "sin cambios: borró el worktree"
+echo basura > "$wt/x.txt"
+out="$(bash "$ship" descartar "$r" kit-on 2>&1)" || fail "descartar: $out"
+[ ! -e "$wt" ] || fail "descartar: worktree sigue"
+git -C "$r" show-ref --verify -q refs/heads/kit-on && fail "descartar: rama sigue"
+case "$out" in *"FIN: descartado"*) ;; *) fail "descartar: '$out'";; esac
+bash "$ship" descartar "$r" kit-on >/dev/null 2>&1; [ $? -eq 1 ] || fail "descartar sin worktree debe salir 1"
+bash "$ship" enviar "$r" kit-on t b >/dev/null 2>&1; [ $? -eq 1 ] || fail "enviar sin worktree debe salir 1"
 
-# --- ship: branch exists -> exit 1, no clobber
-echo c > "$r/f.txt"; git -C "$r" branch kit/dup
-err="$(bash "$ship" "$r" kit/dup t b 2>&1 >/dev/null)"; rc=$?
-[ $rc -eq 1 ] || fail "rama existente: exit $rc"
-[ -f "$r/f.txt" ] || fail "rama existente: cambios perdidos"
+# --- enviar: push fails -> exit 2, worktree kept and named; a rerun resumes it
+r="$(mk_with_origin main)"
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1 || fail "abrir push"
+wt="$KIT_WORKTREES/$(basename "$r")/kit-on"; echo a > "$wt/a.txt"
+o="$(bare_of "$r")"; mv "$o" "$o.off"
+err="$(bash "$ship" enviar "$r" kit-on t b 2>&1 >/dev/null)"; rc=$?
+mv "$o.off" "$o"
+[ $rc -eq 2 ] || fail "push roto: exit $rc"
+case "$err" in *"$wt"*) ;; *) fail "push roto: no dice dónde está el worktree: '$err'";; esac
+[ -f "$wt/a.txt" ] || fail "push roto: se perdió el trabajo"
+out="$(bash "$ship" abrir "$r" kit-on sin-marcador 2>&1)" || fail "reabrir: $out"
+case "$out" in *"ya existía"*"FIN: $wt") ;; *) fail "reabrir: '$out'";; esac
+out="$(bash "$ship" enviar "$r" kit-on t b 2>&1)" || fail "reenviar: exit $? ($out)"
+[ ! -e "$wt" ] || fail "reenviar: worktree sigue"
 
-# --- ship: remote branch exists -> exit 1
-r="$(mk_with_origin main)"; echo c > "$r/f.txt"
-(cd "$r" && git branch kit/rem && git push -q origin kit/rem && git branch -q -D kit/rem) >/dev/null 2>&1
-err="$(bash "$ship" "$r" kit/rem t b 2>&1 >/dev/null)"; rc=$?
-[ $rc -eq 1 ] || fail "rama remota existente: exit $rc"
-case "$err" in *origin*) ;; *) fail "rama remota: stderr '$err'";; esac
-[ -f "$r/f.txt" ] || fail "rama remota: cambios perdidos"
+# --- enviar: gh pr create fails -> exit 2, worktree kept; rerun with the branch already on origin works
+r="$(mk_with_origin main)"
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1 || fail "abrir create"
+wt="$KIT_WORKTREES/$(basename "$r")/kit-on"; echo a > "$wt/a.txt"
+err="$(GH_STUB_MODE=pr-create-fails bash "$ship" enviar "$r" kit-on t b 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "pr create roto: exit $rc"
+case "$err" in *"$wt"*) ;; *) fail "pr create roto: '$err'";; esac
+[ -d "$wt" ] || fail "pr create roto: borró el worktree"
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1 || fail "reabrir tras pr create roto"
+bash "$ship" enviar "$r" kit-on t b >/dev/null 2>&1 || fail "reenviar tras pr create roto"
 
-# --- ship: stale tracking ref (branch deleted on remote) -> not refused
-r="$(mk_with_origin main)"; echo c > "$r/f.txt"
-(cd "$r" && git branch kit/old && git push -q origin kit/old && git branch -q -D kit/old) >/dev/null 2>&1
-git -C "$r" show-ref --verify -q refs/remotes/origin/kit/old || fail "stale: falta el ref de seguimiento"
-git -C "$(git -C "$r" remote get-url origin)" branch -q -D kit/old 2>/dev/null || git --git-dir="$(git -C "$r" remote get-url origin)" branch -q -D kit/old || fail "stale: no se pudo borrar en el remoto"
-out="$(bash "$ship" "$r" kit/old t b 2>&1)" || fail "stale: debe aceptarse (exit $?, $out)"
-git -C "$r" show-ref --verify -q refs/remotes/origin/kit/old && fail "stale: queda ref de seguimiento tras el merge"
-
-# --- ship: PR not merged -> exit 2, says it remains open
-r="$(mk_with_origin main)"; echo c > "$r/f.txt"
-out="$(GH_STUB_MODE=merge-open bash "$ship" "$r" kit/open t b 2>&1)"; rc=$?
+# --- enviar: PR left open -> exit 2, FIN: PR abierto, worktree removed (the work is in the PR)
+r="$(mk_with_origin main)"
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1; wt="$KIT_WORKTREES/$(basename "$r")/kit-on"; echo a > "$wt/a.txt"
+out="$(GH_STUB_MODE=merge-open bash "$ship" enviar "$r" kit-on t b 2>&1)"; rc=$?
 [ $rc -eq 2 ] || fail "no fusionado: exit $rc"
-case "$out" in *"sigue abierto"*"github.com/dru/demo/pull/1"*) ;; *) fail "no fusionado: salida '$out'";; esac
+case "$out" in *"sigue abierto"*"github.com/dru/demo/pull/1"*"FIN: PR abierto") ;; *) fail "no fusionado: salida '$out'";; esac
 case "$out" in *"PR fusionado"*) fail "no fusionado: no debe decir fusionado";; esac
+[ ! -e "$wt" ] || fail "no fusionado: el worktree debe borrarse"
+git -C "$r" ls-remote --exit-code --heads origin kit-on >/dev/null 2>&1 || fail "no fusionado: la rama remota del PR debe quedar"
+[ "$(git --git-dir="$(bare_of "$r")" log -1 --format=%s kit-on)" = t ] || fail "no fusionado: el commit no lleva el título"
+git --git-dir="$(bare_of "$r")" show kit-on:a.txt >/dev/null 2>&1 || fail "no fusionado: el commit no lleva los cambios"
 
-# --- ship: diverged local default -> exit 1
+# --- enviar: merge exits 1 but the PR is MERGED -> success
 r="$(mk_with_origin main)"
-(cd "$r" && echo x > local.txt && git add local.txt && git commit -q -m local-only) || fail setup
-echo c > "$r/f.txt"
-bash "$ship" "$r" kit/div t b >/dev/null 2>&1; [ $? -eq 1 ] || fail "default divergida debe salir 1"
-[ -f "$r/f.txt" ] || fail "default divergida: cambios perdidos"
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1; echo a > "$KIT_WORKTREES/$(basename "$r")/kit-on/a.txt"
+out="$(GH_STUB_MODE=merge-fails-merged bash "$ship" enviar "$r" kit-on t b 2>&1)" || fail "merge falla pero MERGED: exit $? ($out)"
+case "$out" in *"PR fusionado"*"FIN: ok") ;; *) fail "merge falla pero MERGED: salida '$out'";; esac
 
-# --- ship: non-default branch with unpublished commits -> exit 1
+# --- enviar: project hooks are skipped (the worktree has no setup); a failing git -> exit 2, changes kept
 r="$(mk_with_origin main)"
-(cd "$r" && git checkout -q -b feature && echo x > a.txt && git add a.txt && git commit -q -m wip) || fail setup
-echo c > "$r/f.txt"
-err="$(bash "$ship" "$r" kit/nb t b 2>&1 >/dev/null)"; rc=$?
-[ $rc -eq 1 ] || fail "rama con commits sin publicar: exit $rc"
-[ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = feature ] || fail "debe quedarse en feature"
-
-# --- ship: stash that captures nothing must never apply an older stash
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1; wt="$KIT_WORKTREES/$(basename "$r")/kit-on"; echo a > "$wt/a.txt"
+mkdir -p "$r/tools/hooks"; printf '#!/bin/sh\nexit 1\n' > "$r/tools/hooks/pre-commit"; chmod +x "$r/tools/hooks/pre-commit"
+git -C "$r" config core.hooksPath tools/hooks
+cp "$r/tools/hooks/pre-commit" "$r/.git/hooks/pre-commit"
+mkdir -p "$wt/tools/hooks"; cp "$r/tools/hooks/pre-commit" "$wt/tools/hooks/"
+GH_STUB_MODE=merge-open bash "$ship" enviar "$r" kit-on t b >/dev/null 2>&1
+git --git-dir="$(bare_of "$r")" show kit-on:a.txt >/dev/null 2>&1 || fail "los hooks del proyecto bloquearon el commit"
 r="$(mk_with_origin main)"
-sub="$(mktemp -d)"; (cd "$sub" && git init -q -b main && git config user.name T && git config user.email t@e.c && echo s > s && git add s && git commit -q -m s)
-(cd "$r" && git -c protocol.file.allow=always submodule add -q "$sub" sub && git commit -q -m addsub && git push -q origin main) >/dev/null 2>&1 || fail "submodule setup"
-(cd "$r" && echo old > old.txt && git stash push -u -q -m older) || fail "older stash"
-old_sha="$(git -C "$r" rev-parse refs/stash)"
-echo dirty >> "$r/sub/s"
-[ -n "$(git -C "$r" status --porcelain)" ] || fail "el submódulo debería estar sucio"
-bash "$ship" "$r" kit/subm t b >/dev/null 2>&1; rc=$?
-[ "$rc" -ne 0 ] || fail "stash vacío debe fallar"
-[ "$(git -C "$r" rev-parse refs/stash)" = "$old_sha" ] || fail "el stash antiguo fue tocado"
-[ ! -e "$r/old.txt" ] || fail "se aplicó el stash antiguo"
-git -C "$r" ls-remote --exit-code --heads origin kit/subm >/dev/null 2>&1 && fail "se subió una rama"
-
-# --- ship: commit failure leaves changes in tree and no branch
-r="$(mk_with_origin main)"; echo c > "$r/f.txt"
-printf '#!/bin/sh\nexit 1\n' > "$r/.git/hooks/pre-commit"; chmod +x "$r/.git/hooks/pre-commit"
-err="$(bash "$ship" "$r" kit/hook t b 2>&1 >/dev/null)"; rc=$?
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1; wt="$KIT_WORKTREES/$(basename "$r")/kit-on"; echo a > "$wt/a.txt"
+: > "$(git -C "$wt" rev-parse --absolute-git-dir)/index.lock"
+err="$(bash "$ship" enviar "$r" kit-on t b 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 2 ] || fail "commit fallido: exit $rc"
-[ -f "$r/f.txt" ] || fail "commit fallido: cambios perdidos"
-git -C "$r" show-ref --verify -q refs/heads/kit/hook && fail "rama vacía no borrada"
-case "$err" in *"árbol de trabajo"*) ;; *) fail "commit fallido: mensaje '$err'";; esac
+[ -f "$wt/a.txt" ] || fail "commit fallido: cambios perdidos"
+case "$err" in *"$wt"*) ;; *) fail "commit fallido: mensaje '$err'";; esac
 
-# --- ship: detached HEAD at origin/main works
-r="$(mk_with_origin main)"; git -C "$r" checkout -q --detach; echo c > "$r/f.txt"
-GH_STUB_MODE=ok bash "$ship" "$r" kit/det "t" b >/dev/null 2>&1 || fail "detached: exit $?"
-[ "$(git -C "$r" rev-parse --abbrev-ref HEAD)" = main ] || fail "detached: debe terminar en main"
+# --- ship: non-GitHub origin -> exit 1
+r="$(mk_with_origin main)"
+git -C "$r" config remote.origin.url https://example.com/x/y.git
+err="$(bash "$ship" abrir "$r" kit-on sin-marcador 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "origin no GitHub: exit $rc"
+case "$err" in *"sin remoto de GitHub"*) ;; *) fail "origin no GitHub: stderr '$err'";; esac
+bash "$ship" >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin argumentos debe salir 1"
+bash "$ship" abrir "$r" "rama mala" sin-marcador >/dev/null 2>&1; [ $? -eq 1 ] || fail "rama inválida debe salir 1"
+r="$(mk_with_origin main)"
+GH_STUB_MODE=no-auth bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1; [ $? -eq 2 ] || fail "ship sin auth debe salir 2"
 
 # --- auth / no origin -> 2
 r="$(mk_repo)"
 GH_STUB_MODE=no-auth bash "$setup" "$r" >/dev/null 2>&1; [ $? -eq 2 ] || fail "setup sin auth debe salir 2"
-echo c > "$r/f.txt"
-bash "$ship" "$r" kit/x t b >/dev/null 2>&1; [ $? -eq 2 ] || fail "sin origin debe salir 2"
+bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1; [ $? -eq 2 ] || fail "sin origin debe salir 2"
 
 # --- ship: not a git repo -> 2
-bash "$ship" "$(mktemp -d)" kit/x t b >/dev/null 2>&1; [ $? -eq 2 ] || fail "no-repo debe salir 2"
+bash "$ship" abrir "$(mktemp -d)" kit-on sin-marcador >/dev/null 2>&1; [ $? -eq 2 ] || fail "no-repo debe salir 2"
 
 echo "OK test_github"

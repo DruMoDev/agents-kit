@@ -9,6 +9,8 @@
 #   no-remote           `gh repo view` fails
 #   labels-exist        `gh label list` reports en-curso and prio:alta (others: no labels)
 #   label-list-fails    `gh label list` fails
+#   pr-open             `gh pr list` reports an open PR (#5)
+#   pr-create-fails     `gh pr create` fails
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
 mode="${GH_STUB_MODE:-ok}"
 branch=main
@@ -33,6 +35,7 @@ case "$1 $2" in
   "pr view") if [ "$mode" = merge-open ]; then echo OPEN; else echo MERGED; fi ;;
   "pr merge") [ "$mode" = merge-fails-merged ] && exit 1
     case " $* " in *" --delete-branch "*) git push -q origin --delete "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 ;; esac ;;
-  "pr create") echo "https://github.com/dru/demo/pull/1" ;;
+  "pr create") [ "$mode" = pr-create-fails ] && exit 1; echo "https://github.com/dru/demo/pull/1" ;;
+  "pr list") if [ "$mode" = pr-open ]; then echo '[{"number":5,"url":"https://github.com/dru/demo/pull/5"}]'; else echo '[]'; fi ;;
 esac
 exit 0

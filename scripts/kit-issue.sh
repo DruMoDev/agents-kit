@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-issue.sh <subcomando> <root> [args...]
 #   siguiente <root>
+#   reparto   <root>
+#   aparcar   <root> <N>...
 #   reclamar  <root> <N> <id>
 #   soltar    <root> <N> <id> [motivo]
 #   decision  <root> <N> <id> <fichero-pregunta>
@@ -9,6 +11,8 @@
 # Issue state for the agent flow. Claims live in HTML-comment markers on the issue.
 # siguiente: any open issue without en-curso, necesita-respuesta (or the v2 necesita-decision), bloqueado, propuesta,
 # someday or registro (nor the "📦 Changelog" issue of a v2 repo); prio:alta, prio:media, none, prio:baja, oldest first.
+# reparto: every issue that siguiente could pick, in its order ("#N<TAB>prio<TAB>title"; kit-on shows it to Dru).
+# aparcar: adds someday to the given issues (out of the pool).
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -u
@@ -17,7 +21,7 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 
 usage() {
-  echo "uso: $0 siguiente <root> | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
+  echo "uso: $0 siguiente <root> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
     "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> |" \
     "crear <root> <titulo> <fichero-cuerpo> --prio alta|media|baja [--etiqueta X]... [--propuesta]" >&2
   exit 1
@@ -25,13 +29,16 @@ usage() {
 
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-case "$sub" in siguiente|reclamar|soltar|decision|bloquear|crear) ;; *) usage ;; esac
+case "$sub" in siguiente|reparto|aparcar|reclamar|soltar|decision|bloquear|crear) ;; *) usage ;; esac
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 root="$(cd "$1" && pwd)"; shift
 kit_require_marker "$root" || exit $?
 
 case "$sub" in
-  siguiente) [ $# -eq 0 ] || usage ;;
+  siguiente|reparto) [ $# -eq 0 ] || usage ;;
+  aparcar)
+    [ $# -ge 1 ] || usage
+    for x in "$@"; do [[ $x =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $x" >&2; exit 1; }; done ;;
   reclamar) [ $# -eq 2 ] || usage ;;
   soltar) [ $# -eq 2 ] || [ $# -eq 3 ] || usage ;;
   decision|bloquear) [ $# -eq 3 ] || usage ;;
@@ -64,7 +71,7 @@ case "$sub" in
     [ -n "$prio" ] || { echo "falta --prio alta|media|baja" >&2; exit 1; }
     ;;
 esac
-if [ "$sub" != siguiente ] && [ "$sub" != crear ]; then
+if [ "$sub" != siguiente ] && [ "$sub" != reparto ] && [ "$sub" != aparcar ] && [ "$sub" != crear ]; then
   n="$1"; id="$2"
   [[ $n =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $n" >&2; exit 1; }
   # the id goes inside an HTML comment: keep it to a safe token
@@ -138,21 +145,42 @@ read_file() { # <path>: print contents or exit 1
 }
 
 case "$sub" in
-  siguiente)
+  siguiente|reparto)
     list="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title,labels,author)" \
       || { echo "error: no se pudo listar los issues" >&2; exit 2; }
     # only issues opened by this gh account: anyone can open an issue in a public repo, and kit-run acts on it unattended
     me="$(gh api user --jq .login)" && [ -n "$me" ] || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
-    next="$(printf '%s' "$list" | jq -r --arg me "$me" '
+    # the pool: one object per issue, in the order siguiente picks them
+    pool="$(printf '%s' "$list" | jq -c --arg me "$me" '
         def rank: if index("prio:alta") then 0 elif index("prio:media") then 1 elif index("prio:baja") then 3 else 2 end;
-        map(select(.author.login == $me)) | map([.labels[].name] as $l | select(.title != "📦 Changelog"
+        map([.labels[].name] as $l | select(.title != "📦 Changelog"
             and (["en-curso", "necesita-respuesta", "necesita-decision", "bloqueado", "propuesta", "someday", "registro"]
               | any(. as $x | $l | index($x)) | not))
-          | {number, r: ($l | rank)})
-        | sort_by(.r, .number) | first | .number // empty')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
-    [ -n "$next" ] || { echo "no hay issues disponibles" >&2; exit 1; }
-    echo "$next"
-    echo "FIN: $next"
+          | {number, title, mine: (.author.login == $me), r: ($l | rank)})
+        | sort_by(.r, .number)')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+    if [ "$sub" = siguiente ]; then
+      next="$(printf '%s' "$pool" | jq -r 'map(select(.mine)) | first | .number // empty')"
+      [ -n "$next" ] || { echo "no hay issues disponibles" >&2; exit 1; }
+      echo "$next"
+      echo "FIN: $next"
+    else
+      printf '%s' "$pool" | jq -r 'map(select(.mine))[]
+        | "#\(.number)\t\(["prio:alta", "prio:media", "sin prio", "prio:baja"][.r])\t\(.title)"'
+      others="$(printf '%s' "$pool" | jq -r '[map(select(.mine | not))[] | "#\(.number)"] | join(" ")')"
+      [ -z "$others" ] || echo "de otras cuentas (nunca entran): $others"
+      echo "FIN: $(printf '%s' "$pool" | jq 'map(select(.mine)) | length')"
+    fi
+    ;;
+
+  aparcar)
+    done_n=0
+    for x in "$@"; do
+      gh issue edit "$x" --repo "$slug" --add-label someday >/dev/null \
+        || { echo "error: no se pudo poner someday en #$x (aparcados antes: $done_n)" >&2; exit 2; }
+      echo "someday: #$x"
+      done_n=$((done_n + 1))
+    done
+    echo "FIN: $done_n aparcados"
     ;;
 
   reclamar)

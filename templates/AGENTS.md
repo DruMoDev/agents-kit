@@ -30,3 +30,7 @@
 ## Mapa del código
 
 <!-- Solo los directorios de primer nivel, una línea por cada uno. -->
+
+## Reglas del proyecto
+
+<!-- Reglas propias de este repo. Si alguna choca con las del kit, manda esta. -->
