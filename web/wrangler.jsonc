@@ -9,7 +9,7 @@
   "workers_dev": true,
   "preview_urls": false,
   // Estado "visto" por entrada. El id lo pone el controlador al crear el KV.
-  "kv_namespaces": [{ "binding": "SEEN", "id": "REEMPLAZAR" }],
+  "kv_namespaces": [{ "binding": "SEEN", "id": "445d3046edd641d8bac468f62d9dbeb6" }],
   // GITHUB_TOKEN va como secreto (wrangler secret put), nunca aquí.
   // ACCESS_TEAM_DOMAIN y ACCESS_AUD se rellenan al configurar Access.
   "vars": { "ACCESS_TEAM_DOMAIN": "", "ACCESS_AUD": "" }
