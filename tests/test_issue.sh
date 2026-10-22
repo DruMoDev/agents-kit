@@ -99,6 +99,25 @@ bash "$issue" aparcar "$r" >/dev/null 2>&1; [ $? -eq 1 ] || fail "aparcar sin n�
 bash "$issue" aparcar "$r" 9 x >/dev/null 2>&1; [ $? -eq 1 ] || fail "aparcar número inválido debe salir 1"
 GH_FAIL_ON="issue edit" bash "$issue" aparcar "$r" 9 >/dev/null 2>&1; [ $? -eq 2 ] || fail "aparcar con gh roto debe salir 2"
 
+# --- comprobar: kit-run refuses a repo still on the v2 (missing v3 labels or v2 keys in the marker)
+use_flow_gh
+out="$(bash "$issue" comprobar "$r" 2>&1)" || fail "comprobar v3: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar v3: '$out'"
+[ "$(grep -c '^label list' "$GH_LOG")" = 1 ] || fail "comprobar: más de una llamada a gh label list"
+t="$(mktemp)"; jq '.labels = ["en-curso", "listo", "necesita-decision", "bloqueado", "propuesta"]' "$GH_STATE/state.json" > "$t" \
+  && mv "$t" "$GH_STATE/state.json"
+err="$(bash "$issue" comprobar "$r" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "comprobar sin etiquetas v3: exit $rc"
+[ "$(printf '%s\n' "$err" | sed -n 1p)" = "kit en versión anterior: ejecuta kit-on para actualizar" ] || fail "comprobar msg: $err"
+case "$err" in *"necesita-respuesta"*"prio:alta"*) ;; *) fail "comprobar no dice qué etiquetas faltan: $err";; esac
+use_flow_gh
+r2="$(mk_kit_repo)"; echo '{"reviewers": ["claude/opus"], "notify": "none"}' > "$r2/.agents-kit.json"
+err="$(bash "$issue" comprobar "$r2" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "comprobar con claves v2: exit $rc"
+case "$err" in "kit en versión anterior: ejecuta kit-on para actualizar"*"reviewers"*"notify"*) ;; *) fail "comprobar claves v2: $err";; esac
+GH_FAIL_ON="label list" bash "$issue" comprobar "$r" >/dev/null 2>&1; [ $? -eq 2 ] || fail "comprobar con gh roto debe salir 2"
+bash "$issue" comprobar "$r" x >/dev/null 2>&1; [ $? -eq 1 ] || fail "comprobar con argumentos debe salir 1"
+
 # --- reclamar: en-curso without any kit marker (another flow) -> exit 1, nothing published
 use_flow_gh
 flow_add_issue 7 "tarea" en-curso
@@ -117,7 +136,7 @@ out="$(bash "$issue" reclamar "$r" 7 kit-aaaa1111 2>&1)" || fail "reclamar: exit
 [ "$(flow_issue 7 '.comments[0].body')" = "$(printf '<!-- kit-reclamado: kit-aaaa1111 -->\nCogido por el agente `kit-aaaa1111`.')" ] \
   || fail "reclamar: comentario '$(flow_issue 7 '.comments[0].body')'"
 while IFS= read -r line; do
-  case "$line" in *"--repo dru/demo"*) ;; *) fail "gh sin --repo: $line";; esac
+  case "$line" in *"--repo dru/demo"*|"api user"*) ;; *) fail "gh sin --repo: $line";; esac
 done < "$GH_LOG"
 grep -q -- '--body-file' "$GH_LOG" || fail "reclamar: comentario sin --body-file"
 
@@ -147,6 +166,43 @@ flow_add_comment 7 '<!-- kit-reclamado: otro2 -->'
 flow_add_comment 7 '<!-- kit-soltado: otro2 -->'
 out="$(bash "$issue" reclamar "$r" 7 kit-aaaa1111 2>&1)" || fail "reclamar tras soltado: exit $? ($out)"
 [ "$(last_line "$out")" = "FIN: reclamado #7" ] || fail "reclamar tras soltado: '$out'"
+
+# --- reclamar: markers of other accounts never count (anyone can comment a fake claim on a public repo)
+use_flow_gh
+flow_add_issue 7 "tarea"
+FLOW_AUTHOR=intruso flow_add_comment 7 '<!-- kit-reclamado: x -->'
+out="$(bash "$issue" reclamar "$r" 7 kit-aaaa1111 2>&1)" || fail "reclamar con marcador ajeno: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: reclamado #7" ] || fail "reclamar con marcador ajeno: '$out'"
+# ...nor a fake kit-soltado of another account against a live own claim
+use_flow_gh
+flow_add_issue 7 "tarea"
+flow_add_comment 7 '<!-- kit-reclamado: otro -->'
+FLOW_AUTHOR=intruso flow_add_comment 7 '<!-- kit-soltado: otro -->'
+bash "$issue" reclamar "$r" 7 kit-aaaa1111 >/dev/null 2>&1; rc=$?
+[ $rc -eq 1 ] || fail "kit-soltado ajeno liberó el reclamo: exit $rc"
+# --- reopened issue: the kit-soltado that fusionar posts frees the old claim
+use_flow_gh
+flow_add_issue 7 "tarea"
+flow_add_comment 7 '<!-- kit-reclamado: run-viejo -->'
+flow_add_comment 7 '<!-- kit-soltado: fusionar -->'
+out="$(bash "$issue" reclamar "$r" 7 kit-aaaa1111 2>&1)" || fail "reclamar reabierto: exit $? ($out)"
+
+# --- siguiente --excluir: kit-run skips the issues it failed to claim in this run (never loops on one)
+use_flow_gh
+flow_add_issue 7 "alta" prio:alta
+flow_add_issue 8 "media" prio:media
+flow_add_issue 9 "baja" prio:baja
+out="$(bash "$issue" siguiente "$r" --excluir 7 2>&1)" || fail "siguiente --excluir: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: 8" ] || fail "siguiente --excluir 7: '$out'"
+out="$(bash "$issue" siguiente "$r" --excluir 7,8 2>&1)" || fail "siguiente --excluir 7,8: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: 9" ] || fail "siguiente --excluir 7,8: '$out'"
+err="$(bash "$issue" siguiente "$r" --excluir 7,8,9 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "siguiente todo excluido: exit $rc"
+case "$err" in *"no hay issues disponibles"*) ;; *) fail "siguiente todo excluido: '$err'";; esac
+for bad in "" "7,,8" "x" "7 8"; do
+  bash "$issue" siguiente "$r" --excluir "$bad" >/dev/null 2>&1; [ $? -eq 1 ] || fail "siguiente --excluir '$bad' debe salir 1"
+done
+bash "$issue" siguiente "$r" --excluir >/dev/null 2>&1; [ $? -eq 1 ] || fail "siguiente --excluir sin valor debe salir 1"
 
 # --- reclamar: label edit fails -> exit 2 and own kit-soltado published
 use_flow_gh; export GH_FAIL_ON="issue edit"

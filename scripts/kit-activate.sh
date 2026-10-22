@@ -4,6 +4,8 @@
 # Also creates the global config (~/.agents-kit/config.json or KIT_CONFIG) if missing, appends "## Reglas del proyecto"
 # to an existing AGENTS.md that lacks it, and warns about versioned git hooks when the marker declares no "setup".
 # --changelog and --setup are written to the marker; "changelog": false means no CHANGELOG.md.
+# v2 keys of an existing marker (reviewers, implementer, notify) are dropped, each with a "nota: ..." line saying where it
+# goes now (kit-on runs this on an activated repo to update it).
 # Exit: 0 ok, 1 usage, 2 environment error.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,8 +75,17 @@ if [ -L "$marker" ]; then
 fi
 [ -e "$marker" ] || { cp "$tpl/agents-kit.json" "$marker" || exit 2; new_marker=true; }
 jq -e 'type == "object"' "$marker" >/dev/null 2>&1 || { echo "error: .agents-kit.json no es JSON válido" >&2; exit 2; }
+# a v2 marker (kit-on on an activated repo = actualizar): its v2 keys go, each with a note of where it lives now
+g="$(kit_global_path)"
+jq -r --arg g "$g" --arg q "'" '
+  {reviewers: "los revisores van en \($q)revision.puestos\($q) de \($g) (o del marcador, si este repo necesita su propia lista)",
+   implementer: "el implementador va en \($q)implementador\($q) de \($g)",
+   notify: "el canal de avisos va en \($q)notify\($q) de \($g)"} as $to
+  | to_entries[] | select($to[.key] != null)
+  | "nota: \($q)\(.key)\($q) (v2) quitada del marcador: \($to[.key]); valor anterior: \(.value | tojson)"' "$marker" || exit 2
 want="$(jq -c --arg c "$opt_changelog" --arg s "$opt_setup" --argjson hs "$has_setup" '
-  (if $c == "" then . else .changelog = ($c == "true") end) | (if $hs then .setup = $s else . end)' "$marker")" || exit 2
+  del(.reviewers, .implementer, .notify)
+  | (if $c == "" then . else .changelog = ($c == "true") end) | (if $hs then .setup = $s else . end)' "$marker")" || exit 2
 if [ "$want" != "$(jq -c . "$marker")" ]; then
   # mktemp opens with O_EXCL (never follows a planted symlink); mv replaces the marker itself, not a link target
   tmpm="$(mktemp "$repo/.agents-kit.json.XXXXXX")" || exit 2

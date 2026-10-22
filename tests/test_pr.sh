@@ -325,7 +325,8 @@ grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA
 case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac
 [ "$(pr_q .state)" = MERGED ] || fail "no fusionó"
 [ "$(flow_issue 3 .state)" = CLOSED ] || fail "no cerró el issue"
-[ "$(flow_issue 3 '.comments[-1].body')" = "Resuelto en #$p." ] || fail "comentario de cierre"
+[ "$(flow_issue 3 '.comments[-2].body')" = "Resuelto en #$p." ] || fail "comentario de cierre"
+case "$(flow_issue 3 '.comments[-1].body')" in "<!-- kit-soltado: fusionar -->"*"#$p"*) ;; *) fail "kit-soltado tras fusionar";; esac
 [ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra ] || fail "no quitó en-curso: $(flow_issue 3 '.labels')"
 grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso$" "$GH_LOG" || fail "issue edit sin las etiquetas"
 grep -q -- "pr merge $p.*--squash" "$GH_LOG" || fail "merge sin --squash"
@@ -411,14 +412,17 @@ st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- lib/: motivo\n\nCierra #3
 okf="$(mktemp)"
 out="$(KIT_PM_OK="$okf" bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con ganchos cumplidos: $out"
 [ "$(pr_q .state)" = MERGED ] || fail "ganchos cumplidos: no fusionó"
-# the PR edits the pre-merge script to "exit 0": the base version still runs
+# the PR edits the pre-merge script to "exit 0": rejected (a PR cannot edit its own gate), and it never runs
 st ".prs[0].body = \"Cuerpo\\n\\n## Zonas protegidas\\n\\n- lib/: motivo\\n\\nCierra #3\""
 reset_open
-printf '#!/bin/sh\nexit 0\n' > "$wt/tools/pm.sh"
+pmran="$(mktemp -d)/ran"
+printf '#!/bin/sh\ntouch "%s"\nexit 0\n' "$pmran" > "$wt/tools/pm.sh"
 (cd "$wt" && git add -A && git commit -q -m "debilita pre-merge" && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
 st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
-err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
-case "$err" in *"checks.pre-merge falló"*"fallo de prueba"*) ;; *) fail "pre-merge editado por la PR: $err";; esac
+err="$(KIT_PM_OK="$okf" bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "pre-merge editado por la PR: exit $rc $err"
+case "$err" in *"la PR modifica el script de checks.pre-merge (tools/pm.sh)"*) ;; *) fail "pre-merge editado por la PR: $err";; esac
+[ ! -e "$pmran" ] || fail "ejecutó el pre-merge editado por la PR"
 # pre-merge missing on the base branch is a rejection reason
 echo '{"checks":{"pre-merge":"tools/no-existe.sh"}}' > "$r/.agents-kit.json"
 (cd "$r" && git add -A && git commit -q -m "pm inexistente" && git push -q origin main) >/dev/null 2>&1
@@ -463,4 +467,37 @@ echo '{"checks":{"pre-merge":"tools/pm.sh"}}' > "$r/.agents-kit.json"
 st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
 err="$(KIT_HOOK_TIMEOUT=1 bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"checks.pre-merge agotó el tiempo"*) ;; *) fail "timeout de pre-merge: $err";; esac
+
+# checks.pre-merge runs as the worktree's own file (unchanged from the base), so it can find its sibling files
+reset_open
+printf '#!/bin/sh\n. "$(dirname "$0")/pmlib.sh"\npm_lib_ok || exit 1\n' > "$r/tools/pm.sh"
+printf 'pm_lib_ok() { echo "lib hermana cargada"; }\n' > "$r/tools/pmlib.sh"
+echo '{"checks":{"pre-merge":"tools/pm.sh"}}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "pm con lib" && git push -q origin main) >/dev/null 2>&1 || fail "push pm con lib"
+(cd "$wt" && git fetch -q origin && git rebase --abort 2>/dev/null; git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "pre-merge con fichero hermano: $out"
+[ "$(pr_q .state)" = MERGED ] || fail "pre-merge con fichero hermano: no fusionó"
+# after merging, the claim is released with an own kit-soltado (a reopened issue can be claimed again)
+[ "$(flow_issue 3 '[.comments[] | select(.body | startswith("<!-- kit-soltado: "))] | length')" -ge 1 ] \
+  || fail "fusionar no publicó kit-soltado: $(flow_issue 3 '.comments')"
+
+# changelog: false in the base marker: a CHANGELOG.md of the project's own format never blocks the merge
+reset_open
+printf '# Changelog\n\n## [1.2.0] - 2024-01-01\n\n### Added\n- algo\n' > "$r/CHANGELOG.md"
+echo '{"changelog":false}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "changelog propio" && git push -q origin main) >/dev/null 2>&1 || fail "push changelog propio"
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "changelog false con fichero propio: $out"
+[ "$(pr_q .state)" = MERGED ] || fail "changelog false: no fusionó"
+# ...but the PR cannot turn the validation off by editing its own marker
+reset_open
+echo '{}' > "$r/.agents-kit.json"
+(cd "$r" && git add -A && git commit -q -m "changelog del kit" && git push -q origin main) >/dev/null 2>&1 || fail "push changelog kit"
+(cd "$wt" && git fetch -q origin && git reset -q --hard origin/main && echo '{"changelog":false}' > .agents-kit.json \
+  && git add -A && git commit -q -m "apaga changelog" && git push -q --force origin HEAD:issue-3-foo) >/dev/null 2>&1
+st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"CHANGELOG.md mal formado"*) ;; *) fail "changelog false en la PR: $err";; esac
 echo "OK test_pr"

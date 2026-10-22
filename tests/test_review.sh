@@ -284,4 +284,24 @@ rm -f "$GH_STATE/.failed" "$REVIEW_DUMP/claude.args"
 err="$(GH_FAIL_ON="api user" REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 1 claude claude opus foco 10 3 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 2 ] || fail "usuario ilegible: exit $rc ($err)"
 [ ! -e "$REVIEW_DUMP/claude.args" ] || fail "usuario ilegible lanzó el revisor"
+# KIT_REVIEW_BASE (kit-review-all fetched once for every seat): no fetch nor ls-remote here, so seats in parallel never
+# race on refs/remotes (origin moves on, the local origin/main stays put); the base is the merge-base with that commit
+before="$(git -C "$r" rev-parse refs/remotes/origin/main)"
+c2="$(mktemp -d)/c"
+{ git clone -q "$o" "$c2" && git -C "$c2" -c user.name=t -c user.email=t@t commit -q --allow-empty -m otra \
+    && git -C "$c2" push -q origin HEAD:main; } >/dev/null 2>&1 || fail "setup avanza origin"
+out="$(KIT_REVIEW_BASE="$before" REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 1 claude claude opus foco 11 3 2>&1)"; rc=$?
+[ $rc -eq 0 ] || fail "KIT_REVIEW_BASE: exit $rc ($out)"
+[ "$(git -C "$r" rev-parse refs/remotes/origin/main)" = "$before" ] || fail "KIT_REVIEW_BASE: hizo fetch"
+case "$(prompt claude)" in *"git diff $base...HEAD"*) ;; *) fail "KIT_REVIEW_BASE: base del prompt";; esac
+err="$(KIT_REVIEW_BASE=nope REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 1 claude claude opus foco 12 3 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "KIT_REVIEW_BASE inválido: exit $rc"
+case "$err" in *"sin confirmar (entorno): KIT_REVIEW_BASE"*) ;; *) fail "KIT_REVIEW_BASE inválido msg: $err";; esac
+# codex takes the model id without the OpenCode provider prefix; the marker keeps the configured id
+rm -f "$REVIEW_DUMP"/codex.*
+out="$(REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 3 gpt codex openai/gpt-6.1-sol "scope" 13 3 2>&1)" || fail "codex openai/: $out"
+a="$(args codex)"
+[ "$(printf '%s\n' "$a" | grep -A1 -xF -- -m | sed -n 2p)" = gpt-6.1-sol ] || fail "codex -m con prefijo: $a"
+[ "$(jq -r '.prs[0].comments[-1].body' "$GH_STATE/state.json" | sed -n 1p)" = "<!-- kit-revision: puesto 3 gpt/openai/gpt-6.1-sol ronda 13 -->" ] \
+  || fail "codex openai/ marcador"
 echo "test_review OK"

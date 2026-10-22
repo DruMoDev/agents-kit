@@ -29,7 +29,7 @@ kit_review_available() {
   return 0
 }
 
-# kit_seat_candidates <root> <familia-implementador>: the candidates of every seat of revision.puestos, in the order
+# kit_seat_candidates <root> <familia-implementador> [<ref>]: the candidates of every seat of revision.puestos, in the order
 # they are tried, one line each:
 #   <i>TAB<j>TAB<familia>TAB<cli>TAB<modelo>TAB<foco>TAB<nota>
 # Only providers whose CLI is a known adapter in the PATH and that have a model for the seat's level count.
@@ -37,10 +37,16 @@ kit_review_available() {
 #   familia "misma": the implementer's.
 #   a family name:   that family, then the implementer's (nota misma-familia).
 # A seat without any candidate gets one line with j = 0, cli and modelo "-" and nota sin-candidatos.
+# With <ref> (kit-review-all.sh passes origin/<default branch>) the repo layer is the marker at <ref> (kit_config_base),
+# the same source fusionar counts the seats from: a PR cannot drop or weaken its own reviewers.
 # Return: 0 ok, 1 unknown family (implementer or seat) or a misma/named seat whose family lacks the level, 2 broken config.
 kit_seat_candidates() {
-  local merged avail out err rc
-  merged="$(kit_config "$1" '{proveedores, puestos: .revision.puestos} | tojson')" || return $?
+  local merged avail out err rc q='{proveedores, puestos: .revision.puestos} | tojson'
+  if [ -n "${3:-}" ]; then
+    merged="$(kit_config_base "$1" "$q" "$3")" || return $?
+  else
+    merged="$(kit_config "$1" "$q")" || return $?
+  fi
   avail="$(kit_review_available | jq -R -s -c 'split("\n") | map(select(. != ""))')" || return 2
   err="$(mktemp)" || return 2
   out="$(printf '%s' "$merged" | jq -r --arg impl "$2" --argjson av "$avail" '

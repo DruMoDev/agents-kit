@@ -17,13 +17,14 @@
 #                "url": "...", "comments": [{"id": 1, "body": "...", "author": {"login": "dru"}}]}]
 #     comment ids: numeric, increasing
 #     A PR without "headRefOid" resolves it live from the cwd's origin (git ls-remote refs/heads/<headRefName>).
+#   state.labels: repo label names for `label list` (default: every label of the kit v3)
 #   state.workflows: number reported by `api repos/<slug>/actions/workflows` (default 0)
 #   state.checks: check runs [{"status": "completed", "conclusion": "success"}] for any commit (default [])
 #   GH_CHECKS_SEQ  file with one JSON array of check runs per line; each check-runs call consumes the next line
 #                  (the last one repeats). Overrides state.checks. Position kept in $GH_STATE/.checks_idx
 #                  (delete it to restart the sequence).
 #   GH_RACE_OID    `pr merge` sees this as the live head (simulates a push landing just before the merge)
-# Supported: issue list/view/create/comment/edit/close, pr list/create/view/comment/merge,
+# Supported: issue list/view/create/comment/edit/close, pr list/create/view/comment/merge, label list,
 # api (user, workflows, check-runs; no --repo, the slug goes in the path). Add one case per subcommand as tests need it.
 set -u
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
@@ -166,6 +167,9 @@ case "$cmd" in
     fi
     save '(.prs[] | select(.number == $n)) |= (.headRefOid = (.headRefOid // $o) | .state = "MERGED")' \
       --argjson n "${pos[0]}" --arg o "$(pr_json "${pos[0]}" | jq -r .headRefOid)" || exit 1 ;;
+  "label list")
+    jq '(.labels // ["en-curso", "necesita-respuesta", "bloqueado", "propuesta", "someday", "registro",
+        "prio:alta", "prio:media", "prio:baja"]) | map({name: .})' "$state" | emit ;;
   api)
     case "$apipath" in
       user)

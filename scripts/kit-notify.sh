@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-notify.sh <root> <titulo> <mensaje> [url]
-# Envía un aviso a Dru por el canal de .agents-kit.json (notify): ntfy, claude-push o none.
+# Envía un aviso a Dru por el canal de la configuración global (notify): ntfy, claude-push o none.
 # Exit: 0 ok, 1 rechazo o error de uso, 2 error de entorno (el aviso falló; quien llama sigue).
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

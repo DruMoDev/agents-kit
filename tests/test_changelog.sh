@@ -98,6 +98,12 @@ out="$(bash "$cl" resumen "$rr" run-1 "$sfile" 2>&1)" || fail "resumen repetido:
 [ "$(last_line "$out")" = "FIN: https://github.com/dru/demo/issues/9#issuecomment-IC_9_0" ] || fail "resumen repetido FIN: $out"
 # otro id sí publica
 bash "$cl" resumen "$rr" run-2 "$sfile" >/dev/null 2>&1 || fail "resumen otro id"
+# "changelog": false: no issue to post in; exit 0 with FIN: sin-changelog and nothing touched in GitHub
+echo '{"changelog": false}' > "$rr/.agents-kit.json"; : > "$GH_LOG"
+out="$(bash "$cl" resumen "$rr" run-3 "$sfile" 2>&1)" || fail "resumen sin changelog: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: sin-changelog" ] || fail "resumen sin changelog FIN: $out"
+[ ! -s "$GH_LOG" ] || fail "resumen sin changelog llamó a gh: $(cat "$GH_LOG")"
+echo '{}' > "$rr/.agents-kit.json"
 [ "$(flow_issue 9 '.comments | length')" = 2 ] || fail "resumen otro id: no publicó"
 # un comentario con el marcador de otro autor no cuenta
 use_flow_gh

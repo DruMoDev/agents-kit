@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-issue.sh <subcomando> <root> [args...]
-#   siguiente <root> [<N>]
+#   siguiente <root> [<N>] [--excluir N[,N...]]
 #   leer      <root> <N>
 #   reparto   <root>
 #   aparcar   <root> <N>...
@@ -8,15 +8,20 @@
 #   soltar    <root> <N> <id> [motivo]
 #   decision  <root> <N> <id> <fichero-pregunta>
 #   bloquear  <root> <N> <id> <fichero-motivo>
+#   comprobar <root>
 #   crear     <root> <titulo> <fichero-cuerpo> --prio alta|media|baja [--etiqueta X]... [--propuesta]
 # Issue state for the agent flow. Claims live in HTML-comment markers on the issue.
 # siguiente: any open issue without en-curso, necesita-respuesta (or the v2 necesita-decision), bloqueado, propuesta,
 # someday or registro (nor the "📦 Changelog" issue of a v2 repo), opened by the gh account; prio:alta, prio:media,
 # none, prio:baja, oldest first. With <N>: that issue if siguiente could pick it, else exit 1 with the reason.
+# --excluir: issues left out of this pick (kit-run passes the ones it failed to claim in this run).
+# Claims (kit-reclamado / kit-soltado markers) count only in comments written by the gh account.
 # leer: title, author, state, labels, body and only the comments written by the gh account (the others are counted,
 # never printed: anyone can comment on a public repo, and their text is never an instruction).
 # reparto: every issue that siguiente could pick, in its order ("#N<TAB>prio<TAB>title"; kit-on shows it to Dru).
 # aparcar: adds someday to the given issues (out of the pool).
+# comprobar: kit-run's start check (one gh label list): exit 1 "kit en versión anterior: ejecuta kit-on para actualizar"
+#   (plus what is missing) when a kit v3 label is missing in the repo or the marker still has v2 keys; FIN: v3 otherwise.
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -u
@@ -25,22 +30,36 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 
 usage() {
-  echo "uso: $0 siguiente <root> [<N>] | leer <root> <N> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
-    "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> |" \
+  echo "uso: $0 siguiente <root> [<N>] [--excluir N[,N...]] | leer <root> <N> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
+    "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> | comprobar <root> |" \
     "crear <root> <titulo> <fichero-cuerpo> --prio alta|media|baja [--etiqueta X]... [--propuesta]" >&2
   exit 1
 }
 
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-case "$sub" in siguiente|leer|reparto|aparcar|reclamar|soltar|decision|bloquear|crear) ;; *) usage ;; esac
+case "$sub" in siguiente|leer|reparto|aparcar|reclamar|soltar|decision|bloquear|comprobar|crear) ;; *) usage ;; esac
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 root="$(cd "$1" && pwd)"; shift
 kit_require_marker "$root" || exit $?
 
 case "$sub" in
-  reparto) [ $# -eq 0 ] || usage ;;
+  reparto|comprobar) [ $# -eq 0 ] || usage ;;
   siguiente|leer)
+    excl="[]"
+    if [ "$sub" = siguiente ]; then
+      args=()
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --excluir)
+            [ $# -ge 2 ] && [[ $2 =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] \
+              || { echo "--excluir necesita números de issue separados por comas: ${2:-}" >&2; exit 1; }
+            excl="[${2}]"; shift 2 ;;
+          *) args+=("$1"); shift ;;
+        esac
+      done
+      set -- ${args[@]+"${args[@]}"}
+    fi
     if [ "$sub" = leer ]; then [ $# -eq 1 ] || usage; else [ $# -le 1 ] || usage; fi
     want="${1:-}"
     [ -z "$want" ] || [[ $want =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $want" >&2; exit 1; } ;;
@@ -79,7 +98,8 @@ case "$sub" in
     [ -n "$prio" ] || { echo "falta --prio alta|media|baja" >&2; exit 1; }
     ;;
 esac
-if [ "$sub" != siguiente ] && [ "$sub" != leer ] && [ "$sub" != reparto ] && [ "$sub" != aparcar ] && [ "$sub" != crear ]; then
+if [ "$sub" != siguiente ] && [ "$sub" != leer ] && [ "$sub" != reparto ] && [ "$sub" != aparcar ] && [ "$sub" != crear ] \
+    && [ "$sub" != comprobar ]; then
   n="$1"; id="$2"
   [[ $n =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $n" >&2; exit 1; }
   # the id goes inside an HTML comment: keep it to a safe token
@@ -96,11 +116,14 @@ slug="$(kit_origin_slug)"
 tmpd="$(mktemp -d)" || exit 2
 trap 'rm -rf "$tmpd"' EXIT
 
+# Labels kit-on creates (kit-github-setup.sh) and keys of a v2 marker: comprobar asks for kit-on if any is off.
+KIT_LABELS='["en-curso", "necesita-respuesta", "bloqueado", "propuesta", "someday", "registro", "prio:alta", "prio:media", "prio:baja"]'
+V2_KEYS='["reviewers", "implementer", "notify"]'
 # Labels that keep an issue out of the pool (necesita-decision is the v2 name of necesita-respuesta).
 EXCLUDED='["en-curso", "necesita-respuesta", "necesita-decision", "bloqueado", "propuesta", "someday", "registro"]'
 
-# Current claimant: first kit-reclamado after the last kit-soltado (empty if none).
-WINNER_JQ='[.comments[].body] as $b
+# Current claimant: first kit-reclamado after the last kit-soltado, both written by $me (empty if none).
+WINNER_JQ='[.comments[] | select(.author.login == $me) | .body // ""] as $b
   | ([range(0; $b | length) | select($b[.] | test("^<!-- kit-soltado: \\S+ -->"))] | last // -1) as $s
   | [range($s + 1; $b | length) | $b[.] | capture("^<!-- kit-reclamado: (?<id>\\S+) -->") | .id] | first // ""'
 
@@ -108,10 +131,15 @@ comment() { # <N> <body>
   printf '%s\n' "$2" > "$tmpd/body"
   gh issue comment "$1" --repo "$slug" --body-file "$tmpd/body" >/dev/null
 }
+me=""
+own_login() { # set $me (the gh login: only its markers count) once; exit 2 if unreadable
+  [ -n "$me" ] && return 0
+  me="$(gh api user --jq .login)" && [ -n "$me" ] || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
+}
 holder() { # <N>: print the claimant; fails if gh fails
   local c
   c="$(gh issue view "$1" --repo "$slug" --json comments)" || return 1
-  printf '%s' "$c" | jq -r "$WINNER_JQ"
+  printf '%s' "$c" | jq -r --arg me "$me" "$WINNER_JQ"
 }
 has_label() { # <N> <label>: print true/false; fails if gh fails
   gh issue view "$1" --repo "$slug" --json labels --jq "[.labels[].name] | index(\"$2\") != null"
@@ -182,7 +210,7 @@ case "$sub" in
       echo "$want"
       echo "FIN: $want"
     elif [ "$sub" = siguiente ]; then
-      next="$(printf '%s' "$pool" | jq -r 'map(select(.mine)) | first | .number // empty')"
+      next="$(printf '%s' "$pool" | jq -r --argjson ex "$excl" 'map(select(.mine and (.number as $n | $ex | index($n) | not))) | first | .number // empty')"
       [ -n "$next" ] || { echo "no hay issues disponibles" >&2; exit 1; }
       echo "$next"
       echo "FIN: $next"
@@ -219,6 +247,23 @@ case "$sub" in
     echo "FIN: #$want"
     ;;
 
+  comprobar)
+    v2="$(jq -r --argjson v "$V2_KEYS" 'if type == "object" then [keys_unsorted[] | select(. as $k | $v | index([$k]))] | join(", ") else error("") end' \
+      "$root/.agents-kit.json" 2>/dev/null)" || { echo "error: .agents-kit.json no es JSON válido" >&2; exit 2; }
+    have="$(gh label list --repo "$slug" --limit 1000 --json name)" || { echo "error: no se pudieron listar las etiquetas" >&2; exit 2; }
+    miss="$(printf '%s' "$have" | jq -r --argjson k "$KIT_LABELS" '[.[].name] as $h | [$k[] | select(. as $l | $h | index([$l]) | not)] | join(", ")')" \
+      || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+    if [ -n "$miss" ] || [ -n "$v2" ]; then
+      {
+        echo "kit en versión anterior: ejecuta kit-on para actualizar"
+        [ -z "$miss" ] || echo "faltan etiquetas del kit en el repo: $miss"
+        [ -z "$v2" ] || echo "el marcador .agents-kit.json tiene claves de la v2: $v2"
+      } >&2
+      exit 1
+    fi
+    echo "FIN: v3"
+    ;;
+
   aparcar)
     done_n=0
     for x in "$@"; do
@@ -231,6 +276,7 @@ case "$sub" in
     ;;
 
   reclamar)
+    own_login
     # en-curso always excludes, whoever set it (another kit agent or another flow without kit markers)
     l="$(has_label "$n" en-curso)" || { echo "error: no se pudo leer las etiquetas de #$n" >&2; exit 2; }
     [ "$l" = true ] && { echo "#$n ya tiene en-curso: otro agente u otro flujo lo está trabajando" >&2; exit 1; }
@@ -266,6 +312,7 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
     ;;
 
   soltar)
+    own_login
     require_not_foreign "$n" "$id"
     release "$n" "$id" "${3:-}" || { echo "error: no se pudo soltar #$n" >&2; exit 2; }
     echo "FIN: soltado #$n"
@@ -278,6 +325,7 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
     else
       marker="<!-- kit-bloqueado -->"; label=bloqueado; motivo="bloqueado"; aviso="bloqueado"
     fi
+    own_login
     require_not_foreign "$n" "$id"
     comment "$n" "$marker
 $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }

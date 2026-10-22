@@ -70,7 +70,7 @@ Fuentes: el análisis hecho desde `tiktok-editor` (resumen de Dru), su `AGENTS.m
     {"foco": "simplicidad, reutilización y scope", "nivel": "rapido", "familia": "misma"}
   ]}
   ```
-- `cli` es un adaptador del kit: `claude`, `opencode`, `codex`. Cambiar GPT de OpenCode a Codex es cambiar `"cli"`. Un proveedor nuevo es una entrada más y, si su CLI es nuevo, un adaptador.
+- `cli` es un adaptador del kit: `claude`, `opencode`, `codex`. Cambiar GPT de OpenCode a Codex es cambiar `"cli"` y revisar `modelos`, porque cada CLI nombra los modelos a su manera (OpenCode `proveedor/modelo`, Codex solo el modelo): `"gpt": {"cli": "codex", "modelos": {"profundo": "gpt-6.1-sol", "rapido": "gpt-6.1-sol"}}`. El adaptador de Codex quita un `openai/` inicial. Un proveedor nuevo es una entrada más y, si su CLI es nuevo, un adaptador.
 - Implementador: se detecta por el entorno (`CODEX_THREAD_ID` → `gpt`, `CLAUDECODE` → `claude`); en OpenCode, o si se quiere forzar, la skill lo pasa explícito (`--implementador <familia>`). El orden de familias es el de `proveedores`.
 - Asignación por puesto: `otra` = primera familia disponible distinta del implementador; `misma` = la del implementador; un nombre = esa familia. Si no hay ninguna `otra` disponible, el puesto lo cubre la misma familia y la ronda lo anota.
 - Fallo en ejecución *(decisión del agente)*: si el candidato de un puesto falla por login o modelo, se prueba el siguiente candidato del mismo tipo y, agotados, la familia del implementador; si también falla, el puesto queda "sin confirmar" y la ronda no cuenta como completa para `fusionar`.

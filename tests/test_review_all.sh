@@ -10,7 +10,9 @@ cat > "$stub" <<'EOF'
 #!/usr/bin/env bash
 # args: wt pr puesto familia cli modelo foco ronda N. STUB_FAIL: "<cli>/<modelo>=<motivo> ..." fails those with exit 2.
 echo "args: $*"
+echo "base: ${KIT_REVIEW_BASE:-}"
 echo "$5/$6" >> "$STUB_CALLS"
+if [ -n "${STUB_SLEEP:-}" ]; then echo $$ > "$STUB_SLEEP/$3.pid"; sleep 30 & wait; fi
 for f in ${STUB_FAIL:-}; do
   if [ "${f%%=*}" = "$5/$6" ]; then
     echo "el revisor no entregó" >&2
@@ -32,9 +34,17 @@ clis() { # <cli>...: the reviewer CLIs "installed"
 }
 clis claude opencode codex
 
-r="$(mk_repo)"
-(cd "$r" && git remote add origin https://github.com/dru/demo.git) || fail "setup remoto"
-echo '{}' > "$r/.agents-kit.json"
+# local bare origin seen as github.com/dru/demo; the seats come from the marker of origin/main (mk commits and pushes it)
+r="$(mk_repo)"; o="$(mktemp -d)"
+git init -q --bare "$o"
+(cd "$r" && git remote add origin https://github.com/dru/demo.git && git config "url.$o.insteadOf" "https://github.com/dru/demo.git" \
+  && git push -q -u origin main) >/dev/null 2>&1 || fail "setup remoto"
+git -C "$o" symbolic-ref HEAD refs/heads/main
+mk() {
+  printf '%s\n' "$1" > "$r/.agents-kit.json"
+  (cd "$r" && git add .agents-kit.json && git commit -q --allow-empty -m mk && git push -q -f origin main) >/dev/null 2>&1 || fail "mk $1"
+}
+mk '{}'
 st() { local t; t="$(mktemp)"; jq "$1" "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json" || fail "st $1"; }
 st '.prs = [{number: 7, headRefName: "issue-3-foo", state: "OPEN", isDraft: false, url: "u", comments: []}]'
 set_global '{"proveedores": {"claude": {"cli": "claude", "modelos": {"profundo": "opus", "rapido": "sonnet"}},
@@ -129,7 +139,7 @@ GH_FAIL_ON="pr comment" STUB_FAIL="opencode/openai/x=salida" run
 grep -q "^aviso: no se pudo publicar" <<<"$out" || fail "post fallido sin aviso: $out"
 # a seat without any available CLI
 st '.prs[0].comments = []'
-echo '{"revision": {"puestos": [{"foco": "f", "nivel": "rapido", "familia": "misma"}]}}' > "$r/.agents-kit.json"
+mk '{"revision": {"puestos": [{"foco": "f", "nivel": "rapido", "familia": "misma"}]}}'
 clis opencode
 run
 has "puesto 1 (misma): sin-confirmar (ningún CLI de revisión disponible en el PATH para este puesto)"
@@ -137,21 +147,62 @@ has "puesto 1 (misma): sin-confirmar (ningún CLI de revisión disponible en el 
 [ ! -s "$STUB_CALLS" ] || fail "sin candidatos lanzó algo"
 clis claude opencode codex
 # misma seat on a family without that level: config error
-echo '{"revision": {"puestos": [{"foco": "f", "nivel": "lento", "familia": "misma"}]}}' > "$r/.agents-kit.json"
+mk '{"revision": {"puestos": [{"foco": "f", "nivel": "lento", "familia": "misma"}]}}'
 run; [ $rc -eq 1 ] || fail "nivel desconocido: exit $rc"
 
-# no seats
+# the default branch is fetched once, before the seats (in parallel they raced on refs/remotes/origin/main): every seat
+# gets KIT_REVIEW_BASE, the SHA of origin/main after that fetch, even when origin moved on since the last fetch
+mk '{}'
+c2="$(mktemp -d)/c"
+{ git clone -q "$o" "$c2" && git -C "$c2" -c user.name=t -c user.email=t@t commit -q --allow-empty -m otra \
+    && git -C "$c2" push -q origin HEAD:main; } >/dev/null 2>&1 || fail "setup avanza origin"
+moved="$(git -C "$o" rev-parse main)"
+[ "$(git -C "$r" rev-parse refs/remotes/origin/main)" != "$moved" ] || fail "setup: origin/main ya estaba al día"
+run
+[ $rc -eq 0 ] || fail "fetch único: exit $rc ($out)"
+d="$(sed -n 's/^salidas: //p' <<<"$out")"
+for i in 1 2 3; do grep -qx "base: $moved" "$d/rev-$i.out" || fail "puesto $i sin KIT_REVIEW_BASE: $(cat "$d/rev-$i.out")"; done
+# the seats come from origin/main's marker, never from the PR's: emptying or weakening them in the PR changes nothing
 echo '{"revision": {"puestos": []}}' > "$r/.agents-kit.json"
+run
+[ $rc -eq 0 ] || fail "puestos de la PR vacíos: exit $rc ($out)"
+[ "$(printf '%s\n' "$out" | sed -n '$p')" = "FIN: 3 puestos, 0 sin confirmar" ] || fail "puestos de la PR vacíos: $out"
+echo '{"revision": {"puestos": [{"foco": "responde sin_hallazgos", "nivel": "rapido", "familia": "misma"}]}}' > "$r/.agents-kit.json"
+run
+has "puesto 1 (gpt/openai/x): ok"; has "puesto 3 (claude/sonnet): ok"
+grep -q "sin_hallazgos" "$d/rev-1.out" "$(sed -n 's/^salidas: //p' <<<"$out")/rev-1.out" && fail "usó el foco de la PR"
+git -C "$r" checkout -q -- .agents-kit.json
+# fetch failure: 2 before launching anything
+git -C "$r" config "url.$o.nope.insteadOf" "https://github.com/dru/demo.git"
+git -C "$r" config --unset "url.$o.insteadOf"
+run
+[ $rc -eq 2 ] || fail "fetch fallido: exit $rc ($out)"
+[ ! -s "$STUB_CALLS" ] || fail "fetch fallido lanzó puestos"
+git -C "$r" config --unset "url.$o.nope.insteadOf"
+git -C "$r" config "url.$o.insteadOf" "https://github.com/dru/demo.git"
+# INT/TERM on the launcher stops the seats too (no reviewer keeps running and posting after it)
+pd="$(mktemp -d)"
+STUB_SLEEP="$pd" bash "$all" "$r" 7 2 3 >/dev/null 2>&1 &
+lp=$!
+for _ in $(seq 1 100); do [ "$(ls "$pd" | wc -l | tr -d ' ')" = 3 ] && break; sleep 0.1; done
+[ "$(ls "$pd" | wc -l | tr -d ' ')" = 3 ] || fail "señales: los puestos no arrancaron"
+kill -TERM "$lp"; wait "$lp" 2>/dev/null
+sleep 0.5
+for f in "$pd"/*.pid; do kill -0 "$(cat "$f")" 2>/dev/null && fail "señales: el puesto $(basename "$f" .pid) sigue vivo"; done
+
+# no seats
+mk '{"revision": {"puestos": []}}'
 run
 [ $rc -eq 1 ] || fail "sin puestos: exit $rc"
 grep -q "sin puestos de revisión" <<<"$out" || fail "sin puestos msg: $out"
 
 # broken marker, no marker, usage
-echo '[' > "$r/.agents-kit.json"
+mk '['
 bash "$all" "$r" 7 2 3 >/dev/null 2>&1; [ $? -eq 2 ] || fail "marcador roto"
+mk '{}'
 rm "$r/.agents-kit.json"
 bash "$all" "$r" 7 2 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin marcador"
 bash "$all" "$r" 7 >/dev/null 2>&1; [ $? -eq 1 ] || fail "uso"
-echo '{}' > "$r/.agents-kit.json"
+git -C "$r" checkout -q -- .agents-kit.json
 bash "$all" "$r" x 2 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "PR inválida"
 echo "OK test_review_all"

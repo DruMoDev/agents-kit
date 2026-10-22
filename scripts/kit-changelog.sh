@@ -6,6 +6,7 @@
 #   bloque de código (``` o ~~~) se ignora; un <!-- sin cerrar es un error.
 # resumen: comenta el fichero en el issue abierto "📦 Changelog" con el marcador <!-- kit-resumen: <id> -->;
 #   si ya hay un comentario propio (login de `gh api user`) con ese marcador, no publica otro. FIN: <url del comentario>.
+#   Con "changelog": false en el marcador no publica nada: FIN: sin-changelog.
 # Exit: 0 ok, 1 rechazo (errores "CHANGELOG.md:<línea>: <motivo>" en stderr), 2 error de entorno.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -129,6 +130,13 @@ case "$sub" in
     # the id goes inside an HTML comment: keep it to a safe token
     [[ $id =~ ^[A-Za-z0-9._-]+$ ]] || { echo "id inválido: $id" >&2; exit 1; }
     [ -f "$file" ] && [ -r "$file" ] || { echo "no se puede leer el fichero: $file" >&2; exit 1; }
+    # "changelog": false: no CHANGELOG.md nor "📦 Changelog" issue; the summary stays in the chat and the notice
+    cl="$(kit_config "$root" '.changelog')" || exit 2
+    if [ "$cl" = false ]; then
+      echo "sin changelog: el marcador dice \"changelog\": false; el resumen va solo al chat y al aviso"
+      echo "FIN: sin-changelog"
+      exit 0
+    fi
     for c in gh git jq; do
       command -v "$c" >/dev/null 2>&1 || { echo "error: falta '$c' en el PATH" >&2; exit 2; }
     done

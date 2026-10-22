@@ -194,6 +194,21 @@ r="$(new_repo)"; o="$(mktemp -d)"; dirs+=("$o"); echo x > "$o/A.md"; ln -s "$o/A
 bash "$A" aplicar "$r" "$p" >/dev/null 2>&1; [ $? -eq 1 ] || fail "AGENTS.md symlink debe salir 1"
 [ "$(cat "$o/A.md")" = x ] || fail "aplicar escribió a través del symlink"
 
+# 12. v2 marker (kit-on in actualizar mode): v2 keys dropped, each with a note of where it goes; repo keys stay
+r="$(new_repo)"
+echo '{"reviewers": ["claude/opus"], "implementer": "claude", "notify": "none", "changelog": true, "protegido": ["lib/"]}' > "$r/.agents-kit.json"
+out="$(bash "$S" "$r" 2>/dev/null)" || fail "v2: exit $?"
+[ "$(jq -c . "$r/.agents-kit.json")" = '{"changelog":true,"protegido":["lib/"]}' ] || fail "v2: marcador $(cat "$r/.agents-kit.json")"
+grep -qx "cambiado: .agents-kit.json" <<<"$out" || fail "v2: sin cambiado: $out"
+for x in "nota: 'reviewers' (v2) quitada del marcador: los revisores van en 'revision.puestos'" \
+         "nota: 'implementer' (v2) quitada del marcador: el implementador va en 'implementador'" \
+         "nota: 'notify' (v2) quitada del marcador: el canal de avisos va en 'notify'"; do
+  grep -qF "$x" <<<"$out" || fail "v2: falta '$x': $out"
+done
+grep -q "valor anterior: \"none\"" <<<"$out" || fail "v2: sin valor anterior: $out"
+out="$(bash "$S" "$r" 2>/dev/null)"
+[ "$(last_line "$out")" = "FIN: 0" ] && ! grep -q '^nota:' <<<"$out" || fail "v2: no idempotente: $out"
+
 # 7. environment errors exit 2
 bash "$S" "/nonexistent-dir-xyz" >/dev/null 2>&1; [ $? -eq 2 ] || fail "missing dir should exit 2"
 nd="$(mktemp -d)"; dirs+=("$nd")

@@ -171,6 +171,17 @@ grep -q 'pids' "$run" && fail "kit-run keeps the inline reviewer launcher"
 grep -q 'ntfy' "$on" || fail "kit-on must mention ntfy"
 grep -q 'scripts/kit-notify.sh' "$on" || fail "kit-on must send the activation notice"
 grep -qF 'cat ~/.agents-kit/ntfy-topic' "$on" || fail "kit-on must show the ntfy topic"
+# v3 fixes: v2 upgrade path, changelog false, skip list
+run="$REPO_ROOT/skills/kit-run/SKILL.md"
+grep -q 'kit-issue.sh" comprobar <raíz>' "$run" || fail "kit-run must run comprobar at startup"
+grep -q 'kit en versión anterior: ejecuta kit-on para actualizar' "$run" || fail "kit-run must refuse an outdated repo"
+grep -q -- '--excluir' "$run" || fail "kit-run must skip the issues it failed to claim (--excluir)"
+grep -q '"changelog": false' "$run" || fail "kit-run must honour changelog false"
+grep -q 'FIN: sin-changelog' "$run" || fail "kit-run must know resumen's FIN: sin-changelog"
+grep -q 'kit-ship-pr.sh" abrir <raíz> kit-on con-marcador' "$on" || fail "kit-on must have the actualizar mode"
+grep -qi 'actualizar' "$on" || fail "kit-on must name the actualizar mode"
+grep -q '^nota:\|`nota:' "$on" || fail "kit-on must relay the v2 key notes"
+grep -q 'kit-changelog.sh" validar <wt>' "$on" || fail "kit-on must validate an existing CHANGELOG.md"
 # every suite stops if lib.sh cannot be sourced, never falling back to the real repo
 for t in "$TESTS_DIR"/test_*.sh; do
   grep -qxF 'source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1' "$t" || fail "$(basename "$t") must guard its source of lib.sh"

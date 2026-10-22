@@ -316,9 +316,11 @@ Cierra #$n"
     }
     review_reason "$pj"
 
-    # CHANGELOG.md, when the repo has one, must keep the fixed format (a PR without a new entry is fine).
+    # CHANGELOG.md, when the repo has one, must keep the fixed format (a PR without a new entry is fine), unless the
+    # default branch's marker says "changelog": false (the project keeps its own changelog, in its own format).
     # Without the marker kit-changelog refuses for that reason, not for the format: skip it (the dirty tree stops the merge).
-    if [ -f "$wt/CHANGELOG.md" ] && [ -f "$wt/.agents-kit.json" ]; then
+    cl="$(kit_config_base "$wt" '.changelog' "origin/$base")" || exit 2
+    if [ "$cl" != false ] && [ -f "$wt/CHANGELOG.md" ] && [ -f "$wt/.agents-kit.json" ]; then
       cl_err="$("$here/kit-changelog.sh" validar "$wt" 2>&1 >/dev/null)"; cl_rc=$?
       case $cl_rc in
         0) ;;
@@ -363,13 +365,24 @@ $cl_err") ;;
       fi
     fi
 
-    # checks.pre-merge: script of the repo, run in the worktree over the head
+    # checks.pre-merge: script of the repo, run in the worktree over the head. The path comes from the default branch's
+    # marker and the file must be exactly the default branch's version (a PR cannot edit its own gate); it runs in place,
+    # so it can find its sibling files through $0.
     pm="$(kit_config_base "$wt" '(.checks // {}) | if type == "object" and (.["pre-merge"] | type) == "string" then .["pre-merge"] else empty end' "origin/$base")" || exit 2
     if [ -n "$pm" ]; then
       kit_hook_rel checks.pre-merge "$pm" || exit 2
-      # the script runs as it is on the default branch: a PR cannot edit its own gate
-      if git show "origin/$base:$pm" > "$tmpd/pre-merge.sh" 2>/dev/null; then
-        kit_hook_run "$wt" "$tmpd/pre-merge.sh"; pm_rc=$?
+      pm_base="$(git rev-parse -q --verify "origin/$base:$pm" 2>/dev/null)"
+      pm_head="$(git rev-parse -q --verify "HEAD:$pm" 2>/dev/null)"
+      git diff --quiet "origin/$base...HEAD" -- "$pm"; pm_diff=$?
+      [ $pm_diff -le 1 ] || { echo "error: git diff falló" >&2; exit 2; }
+      if [ -z "$pm_base" ]; then
+        reasons+=("checks.pre-merge apunta a $pm, que no existe en origin/$base")
+      elif [ $pm_diff -eq 1 ]; then
+        reasons+=("la PR modifica el script de checks.pre-merge ($pm): una PR no puede cambiar su propia puerta; deshaz ese cambio en la rama")
+      elif [ "$pm_head" = "$pm_base" ] && [ "$clean" = true ]; then
+        # (a different blob not changed by the PR = the branch lacks origin/$base: the rebase reason already stops it)
+        pm_path="$(kit_hook_path "$wt" "$wt" checks.pre-merge "$pm")" || exit 2
+        kit_hook_run "$wt" "$pm_path"; pm_rc=$?
         case $pm_rc in
           0) ;;
           142) reasons+=("checks.pre-merge agotó el tiempo (${KIT_HOOK_TIMEOUT:-1800}s):
@@ -377,8 +390,6 @@ $KIT_HOOK_OUT") ;;
           *) reasons+=("checks.pre-merge falló (exit $pm_rc):
 $KIT_HOOK_OUT") ;;
         esac
-      else
-        reasons+=("checks.pre-merge apunta a $pm, que no existe en origin/$base")
       fi
     fi
 
@@ -401,6 +412,11 @@ $KIT_HOOK_OUT") ;;
       gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
         || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
     fi
+    # the claim is over: an own kit-soltado (so a reopened issue can be claimed again), then drop en-curso; a failure
+    # only warns, the merge already happened
+    printf '<!-- kit-soltado: fusionar -->\nPR #%s fusionada: este issue queda libre.\n' "$p" > "$tmpd/soltado"
+    gh issue comment "$n" --repo "$slug" --body-file "$tmpd/soltado" >/dev/null \
+      || echo "aviso: PR fusionada, pero no se pudo publicar kit-soltado en el issue #$n" >&2
     # the issue is done: drop en-curso (a v2 listo stays: never remove a label the repo may not have); a failure only warns, the merge already happened
     gh issue edit "$n" --repo "$slug" --remove-label en-curso >/dev/null \
       || echo "aviso: PR fusionada y issue cerrado, pero no se pudo quitar la etiqueta en-curso del issue #$n" >&2

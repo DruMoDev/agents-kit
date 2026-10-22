@@ -7,7 +7,8 @@
 # is validated, rendered as markdown and posted on PR <pr> as
 #   <!-- kit-revision: puesto <puesto> <familia>/<modelo> ronda <ronda> -->
 # A stored report for that marker is printed again and never rerun or reposted.
-# Env: KIT_REVIEW_TIMEOUT (s per reviewer run, default 1800).
+# Env: KIT_REVIEW_TIMEOUT (s per reviewer run, default 1800); KIT_REVIEW_BASE (SHA of the default branch, already
+#   fetched by kit-review-all.sh: no fetch here).
 # Exit: 0 ok (last line "FIN: <n> hallazgos"), 1 usage or rejected, 2 the seat stays unconfirmed: the last stderr
 # line is "sin confirmar (<motivo>): <detalle>", motivo = acceso (CLI missing, login, model, quota or crash: another
 # candidate may answer), tiempo, salida (empty or off-schema answer), bloqueado (the reviewer could not review),
@@ -103,10 +104,18 @@ oid="$(printf '%s' "$pj" | jq -r '.headRefOid // ""')" || envfail "respuesta de 
 prbody="$(printf '%s' "$pj" | jq -r '.body // "" | if . == "" then "(sin descripción)" else . end')"
 [[ $oid =~ ^[0-9a-f]{40}$ ]] || envfail "la PR #$p no tiene un head legible"
 git cat-file -e "$oid^{commit}" 2>/dev/null || envfail "el head de la PR ($oid) no está en el worktree: haz fetch o push"
-b="$(kit_default_branch)"
-[ -n "$b" ] || envfail "no pude saber la rama por defecto de origin"
-git fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || envfail "git fetch falló"
-base="$(git merge-base "origin/$b" "$oid")" || envfail "no hay merge-base entre origin/$b y la PR"
+if [ -n "${KIT_REVIEW_BASE:-}" ]; then
+  # kit-review-all.sh already fetched the default branch once for every seat: seats in parallel never fetch (they
+  # would race on refs/remotes/origin/<b> and fail with "cannot lock ref")
+  [[ $KIT_REVIEW_BASE =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$KIT_REVIEW_BASE^{commit}" 2>/dev/null \
+    || envfail "KIT_REVIEW_BASE no es un commit de este repo: $KIT_REVIEW_BASE"
+  base="$(git merge-base "$KIT_REVIEW_BASE" "$oid")" || envfail "no hay merge-base entre la rama por defecto y la PR"
+else
+  b="$(kit_default_branch)"
+  [ -n "$b" ] || envfail "no pude saber la rama por defecto de origin"
+  git fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || envfail "git fetch falló"
+  base="$(git merge-base "origin/$b" "$oid")" || envfail "no hay merge-base entre origin/$b y la PR"
+fi
 hist="$(bash "$here/kit-pr.sh" historial "$wt" "$p")" || envfail "no se pudo leer el historial de la PR #$p"
 hist="$(printf '%s\n' "$hist" | sed '${/^FIN: /d;}')"
 # single pass, so text inside the substituted values is never re-expanded
@@ -284,10 +293,11 @@ Responde otra vez solo con el objeto JSON corregido, completo."
     done
     ;;
   codex)
-    # workspace-write sandbox without network: gh and git push cannot reach GitHub; no user config, rules or session files
+    # workspace-write sandbox without network: gh and git push cannot reach GitHub; no user config, rules or session files.
+    # Codex takes a bare model id: the OpenCode-style "openai/" prefix of a family that moved to codex is dropped.
     launch codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox workspace-write \
       -c 'approval_policy="never"' -c sandbox_workspace_write.network_access=false --color never \
-      -m "$model" -C "$scratch" --output-schema "$schema" -o "$tmpd/last" "$prompt"
+      -m "${model#openai/}" -C "$scratch" --output-schema "$schema" -o "$tmpd/last" "$prompt"
     after_run
     [ -s "$tmpd/last" ] || unconfirmed salida "respuesta vacía"
     jq -R -s -c "$REPLY_JQ" "$tmpd/last" > "$tmpd/json"

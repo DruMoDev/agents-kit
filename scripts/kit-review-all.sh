@@ -4,16 +4,20 @@
 # candidates (lib/review-seats.sh: CLI in the PATH, other family first) in order: a login, model or quota failure
 # (motivo acceso) moves on to the next candidate; any other failure, or no candidate left, leaves the seat
 # unconfirmed, and a "<!-- kit-revision: puesto <i> sin-confirmar ronda <r> -->" comment says so on the PR.
+# The seats come from the marker of origin/<default branch> (fetched once here, before launching; each seat gets its
+# SHA in KIT_REVIEW_BASE and never fetches), the same source fusionar counts them from. INT/TERM/HUP stop every seat.
 # The implementer family comes from --implementador or the environment (CODEX_THREAD_ID -> gpt, CLAUDECODE -> claude).
 # Prints per seat "puesto <i> (<familia>/<modelo>): ok | sin-confirmar (<motivo>) | fallback a <familia>/<modelo>"
 # (plus "aviso: ..." lines), then "salidas: <dir>" (rev-<i>.out, the output of the seat's last attempt, and
 # puestos.tsv: i, familia, cli, modelo, foco, estado, detalle) and "FIN: <n> puestos, <m> sin confirmar".
-# Exit: 0 all seats ran (read each state), 1 usage, unknown family or no seats, 2 unknown implementer or broken config.
+# Exit: 0 all seats ran (read each state), 1 usage, unknown family or no seats, 2 unknown implementer, broken config or
+# git (default branch or fetch).
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/config.sh"
 source "$here/lib/review-seats.sh"
 source "$here/lib/github-slug.sh"
+source "$here/lib/default-branch.sh"
 review="${KIT_REVIEW_BIN:-$here/kit-review.sh}"
 
 usage() { echo "uso: $0 <wt> <pr> <ronda> <N> [--implementador <familia>]" >&2; exit 1; }
@@ -31,7 +35,13 @@ for x in "$p" "$round" "$n"; do [[ $x =~ ^[1-9][0-9]*$ ]] || usage; done
 wt="$(cd "$wt_arg" && pwd)"
 kit_require_marker "$wt" || exit $?
 impl="$(kit_implementer_family "$impl_arg")" || exit 2
-cands="$(kit_seat_candidates "$wt" "$impl")" || exit $?
+b="$(cd "$wt" && kit_default_branch)"
+[ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
+git -C "$wt" fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || { echo "error: git fetch falló" >&2; exit 2; }
+KIT_REVIEW_BASE="$(git -C "$wt" rev-parse --verify -q "refs/remotes/origin/$b^{commit}")" \
+  || { echo "error: no se pudo leer origin/$b" >&2; exit 2; }
+export KIT_REVIEW_BASE
+cands="$(kit_seat_candidates "$wt" "$impl" "origin/$b")" || exit $?
 if [ -z "$cands" ]; then
   echo "sin puestos de revisión configurados (revision.puestos)" >&2
   exit 1
@@ -82,11 +92,23 @@ run_seat() {
 }
 
 pids=""
+# stop_seats: TERM each seat's kit-review.sh (its own trap stops the reviewer's process group), then the seat itself
+stop_seats() {
+  local pid
+  for pid in $pids; do
+    pkill -TERM -P "$pid" 2>/dev/null
+    kill -TERM "$pid" 2>/dev/null
+  done
+  wait 2>/dev/null
+  exit 130
+}
+trap stop_seats INT TERM HUP
 for i in $seats; do
   run_seat "$i" &
   pids="$pids $!"
 done
 for pid in $pids; do wait "$pid"; done
+trap - INT TERM HUP
 
 : > "$d/puestos.tsv"
 k=0; u=0
