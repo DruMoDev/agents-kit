@@ -133,12 +133,12 @@ flow_issue 7 '.comments[].body' | grep -q '^<!-- kit-bloqueado -->' || fail "blo
 
 # --- avisos tras decision/bloquear
 seed7() { use_flow_gh; flow_add_issue 7 "tarea: rojo" listo en-curso; flow_add_comment 7 '<!-- kit-reclamado: kit-aaaa1111 -->'; }
-echo '{"notify":"none"}' > "$r/.agents-kit.json"
+set_global '{"notify":"none"}'
 seed7; : > "$CURL_LOG"
 out="$(bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>&1)" || fail "aviso none: exit $? ($out)"
 [ "$(last_line "$out")" = "FIN: necesita-decision #7" ] || fail "aviso none: '$out'"
 [ -s "$CURL_LOG" ] && fail "aviso none: llamó a curl"
-echo '{"notify":"ntfy"}' > "$r/.agents-kit.json"
+set_global '{"notify":"ntfy"}'
 seed7; : > "$CURL_LOG"
 out="$(bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso ntfy: exit $?"
 [ "$(last_line "$out")" = "FIN: necesita-decision #7" ] || fail "aviso ntfy: '$out'"
@@ -159,12 +159,12 @@ out="$(HOME="$(mktemp -d)" CURL_FAIL=1 KIT_NTFY_TOPIC= bash "$issue" decision "$
 [ $rc -eq 0 ] || fail "tema nuevo con fallo: exit $rc"
 printf '%s\n' "$out" | grep -q '^tema ntfy nuevo: agents-kit-' || fail "tema nuevo con fallo: se perdió la línea ($out)"
 [ "$(last_line "$out")" = "FIN: necesita-decision #7" ] || fail "tema nuevo con fallo: FIN '$out'"
-echo '{"notify":"claude-push"}' > "$r/.agents-kit.json"
+set_global '{"notify":"claude-push"}'
 seed7
 out="$(bash "$issue" bloquear "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso push: exit $?"
 [ "$out" = "$(printf 'AVISO-CLAUDE: demo: bloqueado: #7 tarea: rojo https://github.com/dru/demo/issues/7\nFIN: bloqueado #7')" ] \
   || fail "aviso push: '$out'"
-echo '{}' > "$r/.agents-kit.json"
+rm -f "$KIT_CONFIG"
 
 # --- crear
 use_flow_gh

@@ -3,6 +3,13 @@
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
+# Global config never comes from the real ~/.agents-kit: a fresh path that does not exist (plugin defaults).
+export KIT_CONFIG="$(mktemp -d)/config.json"
+
+# set_global <json>: write the global config read by kit_config.
+set_global() {
+  printf '%s\n' "$1" > "$KIT_CONFIG"
+}
 
 fail() {
   echo "FAIL: $*" >&2

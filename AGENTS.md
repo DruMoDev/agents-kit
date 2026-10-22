@@ -15,8 +15,8 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `rules/`: reglas inyectadas en las sesiones.
 - `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout` y `kit-run` (con `references/`: plantilla de issue, prompt del revisor y formato de ronda).
 - `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-review.sh` y `kit-review-all.sh`, `kit-changelog.sh`, `kit-notify.sh`...) y `release.sh`.
-- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`; `transport.sh`, dónde corre la sesión).
-- `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
+- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`, configuración en tres capas; `default-branch.sh`; `transport.sh`, dónde corre la sesión).
+- `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`) y `config.json`, valores por defecto del kit y plantilla de la configuración global `~/.agents-kit/config.json` (o `KIT_CONFIG`). Precedencia: plugin < global < marcador del repo, que solo puede definir las claves de la lista blanca de `scripts/lib/config.sh`.
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node). `tests/fixtures/changelog/` es el contrato del formato de `CHANGELOG.md`: la web lo reutilizará para probar su parser.
 - `web/`: web de changelogs (Astro + Cloudflare Workers), app aparte con su `package.json`. Su parser (`web/src/lib/changelog.ts`) y el validador bash comparten `tests/fixtures/changelog/`: cambiar el formato es tocar los dos y los fixtures.
 - `docs/`: specs y planes.

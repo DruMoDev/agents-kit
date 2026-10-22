@@ -58,7 +58,7 @@ Cada PR que cambia algo para quien usa la app añade su entrada en `CHANGELOG.md
 
 ### Avisos
 
-Te llegan al móvil cuando un issue pasa a `necesita-decision` o `bloqueado` y al terminar cada `kit-run` (si fusionó algo o hay issues esperándote). Canal en `notify` de `.agents-kit.json`:
+Te llegan al móvil cuando un issue pasa a `necesita-decision` o `bloqueado` y al terminar cada `kit-run` (si fusionó algo o hay issues esperándote). Canal en `notify` de la configuración global `~/.agents-kit/config.json` (un repo no puede cambiarlo):
 
 - `ntfy` (por defecto): instala la app ntfy y suscríbete al tema que te da `kit-on` (o `cat ~/.agents-kit/ntfy-topic`). El tema se genera una vez en tu máquina y sirve para todos tus repos; para usar otro, define `KIT_NTFY_TOPIC`. Un repo nunca elige el tema. El tema es el único secreto: los avisos pasan por ntfy.sh y quien lo conozca puede leerlos (llevan el nombre del repo y el título del issue).
 - `claude-push`: notificación de Claude Code al móvil. Solo funciona dentro de una sesión de Claude Code con Remote Control conectado; no en Codex, OpenCode ni `claude -p`.
@@ -68,7 +68,7 @@ Si un aviso falla, el flujo sigue y lo cuenta en el resumen.
 
 ### Revisores
 
-Los revisores de `.agents-kit.json` (`reviewers`) se ejecutan sin supervisión y con todos los permisos locales, cada uno en un clon aislado del head de la PR: sin credenciales de GitHub, con `gh` y `git push` bloqueados y sin la configuración de agente que traiga la PR. Aun así pueden ejecutar código del repo en tu máquina: es el mismo nivel de confianza que el agente que implementa.
+Los revisores (`revision.puestos` de `~/.agents-kit/config.json`, o del marcador del repo, que sustituye la lista) se ejecutan sin supervisión y con todos los permisos locales, cada uno en un clon aislado del head de la PR: sin credenciales de GitHub, con `gh` y `git push` bloqueados y sin la configuración de agente que traiga la PR. Aun así pueden ejecutar código del repo en tu máquina: es el mismo nivel de confianza que el agente que implementa.
 
 Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode).
 

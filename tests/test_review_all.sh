@@ -14,9 +14,12 @@ chmod +x "$stub"
 export KIT_REVIEW_BIN="$stub"
 
 r="$(mk_repo)"
+set_global '{"proveedores": {"claude": {"cli": "claude", "modelos": {"profundo": "opus", "rapido": "sonnet"}},
+                             "gpt": {"cli": "opencode", "modelos": {"profundo": "openai/x", "rapido": "openai/x"}}}}'
 cat > "$r/.agents-kit.json" <<'EOF'
-{"reviewers": {"claude": [{"model": "opus", "focus": "a"}, {"model": "sonnet", "focus": "b c"}],
-               "opencode": [{"model": "openai/x", "focus": "d"}]}}
+{"revision": {"puestos": [{"foco": "a", "nivel": "profundo", "familia": "claude"},
+                          {"foco": "b c", "nivel": "rapido", "familia": "claude"},
+                          {"foco": "d", "nivel": "profundo", "familia": "gpt"}]}}
 EOF
 out="$(zsh -c '"$1" "$2" 7 2 3' _ "$all" "$r" 2>&1)"; rc=$?
 [ $rc -eq 0 ] || fail "exit $rc ($out)"
@@ -29,7 +32,7 @@ grep -qx "args: $r 7 claude sonnet b c 2 3" "$d/rev-2.out" || fail "args sonnet:
 [ "$(wc -l < "$d/revisores.tsv" | tr -d ' ')" = 3 ] || fail "revisores.tsv"
 
 # no reviewers
-echo '{"reviewers": {}}' > "$r/.agents-kit.json"
+echo '{"revision": {"puestos": []}}' > "$r/.agents-kit.json"
 err="$(bash "$all" "$r" 7 2 3 2>&1)"; rc=$?
 [ $rc -eq 1 ] || fail "sin revisores: exit $rc"
 grep -q "sin revisores" <<<"$err" || fail "sin revisores msg: $err"
