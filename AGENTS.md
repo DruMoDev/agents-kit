@@ -23,7 +23,7 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 
 ## Flujo de issues
 
-`kit-plan` y `kit-scout` crean issues (`listo` o `propuesta`); `kit-run` los lleva hasta `main`. El estado vive en GitHub: etiquetas `listo`, `propuesta`, `en-curso`, `necesita-decision`, `bloqueado` y marcadores HTML en los comentarios de issues y PRs. Los avisos salen de `kit-notify.sh` (`ntfy`, `claude-push` o `none`); el tema de ntfy solo lo pone el usuario (`~/.agents-kit/ntfy-topic` o `KIT_NTFY_TOPIC`), nunca el repo.
+`kit-plan` y `kit-scout` crean issues con `kit-issue.sh crear` (con `--prio`; los de `kit-scout`, `propuesta`); `kit-run` coge cualquier issue abierto fuera de `en-curso`, `necesita-respuesta`, `bloqueado`, `propuesta`, `someday` y `registro` (por `prio:*` y antigüedad) y lo lleva hasta `main`. `listo` y `necesita-decision` son de la v2: el primero ya no cuenta y el segundo excluye como `necesita-respuesta`. El estado vive en GitHub: esas etiquetas y marcadores HTML en los comentarios de issues y PRs. Los avisos salen de `kit-notify.sh` (`ntfy`, `claude-push` o `none`); el tema de ntfy solo lo pone el usuario (`~/.agents-kit/ntfy-topic` o `KIT_NTFY_TOPIC`), nunca el repo.
 
 ## Comandos
 

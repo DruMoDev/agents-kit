@@ -32,14 +32,20 @@ case "$err" in *"sin remoto de GitHub"*) ;; *) fail "origin no GitHub: stderr '$
 (cd "$r" && git remote set-url origin git@github.com:dru/demo.git)
 : > "$GH_LOG"
 out="$(GH_STUB_MODE=ok bash "$setup" "$r" 2>&1)" || fail "setup ok: exit $?"
-n="$(grep -c '^label create .*--force' "$GH_LOG")"
-[ "$n" -eq 5 ] || fail "esperadas 5 labels con --force, hay $n"
-for l in listo propuesta en-curso necesita-decision bloqueado; do
+grep -q -- '--force' "$GH_LOG" && fail "setup: usa --force (pisaría etiquetas existentes)"
+grep -q '^label list .*--repo dru/demo' "$GH_LOG" || fail "setup: no lista las etiquetas existentes"
+kit_labels="en-curso necesita-respuesta bloqueado propuesta someday registro prio:alta prio:media prio:baja"
+n="$(grep -c '^label create ' "$GH_LOG")"
+[ "$n" -eq 9 ] || fail "esperadas 9 etiquetas creadas, hay $n"
+for l in $kit_labels; do
   grep -q "^label create $l " "$GH_LOG" || fail "falta label $l"
+done
+for l in listo necesita-decision; do
+  grep -q "^label create $l " "$GH_LOG" && fail "crea la etiqueta v2 $l"
 done
 grep -q '^repo edit .*--enable-squash-merge' "$GH_LOG" || fail "repo edit sin squash"
 grep -q '^repo edit .*--delete-branch-on-merge' "$GH_LOG" || fail "repo edit sin delete-branch"
-grep -q '^issue create .*📦 Changelog' "$GH_LOG" || fail "no crea issue Changelog"
+grep -q '^issue create .*📦 Changelog.*--label registro' "$GH_LOG" || fail "no crea issue Changelog con registro"
 grep -q '^issue pin' "$GH_LOG" || fail "no fija issue"
 case "$out" in *"FIN: ok"*) ;; *) fail "setup sin FIN: ok";; esac
 while IFS= read -r line; do
@@ -47,11 +53,44 @@ while IFS= read -r line; do
   case "$line" in *"dru/demo"*) ;; *) fail "gh sin repo explícito: $line";; esac
 done < "$GH_LOG"
 
-# --- setup: idempotent with existing issue (fuzzy neighbour must not match)
+# --- setup: existing labels are kept (never recreated); only the missing ones are created
+: > "$GH_LOG"
+out="$(GH_STUB_MODE=labels-exist bash "$setup" "$r" 2>&1)" || fail "setup labels-exist: exit $? ($out)"
+for l in en-curso prio:alta; do
+  grep -q "^label create $l " "$GH_LOG" && fail "recrea la etiqueta existente $l"
+done
+n="$(grep -c '^label create ' "$GH_LOG")"
+[ "$n" -eq 7 ] || fail "labels-exist: esperadas 7 creadas, hay $n"
+case "$out" in *"etiqueta: en-curso (ya existía)"*"etiqueta: necesita-respuesta (creada)"*) ;; *) fail "labels-exist: salida '$out'";; esac
+
+# --- setup: label list fails -> exit 2, nothing created
+: > "$GH_LOG"
+GH_STUB_MODE=label-list-fails bash "$setup" "$r" >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] || fail "label list roto: exit $rc"
+grep -q '^label create' "$GH_LOG" && fail "label list roto: creó etiquetas"
+
+# --- setup: idempotent with existing issue (fuzzy neighbour must not match); registro is added to it
 : > "$GH_LOG"
 GH_STUB_MODE=issue-exists bash "$setup" "$r" >/dev/null 2>&1 || fail "setup rerun: exit $?"
 grep -q '^issue create' "$GH_LOG" && fail "vuelve a crear el issue existente"
+grep -q '^issue edit 7 .*--add-label registro' "$GH_LOG" || fail "no añade registro al issue existente"
 grep -q '^issue pin 7' "$GH_LOG" || fail "no fija el issue existente"
+
+# --- setup: "changelog": false in the marker -> no changelog issue at all
+echo '{"changelog": false}' > "$r/.agents-kit.json"
+: > "$GH_LOG"
+out="$(GH_STUB_MODE=ok bash "$setup" "$r" 2>&1)" || fail "changelog false: exit $? ($out)"
+grep -Eq '^issue (list|create|pin|edit)' "$GH_LOG" && fail "changelog false: toca el issue de changelog"
+grep -q '^label create registro ' "$GH_LOG" || fail "changelog false: la etiqueta registro se crea igual"
+case "$out" in *"sin changelog"*"FIN: ok"*) ;; *) fail "changelog false: salida '$out'";; esac
+echo '{"changelog": true}' > "$r/.agents-kit.json"
+: > "$GH_LOG"
+GH_STUB_MODE=ok bash "$setup" "$r" >/dev/null 2>&1 || fail "changelog true: exit $?"
+grep -q '^issue create' "$GH_LOG" || fail "changelog true: no crea el issue"
+echo '{' > "$r/.agents-kit.json"
+GH_STUB_MODE=ok bash "$setup" "$r" >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] || fail "marcador roto: exit $rc"
+rm "$r/.agents-kit.json"
 
 # --- ship: trunk default
 r="$(mk_with_origin trunk)"; : > "$GH_LOG"

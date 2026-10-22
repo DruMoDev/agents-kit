@@ -35,22 +35,30 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 
 - `kit-on`: activa el kit en el repo actual. Crea `.agents-kit.json`, `AGENTS.md`, `CLAUDE.md` y `CHANGELOG.md` si faltan, ordena un `AGENTS.md` existente, configura GitHub (etiquetas, issue de changelog, borrado de rama al fusionar) y lo envía todo por un PR que se fusiona. Si se interrumpe, se relanza y retoma.
 - `kit-off`: borra `.agents-kit.json` por PR. `AGENTS.md`, `CHANGELOG.md` y las skills del proyecto se quedan.
-- `kit-plan <objetivo>`: acuerda contigo el comportamiento (una pregunta cada vez), propone el desglose y, cuando lo apruebas, crea los issues con la etiqueta `listo`.
-- `kit-scout`: busca bugs, tests que faltan, deuda y docs obsoletas, y abre como máximo 5 issues `propuesta`.
-- `kit-run`: coge los issues `listo` por orden y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (o gate local si no corre ningún check sobre la PR), rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza. Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
+- `kit-plan <objetivo>`: acuerda contigo el comportamiento (una pregunta cada vez), propone el desglose y, cuando lo apruebas, crea los issues con la prioridad acordada (`prio:alta`, `prio:media` o `prio:baja`).
+- `kit-scout`: busca bugs, tests que faltan, deuda y docs obsoletas, y abre como máximo 5 issues `propuesta` (con prioridad puesta por el agente).
+- `kit-run`: coge los issues abiertos por orden (ver "Backlog") y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (o gate local si no corre ningún check sobre la PR), rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza. Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
 
 Cómo se invocan:
 
 - Claude Code: `/agents-kit:kit-on`, `/agents-kit:kit-off`, `/agents-kit:kit-plan`, `/agents-kit:kit-run`, `/agents-kit:kit-scout`.
 - Codex y OpenCode: pídeselo por nombre (kit-on, kit-off, kit-plan, kit-run, kit-scout).
 
+### Backlog
+
+`kit-run` puede coger cualquier issue abierto salvo los que llevan `en-curso`, `necesita-respuesta`, `bloqueado`, `propuesta`, `someday` o `registro`. Orden: `prio:alta`, `prio:media`, sin prioridad, `prio:baja`; dentro de cada grupo, el más antiguo. Un issue sin cuerpo nunca se trabaja: pasa a `necesita-respuesta` pidiendo el detalle. `en-curso` excluye siempre, lo haya puesto el kit u otro flujo.
+
+Etiquetas del kit (`kit-on` crea solo las que faltan; las que ya existen conservan su color y descripción): `en-curso`, `necesita-respuesta`, `bloqueado`, `propuesta`, `someday` (fuera del reparto por ahora), `registro` (el issue fijado "📦 Changelog") y `prio:alta|media|baja`. La única vía de alta es `scripts/kit-issue.sh crear <raíz> <título> <fichero> --prio alta|media|baja [--etiqueta X]... [--propuesta]`.
+
+Repos activados con la v2: `listo` ya no significa nada (un issue con `listo` es un issue abierto más) y `necesita-decision` (v2) cuenta como `necesita-respuesta`, así que esos issues siguen fuera del reparto hasta que quites la etiqueta.
+
 ### Issues que esperan a Dru
 
-- **Aprobar una propuesta:** cambia la etiqueta `propuesta` por `listo` (`gh issue edit <n> --remove-label propuesta --add-label listo`). Las que no quieras, ciérralas.
-- **`necesita-decision`:** el agente dejó una pregunta de producto en un comentario y la PR, si existía, en borrador. Responde en el issue y quita `necesita-decision` (`gh issue edit <n> --remove-label necesita-decision`); `listo` sigue puesto, no hay que volver a ponerlo. El siguiente `kit-run` lo retoma con tu respuesta.
-- **`bloqueado`:** el comentario explica qué falta (un check colgado, el límite de rondas...). Arréglalo, responde en el issue y quita `bloqueado`; `listo` sigue puesto, no hay que volver a ponerlo.
-- **PR sin fusionar (`autoMerge` falso):** revísala y fusiónala tú. El issue se cierra solo, pero conserva las etiquetas `listo` y `en-curso`: quítalas a mano (`gh issue edit <n> --remove-label listo --remove-label en-curso`).
-- **Reclamo colgado:** el resumen de `kit-run` lista los issues `listo` con `en-curso` que no reclamó esa ejecución, con el comando `kit-issue.sh soltar` exacto. Suéltalo solo si ningún agente lo está trabajando.
+- **Aprobar una propuesta:** quítale la etiqueta `propuesta` (`gh issue edit <n> --remove-label propuesta`). Las que no quieras, ciérralas o ponles `someday`.
+- **`necesita-respuesta`:** el agente dejó una pregunta en un comentario (de producto, o el detalle que le falta a un issue sin cuerpo) y la PR, si existía, en borrador. Responde en el issue (o completa el cuerpo) y quita `necesita-respuesta` (`gh issue edit <n> --remove-label necesita-respuesta`); no hace falta poner otra etiqueta. El siguiente `kit-run` lo retoma con tu respuesta. En issues de la v2, quita `necesita-decision`.
+- **`bloqueado`:** el comentario explica qué falta (un check colgado, el límite de rondas...). Arréglalo, responde en el issue y quita `bloqueado`.
+- **PR sin fusionar (`autoMerge` falso):** revísala y fusiónala tú. El issue se cierra solo, pero conserva la etiqueta `en-curso`: quítala a mano (`gh issue edit <n> --remove-label en-curso`).
+- **Reclamo colgado:** el resumen de `kit-run` lista los issues con `en-curso` que no reclamó esa ejecución: los del kit con el comando `kit-issue.sh soltar` exacto (suéltalo solo si ningún agente lo está trabajando); los de otro flujo, solo para que lo sepas.
 
 ### Changelog
 
@@ -58,7 +66,7 @@ Cada PR que cambia algo para quien usa la app añade su entrada en `CHANGELOG.md
 
 ### Avisos
 
-Te llegan al móvil cuando un issue pasa a `necesita-decision` o `bloqueado` y al terminar cada `kit-run` (si fusionó algo o hay issues esperándote). Canal en `notify` de la configuración global `~/.agents-kit/config.json` (un repo no puede cambiarlo):
+Te llegan al móvil cuando un issue pasa a `necesita-respuesta` o `bloqueado` y al terminar cada `kit-run` (si fusionó algo o hay issues esperándote). Canal en `notify` de la configuración global `~/.agents-kit/config.json` (un repo no puede cambiarlo):
 
 - `ntfy` (por defecto): instala la app ntfy y suscríbete al tema que te da `kit-on` (o `cat ~/.agents-kit/ntfy-topic`). El tema se genera una vez en tu máquina y sirve para todos tus repos; para usar otro, define `KIT_NTFY_TOPIC`. Un repo nunca elige el tema. El tema es el único secreto: los avisos pasan por ntfy.sh y quien lo conozca puede leerlos (llevan el nombre del repo y el título del issue).
 - `claude-push`: notificación de Claude Code al móvil. Solo funciona dentro de una sesión de Claude Code con Remote Control conectado; no en Codex, OpenCode ni `claude -p`.

@@ -3,7 +3,7 @@
 #
 # State: $GH_STATE/state.json, shaped like gh's --json output:
 #   {"issues": [{"number": 1, "title": "...", "body": "...", "state": "OPEN",
-#                "labels": [{"name": "listo"}], "assignees": [{"login": "dru"}],
+#                "labels": [{"name": "en-curso"}], "assignees": [{"login": "dru"}],
 #                "comments": [{"id": "IC_1_0", "body": "...", "author": {"login": "dru"}, "url": "..."}]}],
 #                # comments in creation order; issue view fills a missing author (GH_USER) and url
 #    "prs": []}

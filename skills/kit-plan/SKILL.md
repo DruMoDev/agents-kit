@@ -1,6 +1,6 @@
 ---
 name: kit-plan
-description: Convierte un objetivo de producto en issues `listo` de GitHub, acordando el comportamiento con Dru. Úsala cuando Dru escriba kit-plan <objetivo> o pida planificar trabajo en issues.
+description: Convierte un objetivo de producto en issues de GitHub con prioridad, acordando el comportamiento con Dru. Úsala cuando Dru escriba kit-plan <objetivo> o pida planificar trabajo en issues.
 ---
 
 # kit-plan
@@ -14,10 +14,12 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
 ## Pasos
 
 1. **Marcador.** `git rev-parse --show-toplevel` da la raíz. Si no existe `<raíz>/.agents-kit.json`, di `kit no activado: ejecuta kit-on` y para.
-2. **Producto.** Lee `AGENTS.md` y el código que toca el objetivo para no preguntar lo que ya se sabe. Después habla con Dru de producto: comportamiento, casos, mensajes que se ven y lo que no entra. Una pregunta cada vez. Lo técnico no se pregunta: lo decides tú.
-3. **Desglose.** Propón la lista de issues: título y una línea por cada uno. Cada issue es un objetivo completo de punta a punta que se puede probar solo: nada de trocear por capas o líneas de código, y nada de PRs enormes. Espera una aprobación explícita de Dru; si pide cambios, vuelve a proponer.
-4. **Crear.** Por cada issue, escribe el cuerpo con la plantilla de `references/issue.md` en un fichero temporal (`mktemp`) y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" crear <raíz> "<título>" <fichero> listo`. En "Verificado y supuesto" separa lo que comprobaste en el código de lo que das por hecho.
+2. **Producto.** Lee `AGENTS.md` y el código que toca el objetivo para no preguntar lo que ya se sabe. Después habla con Dru de producto: comportamiento, casos, mensajes que se ven y lo que no entra. Una pregunta cada vez, y solo lo que falte; si ya se entiende, no preguntes. Lo técnico no se pregunta: lo decides tú (salvo que no sepas la respuesta o sea una decisión con consecuencias que se van a arrastrar). No inventes el criterio de aceptación: si no sabes cómo se sabrá que está hecho, eso es lo que se pregunta.
+3. **Duplicados.** Antes de proponer nada, busca duplicados: `gh issue list --repo <slug> --state open --limit 300 --json number,title,labels` (`<slug>` = `owner/repo` del remoto `origin`) y busca por dos o tres palabras del problema, no por el título que le ibas a poner. Si uno abierto ya cubre lo mismo, no lo dupliques: proponle a Dru ajustarle la prioridad y dejarle un comentario con lo nuevo.
+4. **Desglose.** Propón la lista de issues: título, `prio` (`alta`, `media` o `baja`, propuesta por ti) y una línea por cada uno. Cada issue es un objetivo completo de punta a punta que se puede probar solo: nada de trocear por capas o líneas de código, y nada de PRs enormes. Espera una aprobación explícita de Dru (también de las prioridades); si pide cambios, vuelve a proponer.
+5. **Crear.** Por cada issue, escribe el cuerpo con la plantilla de `references/issue.md` en un fichero temporal (`mktemp`) y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" crear <raíz> "<título>" <fichero> --prio <prio>`, con un `--etiqueta <área>` por cada etiqueta de área del proyecto que aplique (solo las que ya existen en el repo). Nunca `gh issue create` a pelo: es la única vía de alta. En "Lo verificado" va lo que comprobaste, con su ruta; en "Lo que solo se cree", lo que das por hecho, marcado como sin verificar.
    - Exit 0: la URL es la línea `FIN: <url>`.
    - Exit 1 con `ya existe #<n> con ese título`: no lo dupliques; anótalo para el resumen.
-   - Exit 2: error de entorno (gh, remoto). Explícalo, di qué issues quedan sin crear y para.
-5. **Resumen.** Lista las URLs creadas y los que ya existían. `kit-run` los coge por orden de número.
+   - Exit 2: error de entorno (gh, remoto, una etiqueta que no existe). Explícalo, di qué issues quedan sin crear y para.
+   - Para comprobar las etiquetas de un issue recién creado usa `gh issue view <N> --repo <slug> --json labels`: `gh issue list` tarda en reflejarlas.
+6. **Resumen.** Lista las URLs creadas y los que ya existían. Todo issue abierto entra en el reparto de `kit-run`: primero `prio:alta`, luego `prio:media`, los que no tienen prioridad y `prio:baja`; dentro de cada grupo, el más antiguo.

@@ -78,10 +78,27 @@ for sk in "$plan" "$run" "$scout"; do
   grep -q 'kit no activado: ejecuta kit-on' "$sk" || fail "$sk must refuse without the marker"
   grep -q 'scripts/kit-issue.sh' "$sk" || fail "$sk must use scripts/kit-issue.sh"
 done
-grep -Eq 'kit-issue.sh" crear .* listo' "$plan" || fail "kit-plan creates issues as listo"
+grep -Eq 'kit-issue.sh" crear .* --prio' "$plan" || fail "kit-plan creates issues with --prio"
+grep -q 'prio' "$plan" && grep -Eq 'Desglose.*prio' "$plan" || fail "kit-plan must propose the prio in the breakdown"
 grep -q 'references/issue.md' "$plan" || fail "kit-plan must use the issue template"
-grep -Eq 'kit-issue.sh" crear .* propuesta' "$scout" || fail "kit-scout creates issues as propuesta"
-grep -Eq 'crear .* listo' "$scout" && fail "kit-scout must never create listo issues"
+grep -Eq 'kit-issue.sh" crear .* --prio .*--propuesta' "$scout" || fail "kit-scout creates issues with --prio and --propuesta"
+grep -q -- '--remove-label propuesta' "$scout" || fail "kit-scout: approving is removing propuesta"
+# v3 backlog: listo is gone; it only survives as a v2 compatibility note
+for f in "$plan" "$scout" "$run" "$REPO_ROOT/skills/kit-plan/references/issue.md"; do
+  grep -Eq 'crear .* (listo|propuesta)$|crear .* (listo|propuesta)`' "$f" && fail "$f: v2 crear syntax"
+  grep -q 'add-label listo' "$f" && fail "$f: tells to add listo"
+done
+grep -q '`listo`' "$plan" && fail "kit-plan still mentions listo"
+grep -q '`listo`' "$scout" && fail "kit-scout still mentions listo"
+for f in "$plan" "$scout"; do
+  grep -q 'duplicad' "$f" || fail "$f must search for duplicates before creating"
+  grep -q -- '--limit 300' "$f" || fail "$f must search the 300 most recent open issues"
+done
+grep -q 'gh issue view <N> --repo <slug> --json labels' "$plan" || fail "kit-plan must verify labels with view, not list"
+issue_md="$REPO_ROOT/skills/kit-plan/references/issue.md"
+for w in 'Lo verificado' 'Lo que solo se cree' 'sin verificar' 'Decisiones de producto' 'Qué NO entra'; do
+  grep -q "$w" "$issue_md" || fail "issue.md must have '$w'"
+done
 grep -q 'references/issue.md' "$scout" || fail "kit-scout must use the issue template"
 for sc in kit-worktree.sh kit-pr.sh kit-review-all.sh lib/config.sh; do
   grep -q "scripts/$sc" "$run" || fail "kit-run must use scripts/$sc"
@@ -102,18 +119,23 @@ grep -q 'kit_origin_slug' "$run" || fail "kit-run must take the repo slug from o
 grep -q 'kit-pr.sh" historial' "$run" || fail "kit-run must continue round numbering from historial"
 grep -q 'ninguno aplicado' "$REPO_ROOT/skills/kit-run/references/ronda.md" || fail "ronda.md must stop when nothing was applied"
 grep -q 'gh issue list --repo <slug>' "$scout" || fail "kit-scout gh calls need --repo"
-# after decision/bloquear Dru only answers and drops the label: listo stays on the issue
+# after decision/bloquear Dru only answers and drops the label; necesita-decision (v2) still counts
 for f in "$run" "$REPO_ROOT/README.md"; do
-  grep -q '`listo` sigue puesto, no hay que volver a ponerlo' "$f" || fail "$f must say listo stays after decision/bloquear"
+  grep -q 'necesita-respuesta' "$f" || fail "$f must use necesita-respuesta"
+  grep -q '`necesita-decision` (v2)' "$f" || fail "$f must treat necesita-decision as a v2 alias"
 done
+grep -q 'FIN: necesita-respuesta #<N>' "$run" || fail "kit-run must expect FIN: necesita-respuesta"
+grep -q 'sin cuerpo' "$run" || fail "kit-run must send body-less issues to necesita-respuesta"
 grep -Eiq 'add-label listo|(vuelve|volver) a poner `listo`|(añade|pon|ponle) `listo`' "$run" && fail "kit-run tells Dru to re-add listo"
+grep -q 'no hay issues disponibles' "$run" || fail "kit-run must end the loop on 'no hay issues disponibles'"
 grep -q 'falta una ronda nueva' "$run" || fail "kit-run must handle the applied-round refusal of fusionar"
-grep -q 'listo --label en-curso' "$run" || fail "kit-run summary must list possible stale claims"
+grep -q 'gh issue list --repo <slug> --state open --label en-curso' "$run" || fail "kit-run summary must list possible stale claims"
+grep -qi 'sin marcador del kit' "$run" && grep -q 'no ofrezcas soltarlo' "$run" || fail "kit-run must list en-curso without kit marker without offering soltar"
 grep -q 'kit-issue.sh" soltar <raíz> <N> <id> "reclamo colgado"' "$run" || fail "kit-run must give the exact soltar command for stale claims"
 grep -q 'KIT_CI_GRACE' "$run" || fail "kit-run must explain sin-ci after the grace period"
 grep -q 'no se ejecutan en PRs' "$run" && fail "kit-run keeps the obsolete workflows-never-run guidance"
-grep -q 'autoMerge` falso' "$REPO_ROOT/README.md" && grep -q 'quítalas a mano' "$REPO_ROOT/README.md" \
-  || fail "README must say labels stay after Dru merges with autoMerge false"
+grep -q 'autoMerge` falso' "$REPO_ROOT/README.md" && grep -q 'quítala a mano' "$REPO_ROOT/README.md" \
+  || fail "README must say en-curso stays after Dru merges with autoMerge false"
 # phase 3: changelog and notifications
 for w in 'kit-changelog.sh" validar' 'kit-changelog.sh" resumen' 'scripts/kit-notify.sh' 'AVISO-CLAUDE' 'docs/changelog/' 'PushNotification'; do
   grep -qF "$w" "$run" || fail "kit-run must mention $w"
@@ -122,7 +144,7 @@ grep -q 'llegan en la fase 3' "$run" && fail "kit-run keeps the phase 3 placehol
 grep -q 'tema ntfy nuevo: <tema>' "$run" && grep -q 'suscríbete' "$run" \
   || fail "kit-run must pass a new ntfy topic to Dru with the subscribe instruction"
 grep -q 'si `resumen` falla, avisa igual sin URL' "$run" || fail "kit-run must notify without URL when resumen fails"
-grep -q 'pasaron a `necesita-decision` o `bloqueado` en esta ejecución' "$run" \
+grep -q 'pasaron a `necesita-respuesta` o `bloqueado` en esta ejecución' "$run" \
   || fail "kit-run summary trigger must be limited to this run"
 # no inline bash in the skill: under zsh it broke (bad substitution); the launcher is a script
 grep -q 'pids' "$run" && fail "kit-run keeps the inline reviewer launcher"

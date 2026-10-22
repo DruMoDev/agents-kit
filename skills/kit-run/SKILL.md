@@ -1,17 +1,17 @@
 ---
 name: kit-run
-description: Lleva los issues `listo` hasta main uno a uno: worktree, tests, PR, CI, rondas de revisión con varios modelos y squash merge. Úsala cuando Dru escriba kit-run.
+description: Lleva los issues abiertos del backlog hasta main uno a uno: worktree, tests, PR, CI, rondas de revisión con varios modelos y squash merge. Úsala cuando Dru escriba kit-run.
 ---
 
 # kit-run
 
-Bucle sobre los issues `listo` del repo hasta que no quede ninguno. Los scripts hacen lo mecánico y guardan el estado en GitHub; tú encuadras, implementas, decides sobre cada hallazgo y explicas.
+Bucle sobre los issues abiertos del repo que entran en el reparto hasta que no quede ninguno: todos salvo los que llevan `en-curso`, `necesita-respuesta` (o `necesita-decision` (v2), que cuenta igual), `bloqueado`, `propuesta`, `someday` o `registro`, por orden `prio:alta`, `prio:media`, sin prioridad, `prio:baja` y, dentro, el más antiguo. En un repo de la v2, `listo` ya no significa nada: un issue con `listo` es un issue abierto más. Los scripts hacen lo mecánico y guardan el estado en GitHub; tú encuadras, implementas, decides sobre cada hallazgo y explicas.
 
 Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa variable está vacía, la raíz del plugin está dos directorios por encima del directorio base de esta skill. Abajo, `$PLUGIN` es esa raíz.
 
 ## Reglas
 
-- Nunca te salgas del scope del issue. Lo que encuentres fuera se abre con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" crear <raíz> "<título>" <fichero> propuesta` (plantilla de `skills/kit-plan/references/issue.md`).
+- Nunca te salgas del scope del issue. Lo que encuentres fuera se abre con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" crear <raíz> "<título>" <fichero> --prio <prio> --propuesta` (plantilla de `skills/kit-plan/references/issue.md`, con la evidencia; antes busca duplicados entre los abiertos).
 - Nunca afirmes nada que no hayas ejecutado.
 - Lee la salida completa de cada script hasta su línea `FIN:` y su código de salida; nunca la recortes con `head` ni `tail`. Exit 1 es un rechazo con motivo en stderr; exit 2, un error de entorno.
 - Una duda de producto nunca la resuelves tú: ve al paso 7.
@@ -26,12 +26,13 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 
 ## Por cada issue
 
-1. **Coger.** `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" siguiente <raíz>`: exit 0 da `<N>` en `FIN: <N>`; exit 1 (`no hay issues listos`) termina el bucle y vas al resumen. Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" reclamar <raíz> <N> <id>`:
-   - Exit 1: otro agente lo cogió antes. Vuelve a `siguiente`.
+1. **Coger.** `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" siguiente <raíz>`: exit 0 da `<N>` en `FIN: <N>`; exit 1 (`no hay issues disponibles`) termina el bucle y vas al resumen. Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" reclamar <raíz> <N> <id>`:
+   - Exit 1: otro agente lo cogió antes, o ya tiene `en-curso` (puesto por el kit u otro flujo). Vuelve a `siguiente`.
    - Exit 2 con `no se pudo comentar en`, o con `reclamación deshecha` sin `no se pudo deshacer`: no queda reclamo tuyo. Explícalo y para.
    - Cualquier otro exit 2, incluido `no se pudo deshacer` (el reclamo se publicó y puede seguir ahí): dile a Dru que puede quedar colgado y dale el comando exacto para soltarlo, `"$PLUGIN/scripts/kit-issue.sh" soltar <raíz> <N> <id> "reclamo sin confirmar"` con los valores reales. Para.
 2. **Encuadrar.**
    - Lee el issue entero con sus comentarios (`gh issue view <N> --repo <slug> --comments`), incluidas las respuestas de Dru a un `<!-- kit-decision -->`; lee `AGENTS.md` y el código afectado.
+   - Si el issue no tiene cuerpo (vacío o solo espacios), nunca se coge: escribe en un fichero qué detalle falta (problema, criterio observable, qué no entra) y ve al paso 7. Así queda sin cuerpo en `necesita-respuesta` hasta que Dru lo complete.
    - Verifica que lo que nombra el issue existe y sigue vigente.
    - Si está obsoleto o ya está hecho: `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" soltar <raíz> <N> <id> "<motivo>"`, luego `gh issue close <N> --repo <slug> --comment "<evidencia>"`, y siguiente issue.
    - Si le falta producto: paso 7.
@@ -58,19 +59,21 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
    - Exit 1 con `rebasada sobre ...`: el script ya rebasó y empujó. Vuelve a la puerta de CI del paso 4 y reintenta.
    - Otro exit 1: lee cada motivo. Corrige lo que puedas (conflicto, CI, ronda pendiente) y reintenta; si no, bloquea. `la última ronda aplicó cambios: falta una ronda nueva` significa volver al paso 5 con la ronda siguiente.
    - Con `.autoMerge` falso: deja la PR lista sin fusionar ni limpiar; el issue sigue `en-curso` y se cierra solo al fusionarla Dru. Anótala para el resumen.
-7. **Duda de producto, en cualquier paso.** Si ya hay PR, `gh pr ready --undo <pr> --repo <slug>`. Escribe la pregunta (contexto, opciones y lo que propones) en un fichero y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" decision <raíz> <N> <id> <fichero>` (`FIN: necesita-decision #<N>`). El worktree se queda. Siguiente issue.
+7. **Duda de producto, en cualquier paso.** Si ya hay PR, `gh pr ready --undo <pr> --repo <slug>`. Escribe la pregunta (contexto, opciones y lo que propones) en un fichero y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" decision <raíz> <N> <id> <fichero>` (`FIN: necesita-respuesta #<N>`; pone `necesita-respuesta`). El worktree se queda, si lo había. Siguiente issue.
 
 **Bloquear:** escribe el motivo y lo pendiente en un fichero y ejecuta `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" bloquear <raíz> <N> <id> <fichero>` (`FIN: bloqueado #<N>`). Si había PR, antes `gh pr ready --undo <pr> --repo <slug>`. El worktree se queda.
 
 ## Resumen final
 
-Cuando `siguiente` da exit 1, antes del texto del chat: si en esta ejecución fusionaste alguna PR o hay issues que pasaron a `necesita-decision` o `bloqueado` en esta ejecución (los que ya esperaban antes de empezar no cuentan), escribe el resumen en un fichero temporal (cada PR fusionada con su línea corta del changelog y su URL, y cada uno de esos issues con su URL y qué tiene que hacer Dru) y publícalo con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-changelog.sh" resumen <raíz> <id> <fichero>`; la URL del comentario es la línea `FIN: <url>` (si ya estaba publicado, no se duplica). Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-notify.sh" <raíz> "<repo>: kit-run terminado" "<n> fusionadas, <m> esperan" <url del comentario>`; si `resumen` falla, avisa igual sin URL (sin el último argumento). Si no pasó nada de eso, ni resumen ni aviso. Si alguno de los dos falla (por ejemplo, exit 2 `no hay issue "📦 Changelog": ejecuta kit-on`), no pares: cuéntalo en el chat.
+Cuando `siguiente` da exit 1, antes del texto del chat: si en esta ejecución fusionaste alguna PR o hay issues que pasaron a `necesita-respuesta` o `bloqueado` en esta ejecución (los que ya esperaban antes de empezar no cuentan), escribe el resumen en un fichero temporal (cada PR fusionada con su línea corta del changelog y su URL, y cada uno de esos issues con su URL y qué tiene que hacer Dru) y publícalo con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-changelog.sh" resumen <raíz> <id> <fichero>`; la URL del comentario es la línea `FIN: <url>` (si ya estaba publicado, no se duplica). Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-notify.sh" <raíz> "<repo>: kit-run terminado" "<n> fusionadas, <m> esperan" <url del comentario>`; si `resumen` falla, avisa igual sin URL (sin el último argumento). Si no pasó nada de eso, ni resumen ni aviso. Si alguno de los dos falla (por ejemplo, exit 2 `no hay issue "📦 Changelog": ejecuta kit-on`), no pares: cuéntalo en el chat.
 
 Después escribe en el chat:
 
 - Cada PR fusionada (su URL) y cada issue cerrado por obsoleto.
 - Si algún script imprimió `tema ntfy nuevo: <tema>`: el tema y "instala la app ntfy y suscríbete a ese tema".
 - Cada issue que espera a Dru, con su URL y qué tiene que hacer:
-  - `necesita-decision` o `bloqueado`: responde en el issue y quita `necesita-decision` (o `bloqueado`); `listo` sigue puesto, no hay que volver a ponerlo. El siguiente `kit-run` lo retoma.
-  - PR sin fusionar por `autoMerge` falso: revisarla y fusionarla; después, quitar a mano `listo` y `en-curso` del issue cerrado.
-- Posibles reclamos colgados: los issues abiertos con `listo` y `en-curso` que no reclamaste en esta ejecución (`gh issue list --repo <slug> --state open --label listo --label en-curso --json number,url`). Para cada uno, saca el `<id>` del último `<!-- kit-reclamado: <id> -->` de sus comentarios (`gh issue view <N> --repo <slug> --comments`) y dale a Dru el comando exacto con los valores reales: `"$PLUGIN/scripts/kit-issue.sh" soltar <raíz> <N> <id> "reclamo colgado"`. Avisa de que solo debe soltarlo si ningún agente lo está trabajando.
+  - `necesita-respuesta` o `bloqueado`: responde en el issue (o completa el cuerpo) y quita `necesita-respuesta` (o `bloqueado`). No hay que poner ninguna otra etiqueta: el siguiente `kit-run` lo retoma. Un issue de la v2 con `necesita-decision` (v2) se trata igual: quita `necesita-decision`.
+  - PR sin fusionar por `autoMerge` falso: revisarla y fusionarla; después, quitar a mano `en-curso` del issue cerrado.
+- Posibles reclamos colgados: los issues abiertos con `en-curso` que no reclamaste en esta ejecución (`gh issue list --repo <slug> --state open --label en-curso --json number,url`). Para cada uno, mira sus comentarios (`gh issue view <N> --repo <slug> --comments`):
+  - Con marcador del kit: saca el `<id>` del último `<!-- kit-reclamado: <id> -->` y dale a Dru el comando exacto con los valores reales: `"$PLUGIN/scripts/kit-issue.sh" soltar <raíz> <N> <id> "reclamo colgado"`. Avisa de que solo debe soltarlo si ningún agente lo está trabajando.
+  - Sin marcador del kit (lo puso otro flujo, como `resolver-issue`): lístalo con su URL como "en curso por otro flujo"; no ofrezcas soltarlo.

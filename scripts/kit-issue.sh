@@ -5,8 +5,10 @@
 #   soltar    <root> <N> <id> [motivo]
 #   decision  <root> <N> <id> <fichero-pregunta>
 #   bloquear  <root> <N> <id> <fichero-motivo>
-#   crear     <root> <titulo> <fichero-cuerpo> <listo|propuesta>
+#   crear     <root> <titulo> <fichero-cuerpo> --prio alta|media|baja [--etiqueta X]... [--propuesta]
 # Issue state for the agent flow. Claims live in HTML-comment markers on the issue.
+# siguiente: any open issue without en-curso, necesita-respuesta (or the v2 necesita-decision), bloqueado, propuesta,
+# someday or registro (nor the "📦 Changelog" issue of a v2 repo); prio:alta, prio:media, none, prio:baja, oldest first.
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -u
@@ -17,7 +19,7 @@ source "$here/lib/config.sh"
 usage() {
   echo "uso: $0 siguiente <root> | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
     "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> |" \
-    "crear <root> <titulo> <fichero-cuerpo> <listo|propuesta>" >&2
+    "crear <root> <titulo> <fichero-cuerpo> --prio alta|media|baja [--etiqueta X]... [--propuesta]" >&2
   exit 1
 }
 
@@ -32,7 +34,35 @@ case "$sub" in
   siguiente) [ $# -eq 0 ] || usage ;;
   reclamar) [ $# -eq 2 ] || usage ;;
   soltar) [ $# -eq 2 ] || [ $# -eq 3 ] || usage ;;
-  decision|bloquear|crear) [ $# -eq 3 ] || usage ;;
+  decision|bloquear) [ $# -eq 3 ] || usage ;;
+  crear)
+    [ $# -ge 2 ] || usage
+    title="$1"; file="$2"; shift 2
+    [ -n "$title" ] || usage
+    prio=""; propuesta=false; extra=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --prio)
+          [ $# -ge 2 ] || { echo "falta el valor de --prio (alta, media o baja)" >&2; exit 1; }
+          case "$2" in alta|media|baja) prio="$2" ;; *) echo "prioridad inválida: $2 (alta, media o baja)" >&2; exit 1 ;; esac
+          shift 2 ;;
+        --etiqueta)
+          [ $# -ge 2 ] && [ -n "$2" ] || { echo "falta el valor de --etiqueta" >&2; exit 1; }
+          case "$2" in
+            *,*) echo "etiqueta inválida: $2 (sin comas; repite --etiqueta)" >&2; exit 1 ;;
+            prio:*) echo "la prioridad va en --prio, no en --etiqueta" >&2; exit 1 ;;
+            propuesta) echo "usa --propuesta en vez de --etiqueta propuesta" >&2; exit 1 ;;
+            listo|en-curso|necesita-respuesta|necesita-decision|bloqueado|registro)
+              echo "etiqueta de estado no admitida al crear: $2" >&2; exit 1 ;;
+          esac
+          extra+=("$2"); shift 2 ;;
+        --propuesta) propuesta=true; shift ;;
+        listo) echo "'listo' ya no existe en la v3: un issue abierto ya entra en el reparto; usa --prio alta|media|baja" >&2; exit 1 ;;
+        *) echo "argumento no reconocido: $1" >&2; usage ;;
+      esac
+    done
+    [ -n "$prio" ] || { echo "falta --prio alta|media|baja" >&2; exit 1; }
+    ;;
 esac
 if [ "$sub" != siguiente ] && [ "$sub" != crear ]; then
   n="$1"; id="$2"
@@ -109,17 +139,24 @@ read_file() { # <path>: print contents or exit 1
 
 case "$sub" in
   siguiente)
-    list="$(gh issue list --repo "$slug" --state open --label listo --limit 1000 --json number,labels)" \
+    list="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title,labels)" \
       || { echo "error: no se pudo listar los issues" >&2; exit 2; }
-    next="$(printf '%s' "$list" | jq -r 'map(select([.labels[].name] as $l
-        | ["en-curso", "necesita-decision", "bloqueado"] | any(. as $x | $l | index($x)) | not))
-      | min_by(.number) | .number // empty')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
-    [ -n "$next" ] || { echo "no hay issues listos" >&2; exit 1; }
+    next="$(printf '%s' "$list" | jq -r '
+        def rank: if index("prio:alta") then 0 elif index("prio:media") then 1 elif index("prio:baja") then 3 else 2 end;
+        map([.labels[].name] as $l | select(.title != "📦 Changelog"
+            and (["en-curso", "necesita-respuesta", "necesita-decision", "bloqueado", "propuesta", "someday", "registro"]
+              | any(. as $x | $l | index($x)) | not))
+          | {number, r: ($l | rank)})
+        | sort_by(.r, .number) | first | .number // empty')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+    [ -n "$next" ] || { echo "no hay issues disponibles" >&2; exit 1; }
     echo "$next"
     echo "FIN: $next"
     ;;
 
   reclamar)
+    # en-curso always excludes, whoever set it (another kit agent or another flow without kit markers)
+    l="$(has_label "$n" en-curso)" || { echo "error: no se pudo leer las etiquetas de #$n" >&2; exit 2; }
+    [ "$l" = true ] && { echo "#$n ya tiene en-curso: otro agente u otro flujo lo está trabajando" >&2; exit 1; }
     comment "$n" "<!-- kit-reclamado: $id -->
 Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     failed=""
@@ -160,7 +197,7 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
   decision|bloquear)
     text="$(read_file "$3")" || exit 1
     if [ "$sub" = decision ]; then
-      marker="<!-- kit-decision -->"; label=necesita-decision; motivo="necesita decisión de producto"; aviso="necesita decisión"
+      marker="<!-- kit-decision -->"; label=necesita-respuesta; motivo="necesita respuesta de Dru"; aviso="necesita respuesta"
     else
       marker="<!-- kit-bloqueado -->"; label=bloqueado; motivo="bloqueado"; aviso="bloqueado"
     fi
@@ -175,9 +212,6 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     ;;
 
   crear)
-    title="$1"; file="$2"; label="$3"
-    [ -n "$title" ] || usage
-    case "$label" in listo|propuesta) ;; *) echo "etiqueta inválida: $label (listo o propuesta)" >&2; exit 1 ;; esac
     read_file "$file" >/dev/null || exit 1
     list="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title)" \
       || { echo "error: no se pudo listar los issues" >&2; exit 2; }
@@ -185,8 +219,11 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
       'map(select((.title | ascii_downcase) == ($t | ascii_downcase))) | first | .number // empty')" \
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     [ -z "$dup" ] || { echo "ya existe #$dup con ese título" >&2; exit 1; }
-    url="$(gh issue create --repo "$slug" --title "$title" --body-file "$file" --label "$label")" \
-      || { echo "error: no se pudo crear el issue" >&2; exit 2; }
+    largs=(--label "prio:$prio")
+    $propuesta && largs+=(--label propuesta)
+    for e in ${extra[@]+"${extra[@]}"}; do largs+=(--label "$e"); done
+    url="$(gh issue create --repo "$slug" --title "$title" --body-file "$file" "${largs[@]}")" \
+      || { echo "error: no se pudo crear el issue (¿existen en el repo todas las etiquetas? kit-on crea las del kit)" >&2; exit 2; }
     case "$url" in https://*) ;; *) echo "error: gh no devolvió la URL del issue" >&2; exit 2 ;; esac
     echo "$url"
     echo "FIN: $url"

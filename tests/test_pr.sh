@@ -282,7 +282,7 @@ grep -q -- "--match-head-commit $sha" "$GH_LOG" || fail "merge sin --match-head-
 # fusionar: everything fine with green CI (no gate-local) -> merge and close the issue
 st '.workflows = 1 | .checks = [{"name":"ci","id":7,"status":"completed","conclusion":"success"}]
   | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-  | (.issues[] | select(.number == 3) | .labels) += [{name: "listo"}, {name: "otra"}]'
+  | (.issues[] | select(.number == 3) | .labels) += [{name: "otra"}]'
 : > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar: $out"
 grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA de la PR"
@@ -291,23 +291,23 @@ case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac
 [ "$(pr_q .state)" = MERGED ] || fail "no fusionó"
 [ "$(flow_issue 3 .state)" = CLOSED ] || fail "no cerró el issue"
 [ "$(flow_issue 3 '.comments[-1].body')" = "Resuelto en #$p." ] || fail "comentario de cierre"
-[ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra ] || fail "no quitó en-curso y listo: $(flow_issue 3 '.labels')"
-grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso --remove-label listo" "$GH_LOG" || fail "issue edit sin las etiquetas"
+[ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra ] || fail "no quitó en-curso: $(flow_issue 3 '.labels')"
+grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso$" "$GH_LOG" || fail "issue edit sin las etiquetas"
 grep -q -- "pr merge $p.*--squash" "$GH_LOG" || fail "merge sin --squash"
 grep -q -- "--delete-branch" "$GH_LOG" && fail "merge con --delete-branch"
 while IFS= read -r line; do case "$line" in *"dru/demo"*|"api user --jq .login") ;; *) fail "gh sin repo: $line";; esac; done < "$GH_LOG"
 
 # fusionar: a failing label cleanup is only a warning, the merge still counts
 st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}])'
 rm -f "$GH_STATE/.failed"
 GH_FAIL_ON="issue edit" bash "$pr" fusionar "$wt" $p 3 >"$GH_STATE/o" 2>"$GH_STATE/e"; rc=$?
 [ $rc -eq 0 ] || fail "etiquetas fallidas rompen la fusión: $rc $(cat "$GH_STATE/e")"
 [ "$(last_line "$(cat "$GH_STATE/o")")" = "FIN: ok" ] || fail "FIN con aviso de etiquetas"
-grep -q "etiquetas" "$GH_STATE/e" || fail "sin aviso de etiquetas: $(cat "$GH_STATE/e")"
+grep -q "etiqueta en-curso" "$GH_STATE/e" || fail "sin aviso de etiquetas: $(cat "$GH_STATE/e")"
 # fusionar: malformed CHANGELOG.md blocks the merge before gh pr merge
 st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+  | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}])'
 printf '# Changelog\n\n## 2026-10-18\n\n### Novedad: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
 : > "$GH_LOG"
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
@@ -323,7 +323,7 @@ echo CHANGELOG.md >> "$excl"
 printf '# Changelog\n\n## 2026-10-18\n\n### Nuevo: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
 reset_open() {
   st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-    | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "listo"}, {name: "en-curso"}])'
+    | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}])'
 }
 reset_open; : > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con changelog válido: $out"
