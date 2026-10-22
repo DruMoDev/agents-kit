@@ -1,0 +1,6 @@
+# Copia este fichero a .dev.vars para `npm run dev` (nunca subas .dev.vars).
+# Con datos de ejemplo y sin Access:
+DATA_SOURCE=fixtures
+DEV_BYPASS_ACCESS=1
+# Con datos reales: quita DATA_SOURCE y pon un token fine-grained de solo lectura.
+# GITHUB_TOKEN=

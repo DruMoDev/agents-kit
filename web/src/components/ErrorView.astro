@@ -1,0 +1,60 @@
+---
+// Error al hablar con GitHub (token o red). El mensaje viene de GitHubError: en español y sin el token.
+interface Props {
+  message: string;
+  retryHref: string;
+}
+const { message, retryHref } = Astro.props;
+---
+
+<section class="error" aria-labelledby="error-title">
+  <h1 id="error-title">No se pudieron cargar los cambios</h1>
+  <p class="error-msg">{message}</p>
+  <p class="error-help">
+    Si el problema es el token, crea uno nuevo de solo lectura (contenidos y metadatos) y guárdalo como secreto <code>GITHUB_TOKEN</code>
+    del worker.
+  </p>
+  <a class="btn btn-primary" href={retryHref}>Reintentar</a>
+</section>
+
+<style>
+  .error {
+    max-width: 38rem;
+    margin: clamp(2rem, 8vw, 5rem) 0 3rem;
+    padding: 1.5rem;
+    border-radius: var(--radius-l);
+    background: var(--surface);
+    border: 1px solid var(--arreglo);
+  }
+  h1::before {
+    content: "";
+    display: block;
+    width: 2.5rem;
+    height: 0.375rem;
+    margin-bottom: 1rem;
+    border-radius: 3px;
+    background: var(--arreglo);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: var(--step-3);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin: 0 0 1rem;
+  }
+  .error-msg {
+    font-size: var(--step-1);
+    margin: 0 0 0.75rem;
+  }
+  .error-help {
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+  }
+  code {
+    font-size: 0.9em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 0.25rem;
+  }
+</style>

@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@astrojs/cloudflare": "14.3.4",
+    "@fontsource-variable/atkinson-hyperlegible-next": "5.3.0",
+    "@fontsource-variable/bricolage-grotesque": "5.3.0",
     "astro": "7.3.6"
   },
   "devDependencies": {

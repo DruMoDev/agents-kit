@@ -1,0 +1,609 @@
+---
+import { env } from "cloudflare:workers";
+import Base from "../../layouts/Base.astro";
+import ErrorView from "../../components/ErrorView.astro";
+import TypeTag from "../../components/TypeTag.astro";
+import { ENTRY_TYPES } from "../../lib/changelog";
+import { fetchRepos, GitHubError, type Repo } from "../../lib/github";
+import { renderMarkdown } from "../../lib/markdown";
+import { getSeen, unseenCount } from "../../lib/seen";
+import { countLabel, filterDays, formatDate, formatShortDate, parseTypeFilter, TYPE_META } from "../../lib/ui";
+import type { WebEnv } from "../../lib/env";
+
+const e = env as unknown as WebEnv;
+const name = Astro.params.repo ?? "";
+const refresh = Astro.url.searchParams.get("refrescar") === "1";
+const typeFilter = parseTypeFilter(Astro.url.searchParams.get("tipo"));
+
+let error: string | null = null;
+let repo: Repo | undefined;
+try {
+  repo = (await fetchRepos(e, { refresh })).find((r) => r.name === name);
+} catch (err) {
+  if (!(err instanceof GitHubError)) throw err;
+  error = err.message;
+  Astro.response.status = 502;
+}
+if (!error && !repo) Astro.response.status = 404;
+
+const seen = repo && e.SEEN ? await getSeen(e.SEEN, repo.name) : new Set<number>();
+const unseen = repo ? unseenCount(repo, seen) : 0;
+const allEntries = repo ? repo.days.flatMap((d) => d.entries) : [];
+const days = repo ? filterDays(repo.days, typeFilter) : [];
+const countByType = Object.fromEntries(ENTRY_TYPES.map((t) => [t, allEntries.filter((x) => x.type === t).length]));
+const base = `/app/${encodeURIComponent(name)}`;
+const imgUrl = (path: string) => `/img/${encodeURIComponent(name)}/${path.split("/").map(encodeURIComponent).join("/")}`;
+const allPrs = allEntries.map((x) => x.pr);
+---
+
+<Base title={repo ? `${repo.name} | Changelogs` : "Changelogs"}>
+  <nav class="crumbs" aria-label="Migas">
+    <a href="/" class="back">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      Todas las apps
+    </a>
+  </nav>
+
+  {error && <ErrorView message={error} retryHref={`${base}?refrescar=1`} />}
+
+  {
+    !error && !repo && (
+      <section class="missing">
+        <h1>No existe esa app</h1>
+        <p>Puede que el repo ya no tenga agents-kit activado o que el nombre esté mal escrito.</p>
+        <a class="btn" href="/">
+          Ver todas las apps
+        </a>
+      </section>
+    )
+  }
+
+  {
+    repo && (
+      <div class="app" data-repo-page={repo.name} data-all-prs={JSON.stringify(allPrs)}>
+        <header class="app-head">
+          <h1>{repo.name}</h1>
+          {allEntries.length > 0 ? (
+            <p class="app-stats">
+              <span class="app-unseen" data-has-unseen={unseen > 0 ? "true" : "false"}>
+                <span class="dot" aria-hidden="true" />
+                <span data-unseen-total>{unseen}</span> sin ver
+              </span>
+              <span>
+                de {countLabel(allEntries.length, "cambio", "cambios")}
+                {repo.lastDate && <>, el último el {formatShortDate(repo.lastDate)}</>}
+              </span>
+            </p>
+          ) : (
+            <p class="app-stats">Sin cambios todavía</p>
+          )}
+          <div class="app-actions">
+            {unseen > 0 && (
+              <button type="button" class="btn btn-primary" data-mark-all>
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                Marcar todo como visto
+              </button>
+            )}
+            <a class="gh-link" href={repo.url} rel="noopener noreferrer" target="_blank">
+              Abrir el repo en GitHub
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M6 3h7v7M13 3L4 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </a>
+          </div>
+          <p class="status" role="status" aria-live="polite" data-status />
+        </header>
+
+        {allEntries.length === 0 ? (
+          <section class="empty">
+            <h2>Todavía no hay cambios</h2>
+            <p>
+              Cuando se fusione la primera PR con su entrada en <code>CHANGELOG.md</code>, aparecerá aquí.
+            </p>
+          </section>
+        ) : (
+          <>
+            <nav class="filters" aria-label="Filtrar por tipo">
+              <a href={base} aria-current={typeFilter ? undefined : "page"} class="chip chip-all">
+                Todos <span class="chip-n">{allEntries.length}</span>
+              </a>
+              {ENTRY_TYPES.map((t) => (
+                <a
+                  href={`${base}?tipo=${t}`}
+                  aria-current={typeFilter === t ? "page" : undefined}
+                  class={`chip chip-${TYPE_META[t].slug}`}
+                  aria-disabled={countByType[t] === 0 ? "true" : undefined}
+                >
+                  {t} <span class="chip-n">{countByType[t]}</span>
+                </a>
+              ))}
+            </nav>
+
+            {days.length === 0 ? (
+              <p class="empty-filter">
+                No hay cambios de tipo {typeFilter}. <a href={base}>Ver todos</a>
+              </p>
+            ) : (
+              <ol class="timeline">
+                {days.map((day) => (
+                  <li class="day">
+                    <h2 class="day-date">
+                      <time datetime={day.date}>{formatDate(day.date)}</time>
+                    </h2>
+                    <ul class="entries">
+                      {day.entries.map((entry) => {
+                        const isUnseen = !seen.has(entry.pr);
+                        return (
+                          <li>
+                            <details
+                              class={`entry entry-${TYPE_META[entry.type].slug}`}
+                              data-pr={entry.pr}
+                              data-type={entry.type}
+                              data-unseen={isUnseen ? "true" : undefined}
+                            >
+                              <summary>
+                                <span class="entry-line">
+                                  <TypeTag type={entry.type} />
+                                  {isUnseen && <span class="unseen-badge entry-badge">Sin ver</span>}
+                                </span>
+                                <span class="entry-title">{entry.title}</span>
+                                <svg class="chev" width="18" height="18" viewBox="0 0 16 16" aria-hidden="true">
+                                  <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                              </summary>
+                              <div class="entry-body">
+                                {entry.body ? (
+                                  <div class="prose" set:html={renderMarkdown(entry.body, imgUrl)} />
+                                ) : (
+                                  <p class="no-body">Sin más detalles.</p>
+                                )}
+                                <a class="pr-link" href={entry.url} rel="noopener noreferrer" target="_blank">
+                                  Ver la PR #{entry.pr} en GitHub
+                                </a>
+                              </div>
+                            </details>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
+</Base>
+
+<script>
+  // Marcar visto: al abrir un cambio sin ver y con "Marcar todo como visto".
+  // Si falla, la marca se queda y se avisa; nada se pierde.
+  const page = document.querySelector<HTMLElement>("[data-repo-page]");
+  if (page) {
+    const repo = page.dataset.repoPage!;
+    const total = page.querySelector<HTMLElement>("[data-unseen-total]");
+    const status = page.querySelector<HTMLElement>("[data-status]");
+    const markAll = page.querySelector<HTMLButtonElement>("[data-mark-all]");
+    let unseen = Number(total?.textContent ?? 0);
+
+    const say = (msg: string) => {
+      if (status) status.textContent = msg;
+    };
+
+    const post = async (prs: number[]) => {
+      const res = await fetch("/api/seen", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repo, prs }),
+      });
+      if (res.status !== 204) throw new Error(String(res.status));
+    };
+
+    const markSeenUi = (el: HTMLElement) => {
+      if (!el.hasAttribute("data-unseen")) return;
+      el.removeAttribute("data-unseen");
+      el.querySelector(".entry-badge")?.remove();
+      unseen = Math.max(0, unseen - 1);
+    };
+
+    const refresh = () => {
+      if (total) total.textContent = String(unseen);
+      total?.closest<HTMLElement>(".app-unseen")?.setAttribute("data-has-unseen", unseen > 0 ? "true" : "false");
+      if (markAll && unseen === 0) markAll.hidden = true;
+      document.title = document.title.replace(/^\(\d+\)\s*/, "");
+    };
+
+    page.querySelectorAll<HTMLDetailsElement>("details.entry").forEach((d) => {
+      d.addEventListener("toggle", async () => {
+        if (!d.open || !d.hasAttribute("data-unseen") || d.dataset.saving) return;
+        d.dataset.saving = "1";
+        try {
+          await post([Number(d.dataset.pr)]);
+          markSeenUi(d);
+          refresh();
+        } catch {
+          say("No se pudo guardar que lo has visto. Se volverá a intentar al abrirlo otra vez.");
+        } finally {
+          delete d.dataset.saving;
+        }
+      });
+    });
+
+    markAll?.addEventListener("click", async () => {
+      markAll.disabled = true;
+      try {
+        await post(JSON.parse(page.dataset.allPrs ?? "[]"));
+        page.querySelectorAll<HTMLElement>("details.entry[data-unseen]").forEach(markSeenUi);
+        unseen = 0;
+        refresh();
+        say("Todo marcado como visto.");
+      } catch {
+        markAll.disabled = false;
+        say("No se pudo marcar todo como visto. Inténtalo de nuevo.");
+      }
+    });
+  }
+
+  // Al volver con el botón Atrás, recargar para no enseñar contadores viejos.
+  window.addEventListener("pageshow", (ev) => {
+    if (ev.persisted) location.reload();
+  });
+</script>
+
+<style>
+  .crumbs {
+    padding-top: 0.5rem;
+  }
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 44px;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: var(--step--1);
+    text-decoration: none;
+  }
+  .back:hover {
+    color: var(--ink);
+  }
+
+  .app-head {
+    padding-block: 0.5rem 1.25rem;
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--step-4);
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    line-height: 1;
+  }
+  .app-stats {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem 0.625rem;
+    margin: 1rem 0 0;
+    color: var(--muted);
+    font-size: var(--step-1);
+  }
+  .app-unseen {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.125rem 0.75rem;
+    border-radius: 999px;
+    background: var(--signal-soft);
+    color: var(--ink);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .app-unseen .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--signal);
+  }
+  .app-unseen[data-has-unseen="false"] {
+    background: transparent;
+    color: var(--muted);
+    font-weight: 600;
+    padding-inline: 0;
+  }
+  .app-unseen[data-has-unseen="false"] .dot {
+    display: none;
+  }
+  .app-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1.25rem;
+    margin-top: 1.25rem;
+  }
+  .gh-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 44px;
+    color: var(--muted);
+    font-size: var(--step--1);
+    font-weight: 600;
+  }
+  .gh-link:hover {
+    color: var(--ink);
+  }
+  .status:empty {
+    display: none;
+  }
+  .status {
+    margin: 0.75rem 0 0;
+    font-size: var(--step--1);
+    color: var(--muted);
+  }
+
+  /* Filtros */
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding-block: 0.25rem 1.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 40px;
+    padding: 0.25rem 0.875rem;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    font-size: var(--step--1);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .chip::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--c, var(--ink));
+  }
+  .chip-all::before {
+    display: none;
+  }
+  .chip-nuevo { --c: var(--nuevo); --cb: var(--nuevo-bg); }
+  .chip-mejora { --c: var(--mejora); --cb: var(--mejora-bg); }
+  .chip-arreglo { --c: var(--arreglo); --cb: var(--arreglo-bg); }
+  .chip-interno { --c: var(--interno); --cb: var(--interno-bg); }
+  .chip:hover {
+    border-color: var(--ink);
+  }
+  .chip[aria-current="page"] {
+    background: var(--cb, var(--ink));
+    border-color: var(--c, var(--ink));
+    color: var(--c, var(--paper));
+    box-shadow: inset 0 0 0 1px var(--c, var(--ink));
+  }
+  .chip[aria-disabled="true"]:not([aria-current]) {
+    color: var(--muted);
+    border-style: dashed;
+  }
+  .chip-n {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+  }
+
+  /* Línea de tiempo */
+  .timeline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .day {
+    display: grid;
+    gap: 0.75rem;
+    padding-block: 1.5rem 0.5rem;
+  }
+  .day-date {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--step-1);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  @media (min-width: 860px) {
+    .day {
+      grid-template-columns: 15rem 1fr;
+      gap: 2rem;
+      padding-block: 2rem 0.5rem;
+    }
+    .day-date {
+      position: sticky;
+      top: 1rem;
+      align-self: start;
+      padding-top: 0.875rem;
+    }
+  }
+  .entries {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.625rem;
+  }
+
+  .entry {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+  }
+  .entry[data-unseen] {
+    border-color: var(--signal-line);
+    box-shadow: var(--shadow);
+  }
+
+  summary {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "line chev" "title chev";
+    gap: 0.375rem 0.75rem;
+    align-items: center;
+    padding: 0.875rem 1rem 0.875rem 1.125rem;
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary:focus-visible {
+    outline-offset: -3px;
+    border-radius: var(--radius-m);
+  }
+  summary:hover .entry-title {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  .entry-line {
+    grid-area: line;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .entry-title {
+    grid-area: title;
+    font-size: var(--step-1);
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .entry:not([data-unseen]) .entry-title {
+    font-weight: 600;
+  }
+  .chev {
+    grid-area: chev;
+    color: var(--muted);
+    transition: transform 160ms ease;
+  }
+  .entry[open] .chev {
+    transform: rotate(180deg);
+  }
+
+  .entry-body {
+    padding: 0.25rem 1.125rem 0.5rem;
+    border-top: 1px solid var(--line);
+  }
+  .entry[open] summary {
+    padding-bottom: 0.75rem;
+  }
+  .no-body {
+    color: var(--muted);
+    margin: 1rem 0 0.75rem;
+  }
+  .pr-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--muted);
+    font-size: var(--step--1);
+    font-weight: 600;
+  }
+  .pr-link:hover {
+    color: var(--ink);
+  }
+
+  /* Texto de la versión extendida (HTML ya saneado por renderMarkdown) */
+  .prose {
+    max-width: 68ch;
+    padding-top: 0.75rem;
+  }
+  .prose :global(p),
+  .prose :global(ul),
+  .prose :global(ol),
+  .prose :global(pre) {
+    margin: 0 0 0.875rem;
+  }
+  .prose :global(ul),
+  .prose :global(ol) {
+    padding-left: 1.25rem;
+  }
+  .prose :global(li + li) {
+    margin-top: 0.25rem;
+  }
+  .prose :global(strong) {
+    font-weight: 700;
+  }
+  .prose :global(a) {
+    color: var(--mejora);
+    text-underline-offset: 3px;
+  }
+  .prose :global(code) {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.875em;
+    padding: 0.0625rem 0.3rem;
+    border-radius: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+  }
+  .prose :global(pre) {
+    padding: 0.875rem 1rem;
+    overflow-x: auto;
+    border-radius: var(--radius-s);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    font-size: var(--step--1);
+    line-height: 1.5;
+  }
+  .prose :global(pre code) {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  .prose :global(img) {
+    display: block;
+    margin: 0.5rem 0;
+    border-radius: var(--radius-s);
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+  }
+
+  .empty,
+  .missing {
+    padding: 1.5rem;
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius-l);
+    max-width: 38rem;
+  }
+  .missing {
+    margin-top: 1rem;
+  }
+  .missing h1 {
+    font-size: var(--step-3);
+  }
+  .empty h2 {
+    margin: 0 0 0.5rem;
+    font-family: var(--font-display);
+    font-size: var(--step-2);
+  }
+  .empty p,
+  .missing p {
+    color: var(--muted);
+    margin: 0.75rem 0 1rem;
+  }
+  .empty code {
+    font-size: 0.9em;
+  }
+  .empty-filter {
+    padding-block: 2rem;
+    color: var(--muted);
+  }
+</style>

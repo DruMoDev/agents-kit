@@ -1,0 +1,11 @@
+---
+import type { EntryType } from "../lib/changelog";
+import { TYPE_META } from "../lib/ui";
+
+interface Props {
+  type: EntryType;
+}
+const { type } = Astro.props;
+---
+
+<span class={`type type-${TYPE_META[type].slug}`}>{type}</span>
