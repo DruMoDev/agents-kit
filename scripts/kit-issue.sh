@@ -201,11 +201,13 @@ case "$sub" in
       || { echo "error: no se pudo leer #$want" >&2; exit 2; }
     # every text line is quoted with "| " so no body can forge a "---" delimiter; another account's body is left out
     printf '%s' "$v" | jq -r --arg me "$me" '
-      def quote: split("\n") | map("| " + .) | join("\n");
-      "#\(.number) \(.title | gsub("\n"; " "))",
+      def nl: "\r\n|[\r\n\u000b\u000c\u0085\u2028\u2029]";
+      def quote: [splits(nl)] | map("| " + .) | join("\n");
+      def flat: gsub(nl; " ");
+      "#\(.number) \(.title | flat)",
       "autor: \(.author.login)" + (if .author.login == $me then "" else " (otra cuenta)" end),
       "estado: \(.state)",
-      "etiquetas: " + (if (.labels | length) == 0 then "(ninguna)" else [.labels[].name] | join(", ") end),
+      "etiquetas: " + (if (.labels | length) == 0 then "(ninguna)" else [.labels[].name | flat] | join(", ") end),
       "--- cuerpo",
       (if .author.login != $me then "(omitido: lo escribió otra cuenta)"
        elif (.body // "") | test("^\\s*$") then "(vacío)" else .body | quote end),
