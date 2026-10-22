@@ -125,3 +125,11 @@ Verificado de punta a punta el 2026-10-21 en el repo privado de pruebas con `cla
 - Issue `listo` → PR fusionada con entrada de `CHANGELOG.md` validada por `kit-changelog.sh validar`, revisores lanzados por `kit-review-all.sh`, comentario `kit-resumen` en el issue "📦 Changelog" y aviso por ntfy (`curl` a ntfy.sh; se comprobó leyendo el tema con `https://ntfy.sh/<tema>/json?poll=1`).
 - `PushNotification` de Claude Code es una herramienta del modelo: un script no puede llamarla y solo llega al móvil con Remote Control. Por eso el canal por defecto es ntfy y `claude-push` solo imprime `AVISO-CLAUDE:` para que la skill la llame.
 - Un bloque de bash con arrays dentro de una skill falla si el agente lo ejecuta en zsh (`bad substitution`): lo mecánico va en scripts, no en bloques inline.
+
+### Web de changelogs (fase 4)
+
+Desplegada el 2026-10-22 en `https://agents-kit-changelogs.dev-morera.workers.dev` (worker `agents-kit-changelogs`, KV `SEEN`), detrás de Cloudflare Access ("Todo el tráfico", solo el email de Dru). Verificado: sin sesión, Access redirige al login; con Access sin configurar, el worker responde 503.
+- `wrangler deploy` en un proyecto Astro usa la configuración compilada (`dist/server/wrangler.json`): sin compilar antes, sube la última compilación. Por eso `npm run deploy` compila y despliega.
+- Despliegue continuo con Workers Builds conectado al repo: raíz `web`, compilación `npm ci && npm run build`, despliegue `npx wrangler deploy`, solo `main` y rutas `web/*`.
+- En Astro 7 con @astrojs/cloudflare 14 los bindings se leen con `import { env } from "cloudflare:workers"`; la Cache API no sirve detrás de Access ni en workers.dev, así que la caché de repos va en KV.
+- `wrangler kv namespace create` pregunta en modo interactivo; sin terminal no termina.
