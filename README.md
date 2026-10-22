@@ -72,6 +72,14 @@ Los revisores de `.agents-kit.json` (`reviewers`) se ejecutan sin supervisión y
 
 Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode).
 
+## Web de changelogs
+
+`web/` es una app aparte (Astro en Cloudflare Workers) donde ves, app por app, los cambios de cada repo con el kit activado y cuáles no has visto todavía. Lee en vivo de GitHub los repos de tu cuenta que tienen `.agents-kit.json` y su `CHANGELOG.md` (caché de 5 minutos; "Actualizar" la salta). El estado "visto" se guarda en Cloudflare KV, así que es el mismo en el móvil y en el Mac. Las capturas de repos privados las sirve el propio worker.
+
+- Desarrollo local con datos de ejemplo: `cd web && npm ci && cp .dev.vars.example .dev.vars && npm run dev`.
+- Tests: `npm test` (parser, lógica, Access) y `npm run e2e` (Playwright, datos de ejemplo).
+- Despliegue: `npx wrangler deploy` desde `web/`. Necesita el KV `SEEN` (su id en `wrangler.jsonc`), el secreto `GITHUB_TOKEN` (token fine-grained de solo lectura: Contents en todos tus repos) puesto con `npx wrangler secret put GITHUB_TOKEN`, y Cloudflare Access delante con solo tu email; `ACCESS_TEAM_DOMAIN` y `ACCESS_AUD` en `wrangler.jsonc`. Sin Access configurado, la web responde 503.
+
 ## Iterar
 
 1. Edita el repo.
@@ -87,4 +95,3 @@ tests/run.sh
 claude plugin validate .
 ```
 
-Próxima fase: web de changelogs.

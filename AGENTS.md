@@ -18,6 +18,7 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`; `default-branch.sh`; `transport.sh`, dónde corre la sesión).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`).
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node). `tests/fixtures/changelog/` es el contrato del formato de `CHANGELOG.md`: la web lo reutilizará para probar su parser.
+- `web/`: web de changelogs (Astro + Cloudflare Workers), app aparte con su `package.json`. Su parser (`web/src/lib/changelog.ts`) y el validador bash comparten `tests/fixtures/changelog/`: cambiar el formato es tocar los dos y los fixtures.
 - `docs/`: specs y planes.
 
 ## Flujo de issues
@@ -29,6 +30,7 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `tests/run.sh`: ejecuta todos los tests.
 - `scripts/release.sh <semver>`: escribe la versión en los manifiestos y el marketplace.
 - `claude plugin validate .`: valida manifiestos y skills.
+- `cd web && npm test && npm run e2e`: tests de la web (no los lanza `tests/run.sh`).
 
 ## Convenciones de scripts
 
