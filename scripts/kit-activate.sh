@@ -76,8 +76,9 @@ jq -e 'type == "object"' "$marker" >/dev/null 2>&1 || { echo "error: .agents-kit
 want="$(jq -c --arg c "$opt_changelog" --arg s "$opt_setup" --argjson hs "$has_setup" '
   (if $c == "" then . else .changelog = ($c == "true") end) | (if $hs then .setup = $s else . end)' "$marker")" || exit 2
 if [ "$want" != "$(jq -c . "$marker")" ]; then
-  printf '%s\n' "$want" | jq . > "$marker.tmp" && cat "$marker.tmp" > "$marker" || { rm -f "$marker.tmp"; exit 2; }
-  rm -f "$marker.tmp"
+  # mktemp opens with O_EXCL (never follows a planted symlink); mv replaces the marker itself, not a link target
+  tmpm="$(mktemp "$repo/.agents-kit.json.XXXXXX")" || exit 2
+  printf '%s\n' "$want" | jq . > "$tmpm" && chmod 644 "$tmpm" && mv -f "$tmpm" "$marker" || { rm -f "$tmpm"; exit 2; }
   [ "$new_marker" = true ] || changed .agents-kit.json
 fi
 [ "$new_marker" = true ] && created .agents-kit.json
