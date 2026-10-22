@@ -12,5 +12,5 @@
   "kv_namespaces": [{ "binding": "SEEN", "id": "445d3046edd641d8bac468f62d9dbeb6" }],
   // GITHUB_TOKEN va como secreto (wrangler secret put), nunca aquí.
   // ACCESS_TEAM_DOMAIN y ACCESS_AUD se rellenan al configurar Access.
-  "vars": { "ACCESS_TEAM_DOMAIN": "", "ACCESS_AUD": "" }
+  "vars": { "ACCESS_TEAM_DOMAIN": "autumn-waterfall-02c5.cloudflareaccess.com", "ACCESS_AUD": "0a787e6e92fc7b9fc3670a7a2e13a84cc596ff1ea5c3650a4c2cace68efb5c48" }
 }
