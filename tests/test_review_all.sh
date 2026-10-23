@@ -135,7 +135,10 @@ has "puesto 1 (claude/opus): ok (misma familia: no hay otra familia disponible)"
 grep -q "^aviso: gpt/openai/x (opencode) no respondió.*login" <<<"$out" || fail "sin aviso de login: $out"
 [ "$(grep -c '^aviso: gpt/openai/x' <<<"$out")" = 1 ] || fail "aviso repetido: $out"
 [ "$(printf '%s\n' "$out" | sed -n '$p')" = "FIN: 3 puestos, 0 sin confirmar" ] || fail "fallback FIN: $out"
-grep -q "^args: .* 1 claude claude opus " "$(sed -n 's/^salidas: //p' <<<"$out")/rev-1.out" || fail "rev-1.out no es el último intento"
+df="$(sed -n 's/^salidas: //p' <<<"$out")"
+grep -q "^args: .* 1 claude claude opus " "$df/rev-1.out" || fail "rev-1.out no es el último intento"
+grep -q "sin confirmar (acceso)" "$df/rev-1-1.out" || fail "falta la salida del intento que cayó al siguiente candidato"
+[ ! -e "$df/rev-1-2.out" ] && [ ! -e "$df/rev-3-1.out" ] || fail "salidas duplicadas: $(ls "$df" | tr "\n" " ")"
 # a timeout never falls back: the seat stays unconfirmed, posted on the PR so the round is not complete
 STUB_FAIL="opencode/openai/x=tiempo" run
 [ $rc -eq 0 ] || fail "tiempo: exit $rc ($out)"

@@ -343,6 +343,7 @@ git -C "$wt" push -q origin "$lsha:refs/locks/mig" || fail "candado del issue 3"
 : > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar: $out"
 [ -z "$(git -C "$wt" ls-remote origin refs/locks/mig)" ] || fail "fusionar no liberó el candado del issue"
+case "$out" in *"candado soltado: refs/locks/mig"*) ;; *) fail "fusionar no dice que soltó el candado: $out";; esac
 grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA de la PR"
 [ "$(last_line "$out")" = "FIN: ok" ] || fail "fusionar FIN: $out"
 case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac

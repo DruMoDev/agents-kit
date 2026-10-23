@@ -8,7 +8,8 @@
 # SHA in KIT_REVIEW_BASE and never fetches), the same source fusionar counts them from. INT/TERM/HUP stop every seat.
 # The implementer family comes from --implementador or the environment (CODEX_THREAD_ID -> gpt, CLAUDECODE -> claude).
 # Prints per seat "puesto <i> (<familia>/<modelo>): ok | sin-confirmar (<motivo>) | fallback a <familia>/<modelo>"
-# (plus "aviso: ..." lines), then "salidas: <dir>" (rev-<i>.out, the output of the seat's last attempt, and
+# (plus "aviso: ..." lines), then "salidas: <dir>" (rev-<i>.out, the output of the seat's last attempt; rev-<i>-<j>.out
+# only for earlier attempts that fell back to the next candidate; and
 # puestos.tsv: i, familia, cli, modelo, foco, estado, detalle, modo) and "FIN: <n> puestos, <m> sin confirmar".
 # Mode per seat (KIT_REVIEW_MODO for kit-review.sh): with revision.rondas "mezcla" (global config, the default), from
 # round 2 one seat, rotating by round, reviews the whole diff with a clean context (completa) and the others only check
@@ -83,6 +84,7 @@ run_seat() {
     if [ $rc -eq 0 ]; then
       echo "puesto $i ($fam/$model): ok${nota:+ (misma familia: no hay otra familia disponible)}" >> "$log"
       printf '%s\t%s\t%s\t%s\t%s\tok\t%s\n' "$i" "$fam" "$cli" "$model" "$focus" "$nota" > "$d/puesto-$i.tsv"
+      rm -f "$out" # rev-<i>.out holds it: only attempts that fell back keep their own rev-<i>-<j>.out
       return
     fi
     motivo="$(sed -n 's/^sin confirmar (\([a-z]*\)): .*/\1/p' "$out" | sed -n '$p')"
@@ -98,6 +100,7 @@ run_seat() {
       continue
     fi
     echo "puesto $i ($fam/$model): sin-confirmar ($motivo: $detalle)" >> "$log"
+    rm -f "$out"
     return
   done < "$d/candidatos.tsv"
   # every candidate failed with acceso

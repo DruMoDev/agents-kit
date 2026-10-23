@@ -63,6 +63,7 @@ flow_issue 14 '.comments[-1].body' | grep -q '^<!-- kit-soltado: kit-aaaa -->' |
 # --- soltar releases the own lock (and only it)
 out="$(bash "$issue" soltar "$r" 12 kit-aaaa 2>&1)" || fail "soltar 12: $out"
 [ -z "$(git -C "$o" for-each-ref refs/locks/otro)" ] || fail "soltar 12: el candado sigue"
+case "$out" in *"candado soltado: refs/locks/otro"*) ;; *) fail "soltar 12 no dice que soltó el candado: $out";; esac
 [ "$(flow_issue 12 '[.labels[].name] | index("en-curso") != null')" = false ] || fail "soltar 12: dejó en-curso"
 # reclamar que pierde el eje deshace su reclamación sin liberar el candado ajeno
 flow_add_issue 15 "pierde el eje" serializa:tres

@@ -11,9 +11,9 @@ Bucle sobre los issues abiertos del repo que entran en el reparto hasta que no q
 
 Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa variable está vacía, la raíz del plugin está dos directorios por encima del directorio base de esta skill. Abajo, `$PLUGIN` es esa raíz.
 
-Versión de esta skill: 3.4.0. `kit-issue.sh comprobar` imprime primero `kit: <versión>`, la de los scripts en disco. Si no coincide, tu sesión cargó un SKILL.md viejo: relee `$PLUGIN/skills/kit-run/SKILL.md` (y sus `references/`) del disco y sigue esa versión.
+Versión de esta skill: 3.4.1. `kit-issue.sh comprobar` imprime primero `kit: <versión>`, la de los scripts en disco. Si no coincide, tu sesión cargó un SKILL.md viejo: relee `$PLUGIN/skills/kit-run/SKILL.md` (y sus `references/`) del disco y sigue esa versión.
 
-**Esperas largas** (revisión, CI): nunca dependas del aviso de segundo plano de tu herramienta, que puede no llegar. Lanza con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-bg.sh" lanzar <fichero> <comando> [args...]` (un fichero nuevo en `/tmp` por espera, fuera del repo; vuelve al momento) y espera con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-bg.sh" esperar <fichero>`: cada llamada espera como mucho 9 minutos; exit 1 `sigue en marcha` significa repetirla, y al terminar imprime toda la salida del comando con su línea `SALIDA: <código>`, que es el código de salida del comando.
+**Esperas largas** (revisión, CI): nunca dependas del aviso de segundo plano de tu herramienta, que puede no llegar. Lanza con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-bg.sh" lanzar <fichero> <comando> [args...]` (un fichero nuevo en `/tmp` por espera, fuera del repo; vuelve al momento) y espera con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-bg.sh" esperar <fichero>`: cada llamada espera como mucho 9 minutos; exit 1 `sigue en marcha` significa repetirla, y al terminar imprime toda la salida del comando con su línea `SALIDA: <código>`, que es el código de salida del comando. Nunca esperes buscando procesos por nombre (`pgrep`, `ps | grep`): casan con los de otros agentes y sus hooks, y la espera no acaba. Espera siempre por el fichero de salida propio de `kit-bg.sh`.
 
 ## Reglas
 
