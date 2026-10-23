@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-activate.sh <repo_root> [--changelog true|false] [--setup <ruta>] [--contenido <ruta>]... [--protegido <ruta>]...
+#   [--verificar-rapido <comando>] [--verificar-completo <comando>]
 # Local, file-only, idempotent activation of the kit in a repo (kit-on runs it in a temporary worktree). Does not commit.
 # Also creates the global config (~/.agents-kit/config.json or KIT_CONFIG) if missing, appends "## Reglas del proyecto"
 # to an existing AGENTS.md that lacks it, and warns about versioned git hooks when the marker declares no "setup".
 # --changelog and --setup are written to the marker; "changelog": false means no CHANGELOG.md. --contenido and --protegido
-# (repeatable) replace that list in the marker.
+# (repeatable) replace that list in the marker. --verificar-rapido/--verificar-completo set verificar.rapido/.completo:
+# the repo's quick checks (format, strict lint, tests of what changed: seconds) and full suite (kit-verify.sh).
 # While the marker has no "contenido", prints "sugerencia contenido: <dir> (...)" for each directory that the history of
 # HEAD (last 300 commits) mostly changes in direct commits (subject without "(#N)"): kit-on proposes them to Dru.
 # v2 keys of an existing marker (reviewers, implementer, notify) are dropped, each with a "nota: ..." line saying where it
@@ -16,12 +18,13 @@ source "$here/lib/config.sh"
 source "$here/lib/repo-hook.sh"
 
 usage() {
-  echo "uso: $0 <repo_root> [--changelog true|false] [--setup <ruta>] [--contenido <ruta>]... [--protegido <ruta>]..." >&2
+  echo "uso: $0 <repo_root> [--changelog true|false] [--setup <ruta>] [--contenido <ruta>]... [--protegido <ruta>]..." \
+    "[--verificar-rapido <comando>] [--verificar-completo <comando>]" >&2
   exit 1
 }
 [ $# -ge 1 ] && [ -n "$1" ] || usage
 arg_repo="$1"; shift
-opt_changelog=""; opt_setup=""; has_setup=false; contenido=(); protegido=()
+opt_changelog=""; opt_setup=""; has_setup=false; contenido=(); protegido=(); ver_r=""; ver_c=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --changelog)
@@ -35,6 +38,10 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || usage
       kit_hook_rel "${1#--}" "$2" || exit 1
       if [ "$1" = --contenido ]; then contenido+=("$2"); else protegido+=("$2"); fi
+      shift 2 ;;
+    --verificar-rapido|--verificar-completo)
+      [ $# -ge 2 ] && [ -n "$2" ] || usage
+      if [ "$1" = --verificar-rapido ]; then ver_r="$2"; else ver_c="$2"; fi
       shift 2 ;;
     *) echo "opción no reconocida: $1" >&2; usage ;;
   esac
@@ -93,10 +100,12 @@ jq -r --arg g "$g" --arg q "'" '
   | "nota: \($q)\(.key)\($q) (v2) quitada del marcador: \($to[.key]); valor anterior: \(.value | tojson)"' "$marker" || exit 2
 lists="$(jq -cn --args '$ARGS.positional' -- ${contenido[@]+"${contenido[@]}"})" || exit 2
 listp="$(jq -cn --args '$ARGS.positional' -- ${protegido[@]+"${protegido[@]}"})" || exit 2
-want="$(jq -c --arg c "$opt_changelog" --arg s "$opt_setup" --argjson hs "$has_setup" --argjson lc "$lists" --argjson lp "$listp" '
+want="$(jq -c --arg c "$opt_changelog" --arg s "$opt_setup" --argjson hs "$has_setup" --argjson lc "$lists" --argjson lp "$listp" \
+    --arg vr "$ver_r" --arg vc "$ver_c" '
   del(.reviewers, .implementer, .notify)
   | (if $c == "" then . else .changelog = ($c == "true") end) | (if $hs then .setup = $s else . end)
-  | (if ($lc | length) > 0 then .contenido = $lc else . end) | (if ($lp | length) > 0 then .protegido = $lp else . end)' "$marker")" || exit 2
+  | (if ($lc | length) > 0 then .contenido = $lc else . end) | (if ($lp | length) > 0 then .protegido = $lp else . end)
+  | (if $vr != "" then .verificar.rapido = $vr else . end) | (if $vc != "" then .verificar.completo = $vc else . end)' "$marker")" || exit 2
 if [ "$want" != "$(jq -c . "$marker")" ]; then
   # mktemp opens with O_EXCL (never follows a planted symlink); mv replaces the marker itself, not a link target
   tmpm="$(mktemp "$repo/.agents-kit.json.XXXXXX")" || exit 2

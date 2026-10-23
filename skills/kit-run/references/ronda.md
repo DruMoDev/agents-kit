@@ -1,6 +1,6 @@
 # Ronda de revisión
 
-Cada ronda `r` revisa el head de la PR con todos los puestos de `revision.puestos` (configuración global, o el marcador del repo, que sustituye la lista) y termina siempre con un comentario `kit-ronda` publicado por `kit-pr.sh ronda`. Sin ese comentario, `fusionar` se niega: también hace falta con 0 hallazgos.
+Cada ronda `r` revisa el head de la PR con todos los puestos de `revision.puestos` (desde la ronda 2, con `revision.rondas` en `mezcla`, uno revisa todo con contexto limpio y el resto verifica los arreglos: ver "Modo de cada puesto") (configuración global, o el marcador del repo, que sustituye la lista) y termina siempre con un comentario `kit-ronda` publicado por `kit-pr.sh ronda`. Sin ese comentario, `fusionar` se niega: también hace falta con 0 hallazgos.
 
 ## Puestos
 
@@ -8,11 +8,18 @@ Cada ronda `r` revisa el head de la PR con todos los puestos de `revision.puesto
 - `kit-review.sh` corre cada candidato en un clon aislado, valida su respuesta JSON contra `revision-schema.json`, la publica en la PR renderizada en markdown (`<!-- kit-revision: puesto <i> <familia>/<modelo> ronda <r> -->`), la imprime y acaba en `FIN: <total> hallazgos`. Les pasa el historial de rondas, así que no deberían repetir lo ya decidido. Si un puesto ya publicó su revisión en esa ronda, se reimprime sin volver a lanzarlo.
 - `kit-review-all.sh` imprime por puesto `puesto <i> (<familia>/<modelo>): ok`, `sin-confirmar (<motivo>: <detalle>)` o `fallback a <familia>/<modelo>`, más líneas `aviso: ...`. La salida de cada puesto está en `<dir>/rev-<i>.out` y el resumen en `<dir>/puestos.tsv`.
 
+## Modo de cada puesto
+
+- `revision.rondas` (configuración global): `mezcla` (por defecto) o `completas`. Varias rondas completas multiplican el coste, pero una revisión independiente a veces encuentra algo nuevo: `mezcla` guarda las dos cosas.
+- Ronda 1, o `completas`: todos los puestos revisan el diff entero (`references/revisor.md`).
+- Desde la ronda 2 con `mezcla`: el puesto `((r - 2) mod n) + 1` revisa el diff entero con contexto limpio, así que el independiente rota; los demás verifican (`references/revisor-verificar.md`) que cada `→ aplicado` de la ronda anterior queda resuelto y que los arreglos no rompen nada, sobre el diff desde el head que revisó la ronda anterior (cada informe lo guarda como `<!-- kit-revisado: <sha> -->`). Un hallazgo de verificación es un arreglo que no resuelve o una regresión de un arreglo; se decide igual que cualquier otro.
+- `fusionar` exige igual una revisión confirmada por puesto en cada ronda, sea cual sea su modo.
+
 ## Puestos sin confirmar
 
 Un puesto queda "sin confirmar" cuando no entrega una revisión válida: tiempo agotado, respuesta vacía o fuera del esquema tras el reintento de reparación, el revisor dice `bloqueado`, el worktree cambió mientras corría, o todos sus candidatos fallaron por login, modelo o cuota (eso pasa al siguiente candidato sin reintentar en bucle). Nunca equivale a "sin hallazgos". `kit-review-all.sh` lo publica en la PR (`<!-- kit-revision: puesto <i> sin-confirmar ronda <r> -->`), y `fusionar` no acepta una ronda en la que algún puesto no tenga su revisión confirmada.
 
-- Relanza una vez solo ese puesto, antes de publicar la ronda: `"$PLUGIN/scripts/kit-review.sh" <wt> <pr> <i> <familia> <cli> <modelo> "<foco>" <r> <N>` con los valores de su línea en `puestos.tsv` (o con el candidato siguiente si el fallo fue de acceso).
+- Relanza una vez solo ese puesto, antes de publicar la ronda: `KIT_REVIEW_MODO=<modo> "$PLUGIN/scripts/kit-review.sh" <wt> <pr> <i> <familia> <cli> <modelo> "<foco>" <r> <N>` con los valores de su línea en `puestos.tsv` (el modo es la columna 8; o con el candidato siguiente si el fallo fue de acceso).
 - Si sigue sin confirmar: publica la ronda con lo que llegó (decide sobre esos hallazgos como siempre y escribe qué puesto falta y por qué) y bloquea el issue con el motivo; si es un login pendiente (`aviso: ... revisa el login, el modelo o la cuota`), di a Dru qué CLI tiene que autenticar. Cuando Dru quite `bloqueado`, el siguiente `kit-run` hará una ronda nueva con todos los puestos.
 
 ## Decidir

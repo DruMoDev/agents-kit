@@ -15,6 +15,10 @@ jq -e . "$tmp/.claude-plugin/marketplace.json" >/dev/null || fail "marketplace.j
 [ "$(jq -r '.plugins[] | select(.name=="agents-kit") | .version' "$tmp/.claude-plugin/marketplace.json")" = "2.1.0" ] \
   || fail "marketplace entry version != 2.1.0"
 
+for sk in kit-run kit-on; do
+  grep -q '^Versión de esta skill: 2\.1\.0\. .*SKILL\.md' "$tmp/skills/$sk/SKILL.md" \
+    || fail "$sk: release.sh no actualizó 'Versión de esta skill' o recortó la línea"
+done
 if (cd "$tmp" && bash scripts/release.sh foo 2>/dev/null); then fail "release.sh foo should fail"; fi
 (cd "$tmp" && bash scripts/release.sh foo >/dev/null 2>&1); [ $? -eq 1 ] || fail "release.sh foo should exit 1"
 echo "ok"

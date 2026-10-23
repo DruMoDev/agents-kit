@@ -24,6 +24,12 @@ run valido-completo.md; [ $rc -eq 0 ] && [ "$(last_line "$out")" = "FIN: valido 
 cp "$REPO_ROOT/templates/CHANGELOG.md" "$r/CHANGELOG.md"
 out="$(bash "$cl" validar "$r" 2>&1)"; [ $? -eq 0 ] && [ "$out" = "FIN: valido 0 entradas" ] || fail "plantilla: $out"
 
+# the pending link of an entry whose PR does not exist yet (kit-pr.sh abrir fills it)
+printf '# Changelog\n\n## 2026-10-23\n\n### Mejora: algo · [#PR](PR)\nTexto.\n' > "$r/CHANGELOG.md"
+out="$(bash "$cl" validar "$r" 2>&1)"; [ $? -eq 0 ] && [ "$(last_line "$out")" = "FIN: valido 1 entradas" ] || fail "enlace pendiente: $out"
+printf '# Changelog\n\n## 2026-10-23\n\n### Mejora: algo · [#PR](otra)\n' > "$r/CHANGELOG.md"
+bash "$cl" validar "$r" >/dev/null 2>&1; [ $? -eq 1 ] || fail "un enlace pendiente mal escrito debe dar 1"
+
 # inválidos: exit 1 y error en la línea correcta
 chk() { # <fixture> <línea> <texto>
   run "$1"; [ $rc -eq 1 ] || fail "$1 debe dar 1: $rc $out"

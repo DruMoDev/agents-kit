@@ -3,7 +3,8 @@
 #   validar <root>
 #   resumen <root> <id> <fichero>
 # validar: formato de CHANGELOG.md (el de templates/CHANGELOG.md); lo que esté dentro de <!-- ... --> o de un
-#   bloque de código (``` o ~~~) se ignora; un <!-- sin cerrar es un error.
+#   bloque de código (``` o ~~~) se ignora; un <!-- sin cerrar es un error. El enlace pendiente "[#PR](PR)" es válido
+#   (la entrada va en el commit del código y kit-pr.sh abrir lo rellena); fusionar no deja pasarlo sin rellenar.
 # resumen: comenta el fichero en el issue abierto "📦 Changelog" con el marcador <!-- kit-resumen: <id> -->;
 #   si ya hay un comentario propio (login de `gh api user`) con ese marcador, no publica otro. FIN: <url del comentario>.
 #   Con "changelog": false en el marcador no publica nada: FIN: sin-changelog.
@@ -96,7 +97,8 @@ case "$sub" in
             else {
               title = substr(rest, 1, pos - 1); tail = substr(rest, pos + length(sep))
               if (title ~ /^[ \t]*$/) err("título vacío")
-              if (tail !~ /^[0-9]+\]\(https:\/\/github\.com\/[^\/ ()]+\/[^\/ ()]+\/pull\/[0-9]+\)$/) err("enlace inválido (https://github.com/<owner>/<repo>/pull/<N>): " tail)
+              if (tail == "PR](PR)") entries++ # placeholder of an entry whose PR does not exist yet (kit-pr.sh abrir fills it)
+              else if (tail !~ /^[0-9]+\]\(https:\/\/github\.com\/[^\/ ()]+\/[^\/ ()]+\/pull\/[0-9]+\)$/) err("enlace inválido (https://github.com/<owner>/<repo>/pull/<N>): " tail)
               else {
                 n = tail; sub(/\].*/, "", n)
                 u = tail; sub(/.*\/pull\//, "", u); sub(/\)$/, "", u)

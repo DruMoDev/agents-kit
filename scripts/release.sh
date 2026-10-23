@@ -20,4 +20,9 @@ update() { # file jq-filter
 update "$root/.claude-plugin/plugin.json" '.version = $v'
 update "$root/.codex-plugin/plugin.json" '.version = $v'
 update "$root/.claude-plugin/marketplace.json" '(.plugins[] | select(.name == "agents-kit") | .version) = $v'
+# skills that compare their version with the scripts' (kit-issue.sh comprobar prints "kit: <version>")
+for f in "$root"/skills/*/SKILL.md; do
+  grep -q '^Versión de esta skill: ' "$f" || continue
+  V="$v" perl -pi -e 's/^(Versión de esta skill: )[0-9][0-9A-Za-z.+-]*?\.(\s|$)/$1$ENV{V}.$2/' "$f"
+done
 echo "version set to $v"

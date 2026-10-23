@@ -72,7 +72,8 @@ for x in "### Revisión del puesto 2: claude/sonnet, ronda 2" "bordes y errores"
   case "$body" in *"$x"*) ;; *) fail "ok comentario sin '$x': $body";; esac
 done
 case "$body" in *"<!-- kit-ronda"*) fail "ok: el texto del revisor coló un marcador: $body";; esac
-[ "$(printf '%s\n' "$body" | grep -c '<!--')" = 1 ] || fail "ok: marcadores de más: $body"
+[ "$(printf '%s\n' "$body" | grep -c '<!--')" = 2 ] || fail "ok: marcadores de más: $body"
+printf '%s\n' "$body" | sed -n 2p | grep -Eqx '<!-- kit-revisado: [0-9a-f]{40} -->' || fail "ok: sin kit-revisado del head: $body"
 case "$body" in *"Sugerencia: null"*|*"nombre confuso"*"Sugerencia"*"HALLAZGOS"*) fail "ok sugerencia nula impresa: $body";; esac
 # stdout: the rendered report without the marker
 printf '%s\n' "$out" | grep -qF '1. **[grave]** `a.txt:1` falla con vacío' || fail "ok no imprime los hallazgos: $out"
@@ -181,6 +182,8 @@ out2="$(REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 1 claude claude opus foco 3 3 2
 case "$out2" in *"Veredicto:** sin hallazgos"*"HALLAZGOS: 0"*) ;; *) fail "idem cuerpo: $out2";; esac
 [ "$(ncom)" = "$nc" ] || fail "idem volvió a comentar"
 [ ! -e "$REVIEW_DUMP/claude.args" ] || fail "idem lanzó el revisor"
+case "$out2" in *"kit-revisado"*) fail "idem imprime kit-revisado";; esac
+
 # a stored report with findings is printed back with its count
 out2="$(bash "$rv" "$wt" 4 2 claude claude sonnet "bordes y errores" 2 3 2>&1)" || fail "idem2: $out2"
 [ "$(last_line "$out2")" = "FIN: 2 hallazgos" ] || fail "idem2 FIN: $out2"
@@ -304,4 +307,17 @@ a="$(args codex)"
 [ "$(printf '%s\n' "$a" | grep -A1 -xF -- -m | sed -n 2p)" = gpt-6.1-sol ] || fail "codex -m con prefijo: $a"
 [ "$(jq -r '.prs[0].comments[-1].body' "$GH_STATE/state.json" | sed -n 1p)" = "<!-- kit-revision: puesto 3 gpt/openai/gpt-6.1-sol ronda 13 -->" ] \
   || fail "codex openai/ marcador"
+# verificar: only the previous round's fixes, on the diff since the head that round reviewed (kit-revisado)
+KIT_REVIEW_MODO=verificar bash "$rv" "$wt" 4 1 claude claude opus foco 1 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "verificar en ronda 1 debe dar 1"
+KIT_REVIEW_MODO=raro bash "$rv" "$wt" 4 1 claude claude opus foco 2 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "modo inválido debe dar 1"
+head="$(jq -r '.prs[0].comments[] | .body | capture("<!-- kit-revisado: (?<s>[0-9a-f]{40}) -->").s' "$GH_STATE/state.json" | sed -n 1p)"
+out="$(KIT_REVIEW_MODO=verificar REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 2 claude claude sonnet "bordes y errores" 3 3 2>&1)" || fail "verificar: $out"
+p="$(prompt claude)"
+for x in "Verificación de arreglos, ronda 3" "los arreglos de la ronda 2" "git diff $head..HEAD" "bordes y errores"; do
+  case "$p" in *"$x"*) ;; *) fail "verificar: el prompt no contiene '$x'";; esac
+done
+case "$p" in *"{{DESDE}}"*|*"{{ANTERIOR}}"*|*"{{BASE}}"*) fail "verificar: queda un marcador sin sustituir";; esac
+case "$(jq -r '.prs[0].comments[-1].body' "$GH_STATE/state.json")" in
+  "<!-- kit-revision: puesto 2 claude/sonnet ronda 3 -->"*"**Modo:** verifica los arreglos de la ronda 2"*) ;;
+  *) fail "verificar: el comentario no dice el modo";; esac
 echo "test_review OK"

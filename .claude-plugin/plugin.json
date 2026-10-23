@@ -1,6 +1,6 @@
 {
   "name": "agents-kit",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Personal kit of skills, hooks and project docs conventions for Claude Code and Codex.",
   "author": {
     "name": "Dru"

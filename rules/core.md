@@ -46,6 +46,7 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 - Verde no es validado: si el cambio altera el resultado visible, compruébalo con casos reales y contra la versión anterior.
 - No afirmes nada que no hayas ejecutado. Mide en vez de deducir, también sobre herramientas externas (CLI, APIs, servicios): un supuesto no vale hasta ejecutarlo, y lo que solo se cree se marca como "sin verificar".
 - No declares "arreglado" ni "hecho" sin reproducir el problema y volver a probar tras el cambio.
+- La verja es el CI completo en la PR. El hook de pre-commit es ligero, de segundos: formato, lint estricto y tests de lo cambiado. Nunca suites completas ni builds en el hook: repiten el CI y cuestan minutos por commit a cada agente. Los comandos del repo van en `verificar.rapido` y `verificar.completo` del marcador.
 
 ## Depuración
 

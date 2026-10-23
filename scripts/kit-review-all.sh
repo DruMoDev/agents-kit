@@ -9,7 +9,11 @@
 # The implementer family comes from --implementador or the environment (CODEX_THREAD_ID -> gpt, CLAUDECODE -> claude).
 # Prints per seat "puesto <i> (<familia>/<modelo>): ok | sin-confirmar (<motivo>) | fallback a <familia>/<modelo>"
 # (plus "aviso: ..." lines), then "salidas: <dir>" (rev-<i>.out, the output of the seat's last attempt, and
-# puestos.tsv: i, familia, cli, modelo, foco, estado, detalle) and "FIN: <n> puestos, <m> sin confirmar".
+# puestos.tsv: i, familia, cli, modelo, foco, estado, detalle, modo) and "FIN: <n> puestos, <m> sin confirmar".
+# Mode per seat (KIT_REVIEW_MODO for kit-review.sh): with revision.rondas "mezcla" (global config, the default), from
+# round 2 one seat, rotating by round, reviews the whole diff with a clean context (completa) and the others only check
+# that the previous round's fixes solve its findings without breaking anything (verificar); with "completas", or in
+# round 1, every seat reviews the whole diff. A "modo: ..." line says which seat is the independent one.
 # Exit: 0 all seats ran (read each state), 1 usage, unknown family or no seats, 2 unknown implementer, broken config or
 # git (default branch or fetch).
 set -u
@@ -49,6 +53,15 @@ fi
 d="$(mktemp -d)" || exit 2
 printf '%s\n' "$cands" > "$d/candidatos.tsv"
 seats="$(cut -f1 "$d/candidatos.tsv" | uniq)"
+rondas="$(kit_config "$wt" '.revision.rondas // "mezcla"')" || exit 2
+case "$rondas" in mezcla|completas) ;; *) echo "aviso: revision.rondas debe ser mezcla o completas; se usa mezcla ('$rondas')"; rondas=mezcla ;; esac
+indep=""
+if [ "$rondas" = mezcla ] && [ "$round" -ge 2 ]; then
+  ns="$(printf '%s\n' "$seats" | grep -c .)"
+  indep="$(printf '%s\n' "$seats" | sed -n "$(( (round - 2) % ns + 1 ))p")"
+  [ "$ns" -gt 1 ] || indep="" # a single seat always reviews everything
+fi
+seat_mode() { if [ -z "$indep" ] || [ "$1" = "$indep" ]; then echo completa; else echo verificar; fi; }
 
 # run_seat <i>: try the seat's candidates in order; writes puesto-<i>.log (lines to print) and puesto-<i>.tsv
 run_seat() {
@@ -64,7 +77,7 @@ run_seat() {
     fi
     [ -z "$prev" ] || echo "puesto $i ($prev): fallback a $fam/$model" >> "$log"
     out="$d/rev-$i-$j.out"
-    "$review" "$wt" "$p" "$i" "$fam" "$cli" "$model" "$focus" "$round" "$n" > "$out" 2>&1 </dev/null
+    KIT_REVIEW_MODO="$(seat_mode "$i")" "$review" "$wt" "$p" "$i" "$fam" "$cli" "$model" "$focus" "$round" "$n" > "$out" 2>&1 </dev/null
     rc=$?
     cp "$out" "$d/rev-$i.out"
     if [ $rc -eq 0 ]; then
@@ -112,10 +125,11 @@ trap - INT TERM HUP
 
 : > "$d/puestos.tsv"
 k=0; u=0
+[ -z "$indep" ] || echo "modo: ronda $round (revision.rondas mezcla): el puesto $indep revisa todo el diff con contexto limpio; los demás verifican los arreglos de la ronda $((round - 1))"
 for i in $seats; do
   k=$((k + 1))
   cat "$d/puesto-$i.log"
-  cat "$d/puesto-$i.tsv" >> "$d/puestos.tsv"
+  printf '%s\t%s\n' "$(cat "$d/puesto-$i.tsv")" "$(seat_mode "$i")" >> "$d/puestos.tsv"
 done
 # one warning per failing provider, however many seats hit it
 for i in $seats; do cat "$d/puesto-$i.avisos"; done | awk '!seen[$0]++'

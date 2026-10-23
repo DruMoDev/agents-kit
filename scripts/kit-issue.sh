@@ -29,6 +29,7 @@
 # aparcar: adds someday to the given issues (out of the pool).
 # comprobar: kit-run's start check (one gh label list): exit 1 "kit en versión anterior: ejecuta kit-on para actualizar"
 #   (plus what is missing) when a kit v3 label is missing in the repo or the marker still has v2 keys; FIN: v3 otherwise.
+#   Its first line is "kit: <version>", the plugin version on disk: a session that loaded an older SKILL.md notices.
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -u
@@ -305,6 +306,7 @@ case "$sub" in
     ;;
 
   comprobar)
+    echo "kit: $(jq -r '.version // "desconocida"' "$here/../.claude-plugin/plugin.json" 2>/dev/null || echo desconocida)"
     v2="$(jq -r --argjson v "$V2_KEYS" 'if type == "object" then [keys_unsorted[] | select(. as $k | $v | index([$k]))] | join(", ") else error("") end' \
       "$root/.agents-kit.json" 2>/dev/null)" || { echo "error: .agents-kit.json no es JSON válido" >&2; exit 2; }
     have="$(gh label list --repo "$slug" --limit 1000 --json name)" || { echo "error: no se pudieron listar las etiquetas" >&2; exit 2; }
