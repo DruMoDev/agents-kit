@@ -92,9 +92,10 @@ use_flow_gh; GH_FAIL_ON="issue list" bash "$issue" reparto "$r" >/dev/null 2>&1;
 use_flow_gh
 flow_add_issue 20 "base" prio:media en-curso
 FLOW_BODY="$(printf 'Contexto.\nFicheros: x. Depende de #20 (sistema de diseño).')" flow_add_issue 21 "hija" prio:alta
-FLOW_BODY="depende de #20, #22 y #30" flow_add_issue 23 "nieta" prio:alta
+FLOW_BODY="Depende de #30 (diseño) y #20 (navegación)." flow_add_issue 23 "nieta" prio:alta
 FLOW_BODY="Bloqueado por #99, ya cerrado. Menciona #20 en otra frase." flow_add_issue 24 "libre" prio:alta
 FLOW_BODY="Depende de #25" flow_add_issue 25 "a sí misma" prio:media
+FLOW_BODY="$(printf 'No depende de #20: va en paralelo. El orden depende de la config, como en #20.')" flow_add_issue 27 "prosa" prio:baja
 FLOW_AUTHOR=desconocido FLOW_BODY="Depende de #20" flow_add_issue 26 "ajena" prio:alta
 out="$(bash "$issue" siguiente "$r" 2>&1)" || fail "dependencias: exit $? ($out)"
 [ "$(last_line "$out")" = "FIN: 24" ] || fail "dependencias: '$out' (esperado 24)"
@@ -103,7 +104,7 @@ err="$(bash "$issue" siguiente "$r" 23 2>&1 >/dev/null)"; rc=$?
 case "$err" in *"#23 depende de issues abiertos: #20"*) ;; *) fail "dependencias <N>: '$err'";; esac
 case "$err" in *"#30"*) fail "dependencias <N>: cuenta #30, que no está abierto: '$err'";; esac
 out="$(bash "$issue" reparto "$r" 2>&1)" || fail "reparto dependencias: exit $?"
-exp="$(printf '#24\tprio:alta\tlibre\n#25\tprio:media\ta sí misma\nesperan a otro issue: #21 (#20) #23 (#20)\nde otras cuentas (nunca entran): #26\nFIN: 2')"
+exp="$(printf '#24\tprio:alta\tlibre\n#25\tprio:media\ta sí misma\n#27\tprio:baja\tprosa\nesperan a otro issue: #21 (#20) #23 (#20)\nde otras cuentas (nunca entran): #26\nFIN: 3')"
 [ "$out" = "$exp" ] || fail "reparto dependencias: '$out'"
 
 # --- entorno: en una sesión en la nube solo entran los entorno:nube; en local, todos

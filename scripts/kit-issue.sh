@@ -198,14 +198,16 @@ case "$sub" in
     # only issues opened by this gh account: anyone can open an issue in a public repo, and kit-run acts on it unattended
     me="$(gh api user --jq .login)" && [ -n "$me" ] || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
     # every open issue with why it stays out ("" = in the pool), in the order siguiente picks them. why: an excluding
-    # label, the changelog issue, another author, an open dependency ("Depende de #N" / "Bloqueado por #N" in an own
-    # body) or, in a cloud session, no entorno:nube.
+    # label, the changelog issue, another author, an open dependency or, in a cloud session, no entorno:nube.
+    # A dependency is "Depende de #N[ (nota)][, #M y #K]" or "Bloqueado por #N" opening a line, list item or sentence of an own
+    # body, with the references right after the phrase ("No depende de #N" or "depende de X, como #N" are not).
     all="$(printf '%s' "$list" | jq -c --arg me "$me" --arg env "$(kit_transport)" --argjson x "$EXCLUDED" '
         def rank: if index("prio:alta") then 0 elif index("prio:media") then 1 elif index("prio:baja") then 3 else 2 end;
         map(.number) as $open
         | map([.labels[].name] as $l | .number as $n
           | ([$x[] | select(. as $e | $l | index($e))] | first) as $b
-          | ([(.body // "") | scan("(?i)(?:depende de|bloqueado por)([^.\\n]*)") | .[0] | scan("#([0-9]+)") | .[0]
+          | ([(.body // "") | scan("(?:^|\\n|[.:;!?]\\s+)\\s*(?:[-*]\\s+)?(?i:depende de|bloqueado por)\\s+((?:#[0-9]+(?:\\s*\\([^)\\n]*\\))?(?:\\s*(?:,|\\by\\b)\\s*)?)+)")
+              | .[0] | scan("#([0-9]+)") | .[0]
               | tonumber | select(. != $n and (. as $d | $open | index($d)))] | unique) as $deps
           | {number, title, mine: (.author.login == $me), r: ($l | rank), deps: $deps,
              why: (if $b != null then "lleva \($b): kit-run no lo coge mientras la tenga"

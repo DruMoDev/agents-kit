@@ -147,6 +147,7 @@ for c in rojo esperando; do
   [ $rc -eq 2 ] || fail "ship CI $c: exit $rc ($out)"
   grep -q '^pr merge' "$GH_LOG" && fail "ship CI $c: fusionó sin CI verde"
   case "$out" in *"FIN: PR abierto") ;; *) fail "ship CI $c: '$out'";; esac
+  case "$out" in *"gh pr merge falló"*) fail "ship CI $c: culpa a la fusión, que no se intentó ('$out')";; esac
 done
 
 

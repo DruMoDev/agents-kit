@@ -143,15 +143,15 @@ git -C "$w" push -q -u origin "$branch" \
 url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$title" --body "$body")" \
   || { echo "error: gh pr create falló; la rama $branch ya está en origin y $keep. Relanza abrir y enviar" >&2; exit 2; }
 # the PR merges only after its CI, like kit-pr.sh fusionar (an admin merge would skip required checks)
-merge_rc=0
-sha="$(git -C "$w" rev-parse HEAD)" || merge_rc=1
-if [ "$merge_rc" -eq 0 ]; then
-  ci="$(ci_wait "$sha")" || merge_rc=$?
-fi
-if [ "$merge_rc" -eq 0 ]; then
+merge_rc=0 ci_rc=0
+sha="$(git -C "$w" rev-parse HEAD)" || ci_rc=2
+[ "$ci_rc" -ne 0 ] || ci="$(ci_wait "$sha")" || ci_rc=$?
+if [ "$ci_rc" -eq 0 ]; then
   echo "CI: $ci"
   # no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted below
   gh pr merge "$url" --repo "$slug" --squash >/dev/null || merge_rc=$?
+else
+  echo "no se fusiona: el CI del PR no salió verde" >&2
 fi
 state="$(gh pr view "$url" --repo "$slug" --json state -q .state 2>/dev/null)"
 

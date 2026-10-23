@@ -230,6 +230,14 @@ bash "$S" "$r" --contenido studio/content/ --protegido lib/ --protegido cli/ >/d
   || fail "--contenido/--protegido: $(cat "$r/.agents-kit.json")"
 out="$(bash "$S" "$r" 2>/dev/null)"
 grep -q '^sugerencia' <<<"$out" && fail "con contenido declarado no debe sugerir ('$out')"
+# a repo that merges PRs with merge commits: the branch commits do not count as direct
+m="$(new_repo)"
+git -C "$m" checkout -q -b rama
+for i in 1 2 3 4 5 6; do mkdir -p "$m/src"; echo "$i" > "$m/src/f$i.py"; git -C "$m" add src; git -C "$m" commit -q -m "paso $i"; done
+git -C "$m" checkout -q -
+git -C "$m" merge -q --no-ff rama -m "Merge pull request #3 from x/rama"
+out="$(bash "$S" "$m" 2>/dev/null)"
+grep -q '^sugerencia' <<<"$out" && fail "merge commits: sugiere código como contenido ('$out')"
 for bad in "--contenido" "--contenido /etc" "--protegido ../x" "--protegido"; do
   bash "$S" "$r" $bad >/dev/null 2>&1; [ $? -eq 1 ] || fail "'$bad' debe salir 1"
 done

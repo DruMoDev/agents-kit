@@ -172,12 +172,13 @@ else
   created .claude/skills
 fi
 
-# Content directories: what the history changes mostly without a PR (a squash merge ends its subject with "(#N)").
+# Content directories: what the first-parent history changes mostly without a PR (a squash merge ends its subject with
+# "(#N)"; a merge commit says "Merge pull request #N", and -m lists its files).
 # A first-level directory with >= 5 direct commits and >= 4 direct per PR commit is proposed, or its single subdirectory
 # when that one holds all of its direct commits. .agents/ (skills) and AGENTS.md are content already.
 if ! jq -e '.contenido | type == "array"' "$marker" >/dev/null 2>&1; then
-  git -C "$repo" log -n 300 --format='@%s' --name-only HEAD 2>/dev/null | awk '
-    /^@/ { pr = ($0 ~ /\(#[0-9]+\)$/); split("", s1); split("", s2); next }
+  git -C "$repo" log --first-parent -m -n 300 --format='@%s' --name-only HEAD 2>/dev/null | awk '
+    /^@/ { pr = ($0 ~ /\(#[0-9]+\)$/ || $0 ~ /^@Merge pull request #[0-9]+/); split("", s1); split("", s2); next }
     /^$/ { next }
     { n = split($0, p, "/"); if (n < 2 || p[1] == ".agents") next
       d1 = p[1] "/"; if (!(d1 in s1)) { s1[d1] = 1; if (pr) P1[d1]++; else D1[d1]++ }
@@ -185,8 +186,9 @@ if ! jq -e '.contenido | type == "array"' "$marker" >/dev/null 2>&1; then
     END {
       for (d in D1) {
         if (D1[d] < 5 || D1[d] < 4 * P1[d]) continue
-        best = d; dd = D1[d]; pp = P1[d] + 0
-        for (c in D2) if (index(c, d) == 1 && D2[c] == D1[d]) { best = c; pp = P2[c] + 0 }
+        best = d; dd = D1[d]; pp = P1[d] + 0; m = 0
+        for (c in D2) if (index(c, d) == 1 && D2[c] == D1[d]) { m++; only = c }
+        if (m == 1) { best = only; pp = P2[only] + 0 }
         printf "sugerencia contenido: %s (%d commits directos, %d por PR)\n", best, dd, pp
       }
     }' | sort

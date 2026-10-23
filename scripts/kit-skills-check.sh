@@ -43,8 +43,9 @@ for d in "$root"/.agents/skills/*/; do [ -d "$d" ] && skilldirs+=("${d%/}"); don
 ignored() { # <path>: true if .gitignore excludes it (never when <root> is not a git repo)
   git -C "$root" check-ignore -q -- "$1" 2>/dev/null || git -C "$root" check-ignore -q -- "$1/" 2>/dev/null
 }
-exists_in() { # <base> <path>: the file, or the Python module it names
+exists_in() { # <base> <path>: the file, or the Python module it names ("lib/x" or "lib/x.func" for lib/x.py)
   [ -e "$1/$2" ] || [ -e "$1/$2.py" ] && return 0
+  case "${2##*.}" in md|py|sh|js|mjs|ts|tsx|json|yml|yaml|toml|txt|html|css|csv|ndjson|jpg|png|mp4|mov) return 1 ;; esac
   case "${2##*/}" in *.*) [ -e "$1/${2%.*}.py" ] ;; *) return 1 ;; esac
 }
 
