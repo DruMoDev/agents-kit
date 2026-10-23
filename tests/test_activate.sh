@@ -210,6 +210,38 @@ out="$(bash "$S" "$r" 2>/dev/null)"
 [ "$(last_line "$out")" = "FIN: 0" ] && ! grep -q '^nota:' <<<"$out" || fail "v2: no idempotente: $out"
 
 # 7. environment errors exit 2
+# 11. contenido and protegido: flags replace the lists; suggestions from direct commits while contenido is missing
+r="$(new_repo)"
+c() { # <subject> <file>...: commit those files
+  local m="$1"; shift
+  for f in "$@"; do mkdir -p "$r/$(dirname "$f")"; echo "$m" >> "$r/$f"; done
+  git -C "$r" add -A && git -C "$r" commit -q -m "$m"
+}
+for i in 1 2 3 4 5; do c "vídeo $i" "studio/content/v$i.md"; done
+c "arreglo (#7)" studio/content/v1.md lib/a.py
+for i in 1 2 3 4 5; do c "código $i (#$((10 + i)))" "lib/b$i.py"; done
+for i in 1 2 3 4 5; do c "skill $i" ".agents/skills/x/SKILL.md"; done
+for i in 1 2 3 4; do c "pocos $i" "docs/d$i.md"; done
+out="$(bash "$S" "$r" 2>/dev/null)" || fail "sugerencias: exit $?"
+[ "$(grep '^sugerencia' <<<"$out")" = "sugerencia contenido: studio/content/ (5 commits directos, 1 por PR)" ] \
+  || fail "sugerencias: '$out'"
+bash "$S" "$r" --contenido studio/content/ --protegido lib/ --protegido cli/ >/dev/null 2>&1 || fail "--contenido: exit $?"
+[ "$(jq -c '[.contenido, .protegido]' "$r/.agents-kit.json")" = '[["studio/content/"],["lib/","cli/"]]' ] \
+  || fail "--contenido/--protegido: $(cat "$r/.agents-kit.json")"
+out="$(bash "$S" "$r" 2>/dev/null)"
+grep -q '^sugerencia' <<<"$out" && fail "con contenido declarado no debe sugerir ('$out')"
+# a repo that merges PRs with merge commits: the branch commits do not count as direct
+m="$(new_repo)"
+git -C "$m" checkout -q -b rama
+for i in 1 2 3 4 5 6; do mkdir -p "$m/src"; echo "$i" > "$m/src/f$i.py"; git -C "$m" add src; git -C "$m" commit -q -m "paso $i"; done
+git -C "$m" checkout -q -
+git -C "$m" merge -q --no-ff rama -m "Merge pull request #3 from x/rama"
+out="$(bash "$S" "$m" 2>/dev/null)"
+grep -q '^sugerencia' <<<"$out" && fail "merge commits: sugiere código como contenido ('$out')"
+for bad in "--contenido" "--contenido /etc" "--protegido ../x" "--protegido"; do
+  bash "$S" "$r" $bad >/dev/null 2>&1; [ $? -eq 1 ] || fail "'$bad' debe salir 1"
+done
+
 bash "$S" "/nonexistent-dir-xyz" >/dev/null 2>&1; [ $? -eq 2 ] || fail "missing dir should exit 2"
 nd="$(mktemp -d)"; dirs+=("$nd")
 bash "$S" "$nd" >/dev/null 2>&1; [ $? -eq 2 ] || fail "non-git dir should exit 2"

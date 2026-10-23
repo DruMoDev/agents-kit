@@ -59,3 +59,26 @@ out="$(bash "$C" "$REPO_ROOT" --excluir .agents/skills 2>&1)" || fail "skills de
 case "$out" in "FIN: "*" citas comprobadas") ;; *) fail "skills del kit: '$out'";; esac
 [ "${out#FIN: }" != "0 citas comprobadas" ] || fail "skills del kit: no comprobó nada"
 echo "ok"
+
+# real-repo shapes (tiktok-editor): .gitignore'd paths, Python modules, a sibling skill's references/, and a skill
+# directory whose own tools/ shadows the root's tools/
+g="$(mk_repo)"
+mkdir -p "$g/lib/render" "$g/tools" "$g/.agents/skills/a/tools" "$g/.agents/skills/b/references"
+: > "$g/lib/render/encode.py"; mkdir -p "$g/docs"; : > "$g/docs/plan.py"; : > "$g/tools/python.sh"; : > "$g/.agents/skills/b/references/corto.md"
+printf 'secrets/*\nprojects/cortos/*\ntools/cap/.profile/\n' > "$g/.gitignore"
+mkdir -p "$g/secrets" "$g/projects/cortos" "$g/tools/cap"
+cat > "$g/.agents/skills/a/SKILL.md" <<'MD'
+Ignorados: `secrets/token.json`, `projects/cortos/x/config.json`, `tools/cap/.profile`.
+Módulos: `lib/render/encode`, `lib/render/encode.codec_por_defecto`.
+De otra skill: `references/corto.md`. Raíz con tools/ propio: `"$(tools/python.sh)" -c x`.
+Rotos: `lib/render/nada.func`, `references/falta.md`, `tools/falta.sh`, `docs/plan.md`.
+MD
+err="$(bash "$C" "$g" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "repo real: exit $rc ($err)"
+exp="$(printf '%s\n' \
+  '.agents/skills/a/SKILL.md:4: lib/render/nada.func no existe' \
+  '.agents/skills/a/SKILL.md:4: references/falta.md no existe' \
+  '.agents/skills/a/SKILL.md:4: tools/falta.sh no existe' \
+  '.agents/skills/a/SKILL.md:4: docs/plan.md no existe')"
+[ "$err" = "$exp" ] || fail "repo real: salida
+$err"

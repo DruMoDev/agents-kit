@@ -87,6 +87,40 @@ out="$(bash "$issue" reparto "$r" 2>&1)" || fail "reparto vacío: exit $?"
 [ "$out" = "FIN: 0" ] || fail "reparto vacío: '$out'"
 use_flow_gh; GH_FAIL_ON="issue list" bash "$issue" reparto "$r" >/dev/null 2>&1; rc=$?
 [ $rc -eq 2 ] || fail "reparto con gh roto: exit $rc"
+
+# --- dependencias: "Depende de #N" / "Bloqueado por #N" en el cuerpo propio deja el issue fuera mientras #N siga abierto
+use_flow_gh
+flow_add_issue 20 "base" prio:media en-curso
+FLOW_BODY="$(printf 'Contexto.\nFicheros: x. Depende de #20 (sistema de diseño).')" flow_add_issue 21 "hija" prio:alta
+FLOW_BODY="Depende de #30 (diseño) y #20 (navegación)." flow_add_issue 23 "nieta" prio:alta
+FLOW_BODY="Bloqueado por #99, ya cerrado. Menciona #20 en otra frase." flow_add_issue 24 "libre" prio:alta
+FLOW_BODY="Depende de #25" flow_add_issue 25 "a sí misma" prio:media
+FLOW_BODY="$(printf 'No depende de #20: va en paralelo. El orden depende de la config, como en #20.')" flow_add_issue 27 "prosa" prio:baja
+FLOW_AUTHOR=desconocido FLOW_BODY="Depende de #20" flow_add_issue 26 "ajena" prio:alta
+out="$(bash "$issue" siguiente "$r" 2>&1)" || fail "dependencias: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: 24" ] || fail "dependencias: '$out' (esperado 24)"
+err="$(bash "$issue" siguiente "$r" 23 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "dependencias <N>: exit $rc"
+case "$err" in *"#23 depende de issues abiertos: #20"*) ;; *) fail "dependencias <N>: '$err'";; esac
+case "$err" in *"#30"*) fail "dependencias <N>: cuenta #30, que no está abierto: '$err'";; esac
+out="$(bash "$issue" reparto "$r" 2>&1)" || fail "reparto dependencias: exit $?"
+exp="$(printf '#24\tprio:alta\tlibre\n#25\tprio:media\ta sí misma\n#27\tprio:baja\tprosa\nesperan a otro issue: #21 (#20) #23 (#20)\nde otras cuentas (nunca entran): #26\nFIN: 3')"
+[ "$out" = "$exp" ] || fail "reparto dependencias: '$out'"
+
+# --- entorno: en una sesión en la nube solo entran los entorno:nube; en local, todos
+use_flow_gh
+flow_add_issue 30 "mac" prio:alta entorno:mac
+flow_add_issue 31 "sin entorno" prio:alta
+flow_add_issue 32 "nube" prio:media entorno:nube
+out="$(bash "$issue" siguiente "$r" 2>/dev/null)"
+[ "$(last_line "$out")" = "FIN: 30" ] || fail "entorno local: '$out'"
+out="$(CLAUDE_CODE_REMOTE=true bash "$issue" siguiente "$r" 2>/dev/null)"
+[ "$(last_line "$out")" = "FIN: 32" ] || fail "entorno nube: '$out'"
+err="$(CLAUDE_CODE_REMOTE=true bash "$issue" siguiente "$r" 30 2>&1 >/dev/null)"
+case "$err" in *"no lleva entorno:nube"*) ;; *) fail "entorno nube <N>: '$err'";; esac
+out="$(CLAUDE_CODE_REMOTE=true bash "$issue" reparto "$r" 2>&1)"
+exp="$(printf '#32\tprio:media\tnube\nsolo en el Mac (sin entorno:nube): #30 #31\nFIN: 1')"
+[ "$out" = "$exp" ] || fail "reparto nube: '$out'"
 use_flow_gh
 flow_add_issue 9 "baja" prio:baja
 flow_add_issue 11 "sin prio"
@@ -301,20 +335,23 @@ rm -f "$KIT_CONFIG"
 use_flow_gh
 flow_add_issue 3 "Arreglar Login" prio:media
 bfile="$(mktemp)"; echo "cuerpo" > "$bfile"
-err="$(bash "$issue" crear "$r" "arreglar login" "$bfile" --prio alta 2>&1 >/dev/null)"; rc=$?
+err="$(bash "$issue" crear "$r" "arreglar login" "$bfile" --prio alta --entorno nube 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "crear duplicado: exit $rc"
 case "$err" in *"ya existe #3 con ese título"*) ;; *) fail "crear duplicado: '$err'";; esac
-out="$(bash "$issue" crear "$r" "Nuevo" "$bfile" --prio alta 2>&1)" || fail "crear: exit $? ($out)"
+out="$(bash "$issue" crear "$r" "Nuevo" "$bfile" --prio alta --entorno mac 2>&1)" || fail "crear: exit $? ($out)"
 [ "$out" = "$(printf 'https://github.com/dru/demo/issues/4\nFIN: https://github.com/dru/demo/issues/4')" ] || fail "crear: '$out'"
-[ "$(flow_issue 4 '[.labels[].name] | join(",")')" = prio:alta ] || fail "crear: etiquetas '$(flow_issue 4 '[.labels[].name] | join(",")')'"
+[ "$(flow_issue 4 '[.labels[].name] | join(",")')" = prio:alta,entorno:mac ] || fail "crear: etiquetas '$(flow_issue 4 '[.labels[].name] | join(",")')'"
 [ "$(flow_issue 4 '.body')" = cuerpo ] || fail "crear: cuerpo"
-out="$(bash "$issue" crear "$r" "Propuesto" "$bfile" --etiqueta audio --prio baja --propuesta --etiqueta "editor panel" 2>&1)" \
+out="$(bash "$issue" crear "$r" "Propuesto" "$bfile" --etiqueta audio --prio baja --entorno nube --propuesta --etiqueta "editor panel" 2>&1)" \
   || fail "crear propuesta: exit $? ($out)"
-[ "$(flow_issue 5 '[.labels[].name] | sort | join(",")')" = "audio,editor panel,prio:baja,propuesta" ] \
+[ "$(flow_issue 5 '[.labels[].name] | sort | join(",")')" = "audio,editor panel,entorno:nube,prio:baja,propuesta" ] \
   || fail "crear propuesta: etiquetas '$(flow_issue 5 '[.labels[].name] | sort | join(",")')'"
-for bad in "" "--prio urgente" "--prio" "--prio alta --etiqueta" "--prio alta --etiqueta a,b" "--prio alta --etiqueta listo" \
-           "--prio alta --etiqueta en-curso" "--prio alta --etiqueta prio:alta" "--prio alta --etiqueta propuesta" \
-           "--prio alta --etiqueta registro" "--prio alta --otra" "listo" "propuesta" "--prio alta extra"; do
+for bad in "" "--prio urgente" "--prio" "--prio alta" "--prio alta --entorno" "--prio alta --entorno luna" \
+           "--entorno nube" "--prio alta --entorno nube --etiqueta entorno:mac" \
+           "--prio alta --entorno nube --etiqueta" "--prio alta --entorno nube --etiqueta a,b" "--prio alta --entorno nube --etiqueta listo" \
+           "--prio alta --entorno nube --etiqueta en-curso" "--prio alta --entorno nube --etiqueta prio:alta" \
+           "--prio alta --entorno nube --etiqueta propuesta" "--prio alta --entorno nube --etiqueta registro" \
+           "--prio alta --entorno nube --otra" "listo" "propuesta" "--prio alta --entorno nube extra"; do
   : > "$GH_LOG"
   bash "$issue" crear "$r" "Otro" "$bfile" $bad >/dev/null 2>&1; rc=$?
   [ $rc -eq 1 ] || fail "crear '$bad': exit $rc (esperado 1)"
@@ -378,7 +415,7 @@ bash "$issue" leer "$r" 0 >/dev/null 2>&1; [ $? -eq 1 ] || fail "leer número in
 nr="$(mk_repo)"; git -C "$nr" remote add origin https://github.com/dru/demo.git
 use_flow_gh
 for args in "siguiente" "siguiente 7" "leer 7" "reparto" "aparcar 7" "reclamar 7 kit-a" "soltar 7 kit-a" "decision 7 kit-a $qfile" \
-            "bloquear 7 kit-a $qfile" "crear x $qfile --prio alta"; do
+            "bloquear 7 kit-a $qfile" "crear x $qfile --prio alta --entorno nube"; do
   set -- $args
   sub="$1"; shift
   err="$(bash "$issue" "$sub" "$nr" "$@" 2>&1 >/dev/null)"; rc=$?

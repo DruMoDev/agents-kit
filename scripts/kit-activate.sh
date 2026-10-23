@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Usage: scripts/kit-activate.sh <repo_root> [--changelog true|false] [--setup <ruta>]
+# Usage: scripts/kit-activate.sh <repo_root> [--changelog true|false] [--setup <ruta>] [--contenido <ruta>]... [--protegido <ruta>]...
 # Local, file-only, idempotent activation of the kit in a repo (kit-on runs it in a temporary worktree). Does not commit.
 # Also creates the global config (~/.agents-kit/config.json or KIT_CONFIG) if missing, appends "## Reglas del proyecto"
 # to an existing AGENTS.md that lacks it, and warns about versioned git hooks when the marker declares no "setup".
-# --changelog and --setup are written to the marker; "changelog": false means no CHANGELOG.md.
+# --changelog and --setup are written to the marker; "changelog": false means no CHANGELOG.md. --contenido and --protegido
+# (repeatable) replace that list in the marker.
+# While the marker has no "contenido", prints "sugerencia contenido: <dir> (...)" for each directory that the history of
+# HEAD (last 300 commits) mostly changes in direct commits (subject without "(#N)"): kit-on proposes them to Dru.
 # v2 keys of an existing marker (reviewers, implementer, notify) are dropped, each with a "nota: ..." line saying where it
 # goes now (kit-on runs this on an activated repo to update it).
 # Exit: 0 ok, 1 usage, 2 environment error.
@@ -13,12 +16,12 @@ source "$here/lib/config.sh"
 source "$here/lib/repo-hook.sh"
 
 usage() {
-  echo "uso: $0 <repo_root> [--changelog true|false] [--setup <ruta>]" >&2
+  echo "uso: $0 <repo_root> [--changelog true|false] [--setup <ruta>] [--contenido <ruta>]... [--protegido <ruta>]..." >&2
   exit 1
 }
 [ $# -ge 1 ] && [ -n "$1" ] || usage
 arg_repo="$1"; shift
-opt_changelog=""; opt_setup=""; has_setup=false
+opt_changelog=""; opt_setup=""; has_setup=false; contenido=(); protegido=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --changelog)
@@ -28,6 +31,11 @@ while [ $# -gt 0 ]; do
     --setup)
       [ $# -ge 2 ] && [ -n "$2" ] || usage
       opt_setup="$2"; has_setup=true; shift 2 ;;
+    --contenido|--protegido)
+      [ $# -ge 2 ] || usage
+      kit_hook_rel "${1#--}" "$2" || exit 1
+      if [ "$1" = --contenido ]; then contenido+=("$2"); else protegido+=("$2"); fi
+      shift 2 ;;
     *) echo "opción no reconocida: $1" >&2; usage ;;
   esac
 done
@@ -83,9 +91,12 @@ jq -r --arg g "$g" --arg q "'" '
    notify: "el canal de avisos va en \($q)notify\($q) de \($g)"} as $to
   | to_entries[] | select($to[.key] != null)
   | "nota: \($q)\(.key)\($q) (v2) quitada del marcador: \($to[.key]); valor anterior: \(.value | tojson)"' "$marker" || exit 2
-want="$(jq -c --arg c "$opt_changelog" --arg s "$opt_setup" --argjson hs "$has_setup" '
+lists="$(jq -cn --args '$ARGS.positional' -- ${contenido[@]+"${contenido[@]}"})" || exit 2
+listp="$(jq -cn --args '$ARGS.positional' -- ${protegido[@]+"${protegido[@]}"})" || exit 2
+want="$(jq -c --arg c "$opt_changelog" --arg s "$opt_setup" --argjson hs "$has_setup" --argjson lc "$lists" --argjson lp "$listp" '
   del(.reviewers, .implementer, .notify)
-  | (if $c == "" then . else .changelog = ($c == "true") end) | (if $hs then .setup = $s else . end)' "$marker")" || exit 2
+  | (if $c == "" then . else .changelog = ($c == "true") end) | (if $hs then .setup = $s else . end)
+  | (if ($lc | length) > 0 then .contenido = $lc else . end) | (if ($lp | length) > 0 then .protegido = $lp else . end)' "$marker")" || exit 2
 if [ "$want" != "$(jq -c . "$marker")" ]; then
   # mktemp opens with O_EXCL (never follows a planted symlink); mv replaces the marker itself, not a link target
   tmpm="$(mktemp "$repo/.agents-kit.json.XXXXXX")" || exit 2
@@ -159,6 +170,28 @@ elif [ -e "$link" ]; then
 else
   mkdir -p "$repo/.claude" && ln -s "$want" "$link" || exit 2
   created .claude/skills
+fi
+
+# Content directories: what the first-parent history changes mostly without a PR (a squash merge ends its subject with
+# "(#N)"; a merge commit says "Merge pull request #N", and -m lists its files).
+# A first-level directory with >= 5 direct commits and >= 4 direct per PR commit is proposed, or its single subdirectory
+# when that one holds all of its direct commits. .agents/ (skills) and AGENTS.md are content already.
+if ! jq -e '.contenido | type == "array"' "$marker" >/dev/null 2>&1; then
+  git -C "$repo" log --first-parent -m -n 300 --format='@%s' --name-only HEAD 2>/dev/null | awk '
+    /^@/ { pr = ($0 ~ /\(#[0-9]+\)$/ || $0 ~ /^@Merge pull request #[0-9]+/); split("", s1); split("", s2); next }
+    /^$/ { next }
+    { n = split($0, p, "/"); if (n < 2 || p[1] == ".agents") next
+      d1 = p[1] "/"; if (!(d1 in s1)) { s1[d1] = 1; if (pr) P1[d1]++; else D1[d1]++ }
+      if (n >= 3) { d2 = d1 p[2] "/"; if (!(d2 in s2)) { s2[d2] = 1; if (pr) P2[d2]++; else D2[d2]++ } } }
+    END {
+      for (d in D1) {
+        if (D1[d] < 5 || D1[d] < 4 * P1[d]) continue
+        best = d; dd = D1[d]; pp = P1[d] + 0; m = 0
+        for (c in D2) if (index(c, d) == 1 && D2[c] == D1[d]) { m++; only = c }
+        if (m == 1) { best = only; pp = P2[only] + 0 }
+        printf "sugerencia contenido: %s (%d commits directos, %d por PR)\n", best, dd, pp
+      }
+    }' | sort
 fi
 
 # Versioned git hooks need preparing in every new worktree: warn when the marker declares no setup

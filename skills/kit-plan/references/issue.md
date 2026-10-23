@@ -26,7 +26,7 @@ Lo leen `kit-run` y los revisores sin más contexto: todo lo acordado tiene que 
 
 ## Dónde toca
 
-<!-- Rutas concretas (`lib/x/daemon.py`, no "el daemon"). -->
+<!-- Rutas concretas (`lib/x/daemon.py`, no "el daemon"). Si necesita otro issue terminado antes: "Depende de #N" (varios: "Depende de #N y #M"); kit-run no lo coge mientras alguno siga abierto. -->
 
 ## Lo verificado
 
