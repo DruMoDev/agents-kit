@@ -143,7 +143,8 @@ ship_merge() {
   if [ "$ci_rc" -eq 0 ]; then
     echo "CI: $ci"
     # no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted in ship_end
-    gh pr merge "$1" --repo "$slug" --squash >/dev/null || merge_rc=$?
+    # --match-head-commit: never merge a head other than the one whose CI was just checked
+    gh pr merge "$1" --repo "$slug" --squash --match-head-commit "$2" >/dev/null || merge_rc=$?
   elif [ "$ci_rc" -eq 3 ]; then
     echo "no se fusiona todavía: el CI sigue en marcha. Para esperarlo y fusionar solo el PR, relanza: $0 fusionar $root $branch" >&2
   else
@@ -167,10 +168,16 @@ ship_end() {
 }
 
 if [ "$sub" = fusionar ]; then
-  prs="$(gh pr list --repo "$slug" --head "$branch" --state open --json url,headRefOid)" \
+  # only PRs from this repo's own branch: --head also matches a fork's branch with the same name
+  prs="$(gh pr list --repo "$slug" --head "$branch" --state open --json url,headRefOid,isCrossRepository)" \
     || { echo "error: gh pr list falló" >&2; exit 2; }
-  url="$(printf '%s' "$prs" | jq -r '.[0].url // empty')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
-  [ -n "$url" ] || { echo "no hay un PR abierto desde '$branch'" >&2; exit 1; }
+  prs="$(printf '%s' "$prs" | jq -c 'map(select(.isCrossRepository == false))')" \
+    || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+  case "$(printf '%s' "$prs" | jq length)" in
+    0) echo "no hay un PR abierto desde '$branch'" >&2; exit 1 ;;
+    1) url="$(printf '%s' "$prs" | jq -r '.[0].url')" ;;
+    *) echo "hay varios PR abiertos desde '$branch'; fusiona el bueno a mano" >&2; exit 1 ;;
+  esac
   w="$(kit_wt)" || exit 1
   [ -z "$w" ] || { echo "el worktree $w sigue ahí: envía con enviar o bórralo con descartar" >&2; exit 1; }
   ship_merge "$url" "$(printf '%s' "$prs" | jq -r '.[0].headRefOid // empty')"

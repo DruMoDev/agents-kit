@@ -46,6 +46,6 @@ case "$1 $2" in
     esac
     printf '{"check_runs":[{"id":1,"name":"suite","app":{"id":1},"status":"%s","conclusion":%s}]}\n' "$st" "$c" ;;
   "api repos/dru/demo/actions/runs"*) echo "${GH_RUNS_SLOW:-0}" ;; # already the --jq answer: slowest green run (s)
-  "pr list") if [ "$mode" = pr-open ]; then echo '[{"number":5,"url":"https://github.com/dru/demo/pull/5","headRefOid":"abc123"}]'; else echo '[]'; fi ;;
+  "pr list") if [ "$mode" = pr-open ]; then echo '[{"number":5,"url":"https://github.com/dru/demo/pull/5","headRefOid":"abc123","isCrossRepository":false},{"number":6,"url":"https://github.com/dru/demo/pull/6","headRefOid":"f0f0f0","isCrossRepository":true}]'; else echo '[]'; fi ;;
 esac
 exit 0

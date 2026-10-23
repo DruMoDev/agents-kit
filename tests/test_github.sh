@@ -159,7 +159,9 @@ r="$(mk_with_origin main)"
 out="$(GH_STUB_MODE=pr-open GH_CI=verde KIT_CI_POLL=0 bash "$ship" fusionar "$r" kit-on 2>&1)" || fail "fusionar verde: $out"
 case "$out" in *"CI: verde"*"PR fusionado: https://github.com/dru/demo/pull/5"*"FIN: ok") ;; *) fail "fusionar verde: '$out'";; esac
 grep -q '^api repos/dru/demo/commits/abc123/check-runs' "$GH_LOG" || fail "fusionar: no miró el CI del head del PR"
-grep -q '^pr merge https://github.com/dru/demo/pull/5 .*--squash' "$GH_LOG" || fail "fusionar: no fusionó el PR 5"
+grep -q '^pr merge https://github.com/dru/demo/pull/5 .*--squash --match-head-commit abc123' "$GH_LOG" \
+  || fail "fusionar: no fusionó el PR 5 atado al commit comprobado"
+grep -q 'pull/6\|f0f0f0' "$GH_LOG" && fail "fusionar: tocó el PR de un fork"
 : > "$GH_LOG"
 out="$(GH_STUB_MODE=pr-open GH_CI=esperando KIT_CI_POLL=0 KIT_CI_TIMEOUT=0 bash "$ship" fusionar "$r" kit-on 2>&1)"; rc=$?
 [ $rc -eq 2 ] || fail "fusionar esperando: exit $rc ($out)"
