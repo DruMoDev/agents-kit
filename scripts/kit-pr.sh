@@ -132,14 +132,30 @@ Cierra #$n"
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     git push -q -u origin HEAD || { echo "error: git push falló" >&2; exit 2; }
     if [ -n "${open_pr%%$'\t'*}" ]; then
-      echo "${open_pr%%$'\t'*}"
-      echo "FIN: ${open_pr#*$'\t'}"
-      exit 0
+      url="${open_pr#*$'\t'}"
+    else
+      url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$titulo" --body-file "$tmpd/body")" \
+        || { echo "error: gh pr create falló" >&2; exit 2; }
+      url="$(printf '%s\n' "$url" | grep -E '/pull/[0-9]+' | sed -n '$p')"
+      [ -n "$url" ] || { echo "error: gh pr create no devolvió la URL de la PR" >&2; exit 2; }
     fi
-    url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$titulo" --body-file "$tmpd/body")" \
-      || { echo "error: gh pr create falló" >&2; exit 2; }
-    url="$(printf '%s\n' "$url" | grep -E '/pull/[0-9]+' | sed -n '$p')"
-    [ -n "$url" ] || { echo "error: gh pr create no devolvió la URL de la PR" >&2; exit 2; }
+    # the CHANGELOG.md entry goes in the first commit with the placeholder [#PR](PR), since the number only exists now:
+    # filled here in a commit of its own that skips the project's hooks (it only touches that link)
+    if grep -qF '[#PR](PR)' CHANGELOG.md 2>/dev/null; then
+      pn="${url##*/}"
+      PN="$pn" URL="$url" perl -pi -e 's/\[#PR\]\(PR\)/[#$ENV{PN}]($ENV{URL})/g; s{docs/changelog/PR-}{docs/changelog/$ENV{PN}-}g' CHANGELOG.md \
+        || { echo "error: no se pudo poner el enlace de la PR en CHANGELOG.md" >&2; exit 2; }
+      shots=()
+      for img in docs/changelog/PR-*; do
+        [ -e "$img" ] || continue
+        git mv "$img" "docs/changelog/$pn-${img#docs/changelog/PR-}" || { echo "error: no se pudo renombrar $img" >&2; exit 2; }
+        shots+=("$img" "docs/changelog/$pn-${img#docs/changelog/PR-}")
+      done
+      git -c core.hooksPath=/dev/null commit -q --no-verify -m "changelog: enlace a la PR #$pn" -- CHANGELOG.md ${shots[@]+"${shots[@]}"} \
+        || { echo "error: no se pudo confirmar el enlace de la PR en CHANGELOG.md" >&2; exit 2; }
+      git push -q origin HEAD || { echo "error: git push falló tras poner el enlace del changelog" >&2; exit 2; }
+      echo "changelog: enlace a la PR #$pn puesto en CHANGELOG.md"
+    fi
     echo "${url##*/}"
     echo "FIN: $url"
     ;;

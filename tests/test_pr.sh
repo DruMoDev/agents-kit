@@ -72,6 +72,26 @@ out="$(bash "$pr" abrir "$wt" 3 "Foo" "$tmp/body" 2>&1)" || fail "abrir idempote
 printf '%s\n' "$out" | grep -qx 4 || fail "abrir idempotente no imprime el número: $out"
 [ "$(git -C "$o" rev-parse issue-3-foo)" = "$(git -C "$wt" rev-parse HEAD)" ] || fail "abrir idempotente no empujó"
 grep -q -- "pr list --repo dru/demo --head issue-3-foo --state open" "$GH_LOG" || fail "abrir no busca la PR abierta"
+# abrir fills the CHANGELOG.md placeholder [#PR](PR) and the PR- screenshots in a commit of its own, without the
+# project's hooks (a heavy pre-commit would run twice)
+mkdir -p "$wt/docs/changelog" "$tmp/hooks"
+printf '# Changelog\n\n## 2026-10-23\n\n### Nuevo: algo · [#PR](PR)\nTexto.\n\n![Captura](docs/changelog/PR-algo.png)\n' > "$wt/CHANGELOG.md"
+echo png > "$wt/docs/changelog/PR-algo.png"
+(cd "$wt" && git add CHANGELOG.md docs/changelog/PR-algo.png && git commit -q -m "con changelog") || fail "commit changelog"
+printf '#!/bin/sh\necho hook >> "%s/hook.log"\nexit 1\n' "$tmp" > "$tmp/hooks/pre-commit"; chmod +x "$tmp/hooks/pre-commit"
+git -C "$wt" config core.hooksPath "$tmp/hooks"
+out="$(bash "$pr" abrir "$wt" 3 "Foo" "$tmp/body" 2>&1)" || fail "abrir changelog: $out"
+case "$out" in *"changelog: enlace a la PR #4 puesto en CHANGELOG.md"*"FIN: $url") ;; *) fail "abrir changelog salida: $out";; esac
+grep -qF "### Nuevo: algo · [#4]($url)" "$wt/CHANGELOG.md" && grep -qF "(docs/changelog/4-algo.png)" "$wt/CHANGELOG.md" \
+  || fail "abrir changelog: $(cat "$wt/CHANGELOG.md")"
+[ -e "$wt/docs/changelog/4-algo.png" ] && [ ! -e "$wt/docs/changelog/PR-algo.png" ] || fail "abrir no renombró la captura"
+[ "$(git -C "$wt" log -1 --format=%s)" = "changelog: enlace a la PR #4" ] || fail "commit del changelog: $(git -C "$wt" log -1 --format=%s)"
+[ -z "$(git -C "$wt" status --porcelain)" ] || fail "abrir changelog dejó cambios: $(git -C "$wt" status --porcelain)"
+[ ! -e "$tmp/hook.log" ] || fail "el commit del enlace corrió el hook del proyecto"
+[ "$(git -C "$o" rev-parse issue-3-foo)" = "$(git -C "$wt" rev-parse HEAD)" ] || fail "abrir changelog no empujó"
+git -C "$wt" config --unset core.hooksPath
+(cd "$wt" && git rm -q CHANGELOG.md docs/changelog/4-algo.png && git commit -q -m "sin changelog" && git push -q origin HEAD) \
+  || fail "quitar el changelog de prueba"
 
 # esperar-ci: no workflows
 out="$(bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "sin-ci: $out"

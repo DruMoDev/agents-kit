@@ -11,6 +11,7 @@ cat > "$stub" <<'EOF'
 # args: wt pr puesto familia cli modelo foco ronda N. STUB_FAIL: "<cli>/<modelo>=<motivo> ..." fails those with exit 2.
 echo "args: $*"
 echo "base: ${KIT_REVIEW_BASE:-}"
+echo "modo: ${KIT_REVIEW_MODO:-}"
 echo "$5/$6" >> "$STUB_CALLS"
 if [ -n "${STUB_SLEEP:-}" ]; then echo $$ > "$STUB_SLEEP/$3.pid"; sleep 30 & wait; fi
 for f in ${STUB_FAIL:-}; do
@@ -64,6 +65,26 @@ grep -qx "args: $r 7 3 claude claude sonnet simplicidad, reutilización y scope 
 [ "$(cut -f1-4,6 "$d/puestos.tsv" | tr '\t\n' ' |')" = "1 gpt opencode openai/x ok|2 gpt opencode openai/x ok|3 claude claude sonnet ok|" ] \
   || fail "puestos.tsv: $(cat "$d/puestos.tsv")"
 [ "$(ncom)" = 0 ] || fail "publicó con todo confirmado"
+# revision.rondas mezcla (default), round 2: seat 1 reviews everything, the others verify the fixes
+grep -qx "modo: completa" "$d/rev-1.out" && grep -qx "modo: verificar" "$d/rev-2.out" && grep -qx "modo: verificar" "$d/rev-3.out" \
+  || fail "modos ronda 2: $(grep -h '^modo' "$d"/rev-[123].out | tr '\n' ' ')"
+has "modo: ronda 2 (revision.rondas mezcla): el puesto 1 revisa todo el diff con contexto limpio; los demás verifican los arreglos de la ronda 1"
+[ "$(cut -f8 "$d/puestos.tsv" | tr '\n' ' ')" = "completa verificar verificar " ] || fail "puestos.tsv sin modo: $(cat "$d/puestos.tsv")"
+# round 3: the independent seat rotates to seat 2; round 1: every seat complete
+out="$(CLAUDECODE=1 bash "$all" "$r" 7 3 3 2>&1)" || fail "ronda 3: $out"
+d3="$(sed -n 's/^salidas: //p' <<<"$out")"
+[ "$(cut -f8 "$d3/puestos.tsv" | tr '\n' ' ')" = "verificar completa verificar " ] || fail "ronda 3 no rota: $(cut -f8 "$d3/puestos.tsv")"
+out="$(CLAUDECODE=1 bash "$all" "$r" 7 1 3 2>&1)" || fail "ronda 1: $out"
+d1="$(sed -n 's/^salidas: //p' <<<"$out")"
+[ "$(cut -f8 "$d1/puestos.tsv" | tr '\n' ' ')" = "completa completa completa " ] || fail "ronda 1: $(cut -f8 "$d1/puestos.tsv")"
+grep -q '^modo: ronda' <<<"$out" && fail "ronda 1 no debe anunciar modo"
+# revision.rondas completas: every seat complete in every round
+g="$(cat "$KIT_CONFIG")"
+set_global "$(jq -c '.revision.rondas = "completas"' <<<"$g")"
+out="$(CLAUDECODE=1 bash "$all" "$r" 7 2 3 2>&1)" || fail "completas: $out"
+dc="$(sed -n 's/^salidas: //p' <<<"$out")"
+[ "$(cut -f8 "$dc/puestos.tsv" | tr '\n' ' ')" = "completa completa completa " ] || fail "completas: $(cut -f8 "$dc/puestos.tsv")"
+set_global "$g"
 # Codex session -> gpt implements: the other family is claude
 out="$(CODEX_THREAD_ID=x CLAUDECODE=1 bash "$all" "$r" 7 2 3 2>&1)" || fail "codex: $out"
 has "puesto 1 (claude/opus): ok"; has "puesto 3 (gpt/openai/y): ok"

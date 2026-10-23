@@ -8,7 +8,9 @@
 #   <!-- kit-revision: puesto <puesto> <familia>/<modelo> ronda <ronda> -->
 # A stored report for that marker is printed again and never rerun or reposted.
 # Env: KIT_REVIEW_TIMEOUT (s per reviewer run, default 1800); KIT_REVIEW_BASE (SHA of the default branch, already
-#   fetched by kit-review-all.sh: no fetch here).
+#   fetched by kit-review-all.sh: no fetch here); KIT_REVIEW_MODO: completa (default: the whole diff, revisor.md) or
+#   verificar (only that the previous round's fixes solve its findings without breaking anything, revisor-verificar.md,
+#   on the diff since the head the previous round reviewed: each report records it as <!-- kit-revisado: <sha> -->).
 # Exit: 0 ok (last line "FIN: <n> hallazgos"), 1 usage or rejected, 2 the seat stays unconfirmed: the last stderr
 # line is "sin confirmar (<motivo>): <detalle>", motivo = acceso (CLI missing, login, model, quota or crash: another
 # candidate may answer), tiempo, salida (empty or off-schema answer), bloqueado (the reviewer could not review),
@@ -19,6 +21,7 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/default-branch.sh"
 template="$here/../skills/kit-run/references/revisor.md"
+mode="${KIT_REVIEW_MODO:-completa}"
 schema="$here/../skills/kit-run/references/revision-schema.json"
 
 usage() {
@@ -35,6 +38,9 @@ num "número de PR" "$p"; num "número de puesto" "$seat"; num "número de ronda
 [[ $fam =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "familia inválida: '$fam'" >&2; exit 1; }
 [[ $model =~ ^[^[:space:]]+$ ]] || { echo "modelo inválido: '$model'" >&2; exit 1; }
 [ -n "$focus" ] || { echo "falta el foco" >&2; exit 1; }
+case "$mode" in completa) ;; verificar) template="$here/../skills/kit-run/references/revisor-verificar.md" ;;
+  *) echo "KIT_REVIEW_MODO inválido: $mode (completa o verificar)" >&2; exit 1 ;; esac
+[ "$mode" = completa ] || [ "$round" -ge 2 ] || { echo "verificar necesita una ronda anterior (ronda $round)" >&2; exit 1; }
 timeout="${KIT_REVIEW_TIMEOUT:-1800}"
 [[ $timeout =~ ^[1-9][0-9]*$ ]] || { echo "error: KIT_REVIEW_TIMEOUT debe ser un número de segundos" >&2; exit 2; }
 
@@ -73,7 +79,7 @@ prev="$(printf '%s' "$cj" | jq -r --arg m "$marker" --arg me "$me" \
   '[.comments[]? | select(.author.login == $me) | select((.body // "") | sub("^\\s+"; "") | startswith($m))][0].body // empty')" \
   || envfail "respuesta de gh ilegible"
 if [ -n "$prev" ]; then
-  rep="$(printf '%s\n' "$prev" | awk -v m="$marker" 'BEGIN{d=0} !d && index($0, m) { d=1; next } { print }')"
+  rep="$(printf '%s\n' "$prev" | awk -v m="$marker" 'BEGIN{d=0} !d && index($0, m) { d=1; next } /^<!-- kit-revisado: / { next } { print }')"
   ptotal="$(printf '%s\n' "$rep" | sed -n 's/^[[:space:]]*[`*]*HALLAZGOS: \([0-9][0-9]*\)[`*]*[[:space:]]*$/\1/p' | sed -n '$p')"
   if [ -n "$ptotal" ]; then
     printf '%s\n' "$rep"
@@ -118,9 +124,20 @@ else
 fi
 hist="$(bash "$here/kit-pr.sh" historial "$wt" "$p")" || envfail "no se pudo leer el historial de la PR #$p"
 hist="$(printf '%s\n' "$hist" | sed '${/^FIN: /d;}')"
+# verificar: the diff since the head the previous round reviewed (any own report of that round records it); without
+# one (reports from before 3.4) the whole diff, and the prompt says so
+since="$base"
+if [ "$mode" = verificar ]; then
+  for s in $(printf '%s' "$cj" | jq -r --arg me "$me" --arg r "$((round - 1))" '.comments[]? | select(.author.login == $me)
+      | (.body // "") | select(test("^\\s*<!-- kit-revision: puesto [0-9]+ \\S+ ronda \($r) -->"))
+      | capture("<!-- kit-revisado: (?<s>[0-9a-f]{40}) -->").s'); do
+    if git cat-file -e "$s^{commit}" 2>/dev/null && git merge-base --is-ancestor "$s" "$oid"; then since="$s"; break; fi
+  done
+fi
 # single pass, so text inside the substituted values is never re-expanded
 prompt="$(jq -Rrs --arg FOCO "$focus" --arg RONDA "$round" --arg ISSUE "$issue" --arg BASE "$base" --arg HISTORIAL "$hist" \
-  --arg PR "$prbody" '$ARGS.named as $m | gsub("\\{\\{(?<k>FOCO|RONDA|ISSUE|BASE|HISTORIAL|PR)\\}\\}"; $m[.k])' "$template")" \
+  --arg PR "$prbody" --arg DESDE "$since" --arg ANTERIOR "$((round - 1))" \
+  '$ARGS.named as $m | gsub("\\{\\{(?<k>FOCO|RONDA|ISSUE|BASE|HISTORIAL|PR|DESDE|ANTERIOR)\\}\\}"; $m[.k])' "$template")" \
   || envfail "no se pudo construir el prompt"
 # without a native output schema the schema travels in the prompt
 if [ "$tool" = opencode ]; then
@@ -144,6 +161,9 @@ fi
   elif [ -d .claude ]; then
     rm -rf .claude/settings.json .claude/settings.local.json .claude/hooks
   fi
+  # the reviewer sees a clean status at the PR head: those removals are not part of the change
+  git ls-files --deleted -z | xargs -0 git update-index --skip-worktree -- 2>/dev/null
+  true
 ) || envfail "no se pudo limpiar la copia desechable"
 mkdir "$tmpd/gh" || exit 2
 
@@ -311,13 +331,14 @@ if [ "$(jq -r .veredicto "$tmpd/json")" = bloqueado ]; then
 fi
 
 # readable markdown; text from the reviewer can never open an HTML comment (a fake kit marker)
-jq -r --arg seat "$seat" --arg who "$fam/$model" --arg r "$round" --arg foco "$focus" '
+jq -r --arg seat "$seat" --arg who "$fam/$model" --arg r "$round" --arg foco "$focus" --arg mode "$mode" '
   def safe: tostring | gsub("<!--"; "&lt;!--");
   def inline: safe | gsub("\\s*\n\\s*"; " ");
   def ord: {"grave": 0, "medio": 1, "menor": 2}[.severidad];
   "### Revisión del puesto \($seat): \($who), ronda \($r)",
   "",
   "**Foco:** \($foco | inline)",
+  (if $mode == "verificar" then "**Modo:** verifica los arreglos de la ronda \($r | tonumber - 1) (sin revisión completa del diff)" else empty end),
   "**Veredicto:** \(.veredicto | sub("_"; " "))",
   "",
   (.resumen | safe),
@@ -334,6 +355,7 @@ total="$(jq '.hallazgos | length' "$tmpd/json")"
 
 {
   echo "$marker"
+  echo "<!-- kit-revisado: $oid -->"
   cat "$tmpd/report"
 } > "$tmpd/body"
 gh pr comment "$p" --repo "$slug" --body-file "$tmpd/body" >/dev/null || envfail "no se pudo comentar en la PR #$p"

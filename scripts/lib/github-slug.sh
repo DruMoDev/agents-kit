@@ -26,5 +26,5 @@ kit_origin_slug() {
   local s
   s="$(kit_parse_github_url "$(git config --get remote.origin.url 2>/dev/null)")"
   [ -n "$s" ] || s="$(kit_parse_github_url "$(git remote get-url origin 2>/dev/null)")"
-  printf '%s' "$s"
+  [ -z "$s" ] || printf '%s\n' "$s"
 }
