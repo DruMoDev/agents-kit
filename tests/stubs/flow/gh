@@ -18,7 +18,8 @@
 #     comment ids: numeric, increasing
 #     A PR without "headRefOid" resolves it live from the cwd's origin (git ls-remote refs/heads/<headRefName>).
 #   state.labels: repo label names for `label list` (default: every label of the kit v3)
-#   state.workflows: number reported by `api repos/<slug>/actions/workflows` (default 0)
+#   state.workflows: own workflows (.github/workflows/) reported by `api repos/<slug>/actions/workflows` (default 0)
+#   state.dynamic: GitHub built-in workflows (path dynamic/...) reported there too (default 0)
 #   state.runs: workflow runs reported by `api repos/<slug>/actions/runs` (default [])
 #   state.checks: check runs [{"status": "completed", "conclusion": "success"}] for any commit (default [])
 #   GH_CHECKS_SEQ  file with one JSON array of check runs per line; each check-runs call consumes the next line
@@ -176,8 +177,11 @@ case "$cmd" in
     case "$apipath" in
       user)
         jq -n --arg u "${GH_USER:-dru}" '{login: $u}' | emit ;;
-      repos/*/*/actions/workflows)
-        jq '{total_count: (.workflows // 0), workflows: []}' "$state" | emit ;;
+      repos/*/*/actions/workflows*)
+        # state.workflows own workflows (.github/workflows/) plus state.dynamic GitHub built-in ones (dynamic/...)
+        jq '([range(.workflows // 0) | {path: ".github/workflows/ci\(.).yml", state: "active"}]
+            + [range(.dynamic // 0) | {path: "dynamic/dependabot/dependabot-updates\(.)", state: "active"}]) as $w
+            | {total_count: ($w | length), workflows: $w}' "$state" | emit ;;
       repos/*/*/actions/runs*)
         jq '{workflow_runs: (.runs // [])}' "$state" | emit ;;
       repos/*/*/commits/*/check-runs*)

@@ -119,7 +119,7 @@ if [ -n "${KIT_REVIEW_BASE:-}" ]; then
 else
   b="$(kit_default_branch)"
   [ -n "$b" ] || envfail "no pude saber la rama por defecto de origin"
-  git fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || envfail "git fetch falló"
+  kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b" || envfail "git fetch falló"
   base="$(git merge-base "origin/$b" "$oid")" || envfail "no hay merge-base entre origin/$b y la PR"
 fi
 hist="$(bash "$here/kit-pr.sh" historial "$wt" "$p")" || envfail "no se pudo leer el historial de la PR #$p"

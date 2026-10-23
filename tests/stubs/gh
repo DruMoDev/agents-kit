@@ -45,7 +45,7 @@ case "$1 $2" in
     fi
     case " $* " in *" --delete-branch "*) git push -q origin --delete "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 ;; esac ;;
   "pr create") [ "$mode" = pr-create-fails ] && exit 1; echo "https://github.com/dru/demo/pull/1" ;;
-  "api repos/dru/demo/actions/workflows") if [ -n "${GH_CI:-}" ]; then echo 1; else echo 0; fi ;;
+  "api repos/dru/demo/actions/workflows"*) if [ -n "${GH_CI:-}" ]; then echo 1; else echo 0; fi ;;
   "api repos/dru/demo/commits/"*)
     case "${GH_CI:-}" in
       verde) st=completed c='"success"' ;; rojo) st=completed c='"failure"' ;; *) st=in_progress c=null ;;

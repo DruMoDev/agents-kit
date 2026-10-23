@@ -52,7 +52,7 @@ if [ "$sub" = abrir ]; then
   path="${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/$(basename "$root")/$branch"
   base="$(kit_default_branch)"
   [ -n "$base" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
-  git fetch -q origin "$base" || { echo "error: git fetch falló" >&2; exit 2; }
+  kit_fetch origin "$base" || { echo "error: git fetch falló" >&2; exit 2; }
 
   existing="$(wt_of "$branch")"
   if [ -n "$existing" ]; then
@@ -71,7 +71,7 @@ if [ "$sub" = abrir ]; then
       start="origin/$base"
       git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; rc=$?
       case $rc in
-        0) git fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+        0) kit_fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
              || { echo "error: git fetch de $branch falló" >&2; exit 2; }
            start="origin/$branch" ;;
         2) ;;
@@ -79,6 +79,26 @@ if [ "$sub" = abrir ]; then
       esac
       git worktree add -q -b "$branch" --no-track "$path" "$start" || exit 2
     fi
+  fi
+  # an existing local branch may lag behind origin (the issue went on in another clone or in the cloud): bring it up to
+  # date by fast-forward; diverged histories are never merged here
+  git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; rrc=$?
+  if [ $rrc -eq 0 ]; then
+    kit_fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" || { echo "error: git fetch de $branch falló" >&2; exit 2; }
+    loc="$(git -C "$path" rev-parse HEAD)" rem="$(git rev-parse "refs/remotes/origin/$branch")" || exit 2
+    if [ "$loc" != "$rem" ]; then
+      if git merge-base --is-ancestor "$loc" "$rem"; then
+        [ -z "$(git -C "$path" status --porcelain)" ] \
+          || { echo "la rama $branch va por detrás de origin y el worktree tiene cambios sin confirmar: confírmalos o descártalos y relanza" >&2; exit 1; }
+        git -C "$path" merge -q --ff-only "$rem" || { echo "error: no se pudo avanzar $branch a origin/$branch" >&2; exit 2; }
+        echo "rama al día con origin/$branch (${rem:0:8})"
+      elif ! git merge-base --is-ancestor "$rem" "$loc"; then
+        echo "la rama $branch y origin/$branch han divergido (local ${loc:0:8}, origin ${rem:0:8}): decide cuál vale antes de seguir" >&2
+        exit 1
+      fi
+    fi
+  elif [ $rrc -ne 2 ]; then
+    echo "error: git ls-remote falló" >&2; exit 2
   fi
   # setup of the repo: once per worktree (a marker in its git dir records success, so a retry after a failure runs it again)
   setup="$(kit_config "$root" 'if (.setup | type) == "string" then .setup else empty end')" || exit 2
@@ -103,7 +123,7 @@ fi
 if [ "$sub" = barrer ]; then
   base="$(kit_default_branch)"
   [ -n "$base" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
-  git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" || { echo "error: git fetch falló" >&2; exit 2; }
+  kit_fetch origin "+refs/heads/$base:refs/remotes/origin/$base" || { echo "error: git fetch falló" >&2; exit 2; }
   command -v gh >/dev/null 2>&1 || { echo "error: falta 'gh' en el PATH" >&2; exit 2; }
   slug="$(kit_origin_slug)"
   [ -n "$slug" ] || { echo "error: el remoto 'origin' no es de GitHub" >&2; exit 2; }
@@ -158,7 +178,7 @@ update_main() {
     echo "AVISO: el repo principal está en '$cur', no en '$base': no se actualiza." >&2
     return 0
   fi
-  if ! git fetch -q origin "$base" 2>/dev/null; then
+  if ! kit_fetch origin "$base" 2>/dev/null; then
     echo "AVISO: no se pudo hacer fetch de origin/$base: el principal NO está al día." >&2
     return 0
   fi
@@ -190,7 +210,7 @@ status="$(git -C "$path" status --porcelain)" || exit 2
 [ -z "$status" ] || { echo "el worktree tiene cambios; no se borra nada" >&2; exit 1; }
 git worktree remove "$path" || exit 2
 git branch -D "$branch" >/dev/null || exit 2
-git fetch -q --prune origin 2>/dev/null || { sleep 2; git fetch -q --prune origin 2>/dev/null; } \
+kit_fetch --prune origin 2>/dev/null \
   || echo "aviso: git fetch --prune falló; ya se borraron el worktree y la rama" >&2
 update_main
 echo "FIN: limpio"

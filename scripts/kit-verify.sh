@@ -61,7 +61,7 @@ case "$sub" in
   correr)
     b="$(kit_default_branch)"
     [ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
-    git fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || { echo "error: git fetch falló" >&2; exit 2; }
+    kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b" || { echo "error: git fetch falló" >&2; exit 2; }
     cmd="$(kit_config_base "$wt" ".verificar.$nivel // empty" "origin/$b")" || exit 2
     [ -n "$cmd" ] || { echo "sin verificar.$nivel en el marcador de origin/$b: usa los comandos de AGENTS.md" >&2; exit 1; }
     [ -n "$out" ] || out="$(mktemp)" || exit 2

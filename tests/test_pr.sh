@@ -149,8 +149,17 @@ err="$(KIT_CI_TIMEOUT=0 bash "$pr" esperar-ci "$wt" $p 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "timeout: exit $rc"
 sha="$(git -C "$wt" rev-parse HEAD)"
 case "$err" in *"el CI de ${sha:0:8} sigue en marcha tras 0 min (0s)"*) ;; *) fail "timeout msg: $err";; esac
-# gh failure -> 2
-GH_FAIL_ON="check-runs" bash "$pr" esperar-ci "$wt" $p >/dev/null 2>&1; [ $? -eq 2 ] || fail "fallo de gh debe dar 2"
+# one failed read of the checks (a bad minute of GitHub) does not end a wait of hours: it reads again
+seq_checks "$OK"
+out="$(GH_FAIL_ON="check-runs" bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "un fallo puntual de gh debe tolerarse: $out"
+[ "$(last_line "$out")" = "FIN: verde" ] || fail "fallo puntual: $out"
+rm -f "$GH_STATE/.failed"
+# a persistent failure -> 2 after 5 reads in a row
+ghd="$(mktemp -d)"; realgh="$(command -v gh)"
+printf '#!/bin/sh\ncase "$*" in *check-runs*) echo "HTTP 404" >&2; exit 1;; esac\nexec "%s" "$@"\n' "$realgh" > "$ghd/gh"; chmod +x "$ghd/gh"
+err="$(PATH="$ghd:$PATH" bash "$pr" esperar-ci "$wt" $p 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 2 ] || fail "fallo persistente de gh debe dar 2: $rc"
+case "$err" in *"5 lecturas seguidas fallidas"*) ;; *) fail "fallo persistente msg: $err";; esac
 # local SHA differs from the PR
 (cd "$wt" && echo b > b.txt && git add b.txt && git commit -q -m b) || fail "commit b"
 seq_checks "$OK"
@@ -244,19 +253,41 @@ err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"gate local"*) ;; *) fail "gate ajeno aceptado: $err";; esac
 st '.prs[0].comments |= map(select(.id != 92))'
 bash "$pr" gate-local "$wt" $p "$tmp/gate" >/dev/null 2>&1 || fail "gate-local propio"
+# a huge output keeps its head and tail under GitHub's comment limit (65536)
+perl -e 'print "linea de test $_\n" for 1..20000' > "$tmp/gate-largo"; echo "RESULTADO FINAL: 0 fallos" >> "$tmp/gate-largo"
+bash "$pr" gate-local "$wt" $p "$tmp/gate-largo" >/dev/null 2>&1 || fail "gate-local largo"
+gb="$(jq -r '.prs[0].comments[-1].body' "$GH_STATE/state.json")"
+[ "${#gb}" -lt 65536 ] || fail "gate-local largo: ${#gb} caracteres"
+case "$gb" in *"linea de test 1"*"salida recortada"*"RESULTADO FINAL: 0 fallos"*) ;; *) fail "gate-local largo sin cabeza, aviso o cola";; esac
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"gate local"*|*"CI"*) fail "gate propio rechazado: $err";; esac
 # workflows that never ran for the SHA (no check run): the own gate-local is accepted
 st '.workflows = 1 | .checks = []'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"gate local"*|*"CI"*) fail "gate con workflows sin checks rechazado: $err";; esac
-# any check run for the SHA wins over the gate-local, even without workflows
+# without own workflows the gate-local is the CI: a pending external check (a deploy preview) does not block...
 st '.workflows = 0 | .checks = [{"name":"x","id":1,"status":"in_progress","conclusion":null}]'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
-case "$err" in *"el CI de ${sha:0:8} no ha concluido"*) ;; *) fail "gate aceptado con checks: $err";; esac
+case "$err" in *"gate local"*|*"CI"*|*"check externo"*) fail "check externo pendiente bloqueó: $err";; esac
+# ...a red one does
 st '.checks = [{"name":"x","id":1,"status":"completed","conclusion":"failure"}]'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
-case "$err" in *"el CI terminó en 'failure'"*) ;; *) fail "gate aceptado con check rojo: $err";; esac
+case "$err" in *"un check externo terminó en 'failure'"*) ;; *) fail "check externo rojo no bloqueó: $err";; esac
+# GitHub's built-in workflows (dynamic/: Dependabot, CodeQL default setup) are not the repo's CI: green checks from
+# them never replace the gate-local
+st '.dynamic = 1 | .checks = [{"name":"Analyze","id":1,"status":"completed","conclusion":"success"}]
+  | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"el repo no tiene CI propio y falta el gate local de ${sha:0:8}"*) ;; *) fail "checks de dynamic/ sustituyeron al gate: $err";; esac
+bash "$pr" gate-local "$wt" $p "$tmp/gate" >/dev/null 2>&1 || fail "gate-local otra vez"
+# code scanning results (github-advanced-security) are analysis, not tests: with own CI they never count
+st '.dynamic = 0 | .workflows = 1 | .checks = [{"name":"CodeQL","id":1,"status":"completed","conclusion":"success","app":{"id":57789,"slug":"github-advanced-security"}}]'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"CI"*|*"gate local"*) fail "el resultado de CodeQL contó como CI: $err";; esac
+st '.workflows = 0 | .checks = []'
+st '.checks = [{"name":"x","id":1,"status":"completed","conclusion":"failure"}]'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"un check externo terminó en 'failure'"*) ;; *) fail "gate aceptado con check rojo: $err";; esac
 rm "$wt/sucio.txt"
 st '.checks = [] | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))'
 
@@ -368,6 +399,18 @@ grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso$" "$GH_LOG" || 
 grep -q -- "pr merge $p.*--squash" "$GH_LOG" || fail "merge sin --squash"
 grep -q -- "--delete-branch" "$GH_LOG" && fail "merge con --delete-branch"
 while IFS= read -r line; do case "$line" in *"dru/demo"*|"api user --jq .login") ;; *) fail "gh sin repo: $line";; esac; done < "$GH_LOG"
+
+# fusionar again after a merge whose cleanup died halfway (issue open, en-curso, lock): it finishes the cleanup only
+st '(.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}, {name: "serializa:mig"}])'
+git -C "$wt" push -q origin "$lsha:refs/locks/mig" || fail "candado otra vez"
+: > "$GH_LOG"
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar relanzado: $out"
+case "$out" in *"la PR ya estaba fusionada: termino la limpieza del issue #3"*"candado soltado: refs/locks/mig"*"FIN: ok") ;; *) fail "fusionar relanzado: $out";; esac
+[ "$(flow_issue 3 .state)" = CLOSED ] && [ "$(flow_issue 3 '[.labels[].name] | index("en-curso")')" = null ] || fail "fusionar relanzado no limpió el issue"
+grep -q '^pr merge' "$GH_LOG" && fail "fusionar relanzado volvió a fusionar"
+nc="$(flow_issue 3 '.comments | length')"
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar relanzado sin nada pendiente: $out"
+[ "$(flow_issue 3 '.comments | length')" = "$nc" ] || fail "fusionar relanzado duplicó comentarios"
 
 # fusionar: a failing label cleanup is only a warning, the merge still counts
 st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))

@@ -46,6 +46,7 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 - Verde no es validado: si el cambio altera el resultado visible, compruébalo con casos reales y contra la versión anterior.
 - No afirmes nada que no hayas ejecutado. Mide en vez de deducir, también sobre herramientas externas (CLI, APIs, servicios): un supuesto no vale hasta ejecutarlo, y lo que solo se cree se marca como "sin verificar".
 - No declares "arreglado" ni "hecho" sin reproducir el problema y volver a probar tras el cambio.
+- Esperas largas (CI, revisores, despliegues) siempre con tope y por un fichero de salida propio (`kit-bg.sh` del kit), nunca buscando procesos por nombre ni fiándote del aviso de segundo plano de la herramienta.
 - La verja es el CI completo en la PR. El hook de pre-commit es ligero, de segundos: formato, lint estricto y tests de lo cambiado. Nunca suites completas ni builds en el hook: repiten el CI y cuestan minutos por commit a cada agente. Los comandos del repo van en `verificar.rapido` y `verificar.completo` del marcador.
 
 ## Depuración
@@ -73,7 +74,8 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 
 - Todo el código entra en la rama por defecto por PR con squash merge.
 - Contenido: `.agents/skills/`, `AGENTS.md` y las rutas que el proyecto declare en `contenido` (`.agents-kit.json`) pueden ir directas a la rama por defecto en una sesión con Dru. Van por PR igualmente lo que haga `kit-run` (la mejora de una skill va en la PR del issue), un cambio mixto (contenido y código) y todo lo que vaya a una rama protegida.
-- `git add` siempre con rutas explícitas, nunca `-A` ni `.`: puede haber otras sesiones trabajando en el mismo clon.
+- `git add` siempre con rutas explícitas, nunca `-A` ni `.`: puede haber otras sesiones trabajando en el mismo clon. Por lo mismo, nunca `git stash`, `git reset --hard`, `git checkout .` ni `git clean` en el clon principal: el trabajo sin confirmar puede ser de otra sesión.
+- Nunca saltarse hooks ni CI (`--no-verify`, fusionar como admin, desactivar un check): la verja es para todos. La única excepción son los commits mecánicos que hacen los scripts del kit, que lo dicen en su cabecera.
 - Ningún worktree muerto: en cuanto su trabajo está en la rama por defecto, se borra con su rama (`kit-run` lo hace con `kit-worktree.sh barrer`). Solo sobrevive el de un trabajo vivo.
 - Changelog: si el repo lleva `CHANGELOG.md`, cada PR que cambie algo para quien usa la app añade su entrada (el formato lo describe la cabecera del fichero).
 

@@ -4,7 +4,8 @@
 # Long waits of the flow (review seats, CI) without depending on the tool's background notification, which may never
 # arrive: lanzar runs the command detached, with its whole output in <fichero> and, when it ends, a last line
 # "SALIDA: <código>"; esperar polls that file until the line appears or the cap passes (KIT_BG_POLL s, default 10).
-#   lanzar: prints "lanzado: <pid>" and "FIN: <fichero>" at once. <fichero> must not exist (a stale result would look done).
+#   lanzar: prints "lanzado: <pid>" and "FIN: <fichero>" at once. <fichero> must be new or empty (mktemp): one with
+#     content would be a stale result that looks done.
 #   esperar: default cap 540 s, so it fits in one tool call under 10 min; repeat it while it says "sigue en marcha".
 #     Done: prints the command's whole output (its "SALIDA: <código>" line included) and "FIN: terminado". Exit 1
 #     "sigue en marcha" when the cap passes; 2 if the file does not exist or the command died without its SALIDA line.
@@ -16,7 +17,8 @@ sub="$1" f="$2"; shift 2
 case "$sub" in
   lanzar)
     [ $# -ge 1 ] || usage
-    [ ! -e "$f" ] || { echo "el fichero $f ya existe: usa otro (un resultado viejo parecería terminado)" >&2; exit 1; }
+    # an empty file is fine (mktemp creates it); one with content would be an old result that looks finished
+    [ ! -s "$f" ] || { echo "el fichero $f ya tiene contenido: usa otro (un resultado viejo parecería terminado)" >&2; exit 1; }
     : > "$f" || { echo "error: no se pudo crear $f" >&2; exit 2; }
     rm -f "$f.rc"
     export KIT_BG_RC="$f.rc"

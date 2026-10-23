@@ -12,6 +12,12 @@ const HOOK = path.join(PLUGIN_ROOT, 'hooks', 'session-start');
 const MARK = 'agents-kit está activo';
 // What the kit skills read or run outside the project. Never hooks/ or .opencode/.
 const ALLOWED_DIRS = ['scripts', 'skills', 'rules', 'templates'];
+// Outside the project the kit also works in the repo's issue worktrees and in its temp dir (bodies, rounds, waits).
+const KIT_HOME = path.join(process.env.HOME || '', '.agents-kit');
+const workDirs = (root) => [
+  path.join(process.env.KIT_WORKTREES || path.join(KIT_HOME, 'worktrees'), path.basename(root)),
+  process.env.KIT_TMP || path.join(KIT_HOME, 'tmp'),
+];
 
 const gitRoot = (directory) => {
   try {
@@ -70,14 +76,16 @@ export const AgentsKitPlugin = async ({ directory }) => ({
 
     // Only in activated repos: let the skills read and run plugin files without
     // asking, unless the user already set a rule. Elsewhere OpenCode asks.
-    const marker = markerOf(gitRoot(directory));
+    const root = gitRoot(directory);
+    const marker = markerOf(root);
     if (!marker || !fs.existsSync(marker)) return;
     config.permission = config.permission || {};
     const ext = config.permission.external_directory;
     if (ext !== undefined && (!ext || typeof ext !== 'object')) return;
     config.permission.external_directory = ext || {};
-    for (const d of ALLOWED_DIRS) {
-      const pattern = `${path.join(PLUGIN_ROOT, d)}/**`;
+    const dirs = [...ALLOWED_DIRS.map((d) => path.join(PLUGIN_ROOT, d)), ...workDirs(root)];
+    for (const d of dirs) {
+      const pattern = `${d}/**`;
       if (!(pattern in config.permission.external_directory)) config.permission.external_directory[pattern] = 'allow';
     }
   },

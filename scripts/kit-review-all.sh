@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: scripts/kit-review-all.sh <wt> <pr> <ronda> <N> [--implementador <familia>]
+# Usage: scripts/kit-review-all.sh <wt> <pr> <ronda> <N> [--implementador <familia>] [--completa]
 # Runs every review seat of revision.puestos in parallel with kit-review.sh and waits for all. Each seat tries its
 # candidates (lib/review-seats.sh: CLI in the PATH, other family first) in order: a login, model or quota failure
 # (motivo acceso) moves on to the next candidate; any other failure, or no candidate left, leaves the seat
@@ -13,8 +13,9 @@
 # puestos.tsv: i, familia, cli, modelo, foco, estado, detalle, modo) and "FIN: <n> puestos, <m> sin confirmar".
 # Mode per seat (KIT_REVIEW_MODO for kit-review.sh): with revision.rondas "mezcla" (global config, the default), from
 # round 2 one seat, rotating by round, reviews the whole diff with a clean context (completa) and the others only check
-# that the previous round's fixes solve its findings without breaking anything (verificar); with "completas", or in
-# round 1, every seat reviews the whole diff. A "modo: ..." line says which seat is the independent one.
+# that the previous round's fixes solve its findings without breaking anything (verificar); with "completas", in
+# round 1, or with --completa (the first round of a resumed issue: its new code is not a fix of the last round), every
+# seat reviews the whole diff. A "modo: ..." line says which seat is the independent one.
 # Exit: 0 all seats ran (read each state), 1 usage, unknown family or no seats, 2 unknown implementer, broken config or
 # git (default branch or fetch).
 set -u
@@ -25,13 +26,14 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/default-branch.sh"
 review="${KIT_REVIEW_BIN:-$here/kit-review.sh}"
 
-usage() { echo "uso: $0 <wt> <pr> <ronda> <N> [--implementador <familia>]" >&2; exit 1; }
+usage() { echo "uso: $0 <wt> <pr> <ronda> <N> [--implementador <familia>] [--completa]" >&2; exit 1; }
 [ $# -ge 4 ] && [ -n "$1" ] || usage
 wt_arg="$1" p="$2" round="$3" n="$4"; shift 4
-impl_arg=""
+impl_arg="" force_full=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --implementador) [ $# -ge 2 ] && [ -n "$2" ] || usage; impl_arg="$2"; shift 2 ;;
+    --completa) force_full=true; shift ;;
     *) usage ;;
   esac
 done
@@ -42,7 +44,7 @@ kit_require_marker "$wt" || exit $?
 impl="$(kit_implementer_family "$impl_arg")" || exit 2
 b="$(cd "$wt" && kit_default_branch)"
 [ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
-git -C "$wt" fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || { echo "error: git fetch falló" >&2; exit 2; }
+(cd "$wt" && kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b") || { echo "error: git fetch falló" >&2; exit 2; }
 KIT_REVIEW_BASE="$(git -C "$wt" rev-parse --verify -q "refs/remotes/origin/$b^{commit}")" \
   || { echo "error: no se pudo leer origin/$b" >&2; exit 2; }
 export KIT_REVIEW_BASE
@@ -51,13 +53,15 @@ if [ -z "$cands" ]; then
   echo "sin puestos de revisión configurados (revision.puestos)" >&2
   exit 1
 fi
-d="$(mktemp -d)" || exit 2
+# in the kit's temp dir (KIT_TMP, default ~/.agents-kit/tmp), where every tool may read it (OpenCode allows it)
+kt="${KIT_TMP:-$HOME/.agents-kit/tmp}"
+mkdir -p "$kt" && d="$(mktemp -d "$kt/revision.XXXXXX")" || exit 2
 printf '%s\n' "$cands" > "$d/candidatos.tsv"
 seats="$(cut -f1 "$d/candidatos.tsv" | uniq)"
 rondas="$(kit_config "$wt" '.revision.rondas // "mezcla"')" || exit 2
 case "$rondas" in mezcla|completas) ;; *) echo "aviso: revision.rondas debe ser mezcla o completas; se usa mezcla ('$rondas')"; rondas=mezcla ;; esac
 indep=""
-if [ "$rondas" = mezcla ] && [ "$round" -ge 2 ]; then
+if [ "$rondas" = mezcla ] && [ "$round" -ge 2 ] && [ "$force_full" = false ]; then
   ns="$(printf '%s\n' "$seats" | grep -c .)"
   indep="$(printf '%s\n' "$seats" | sed -n "$(( (round - 2) % ns + 1 ))p")"
   [ "$ns" -gt 1 ] || indep="" # a single seat always reviews everything
