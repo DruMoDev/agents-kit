@@ -138,13 +138,14 @@ ship_merge() {
   if [ "$ci_rc" -eq 0 ]; then
     # kit-off's worktree has no marker any more: then the config comes from Dru's clone
     t="$(ci_timeout ${w:+"$w"} "$root")"
+    echo "esperando al CI del PR (hasta $((t / 60)) min): $1"
     ci="$(ci_wait "$2" "$t")" || ci_rc=$?
   fi
   if [ "$ci_rc" -eq 0 ]; then
     echo "CI: $ci"
     # no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted in ship_end
     # --match-head-commit: never merge a head other than the one whose CI was just checked
-    gh pr merge "$1" --repo "$slug" --squash --match-head-commit "$2" >/dev/null || merge_rc=$?
+    ci_gh_retry pr merge "$1" --repo "$slug" --squash --match-head-commit "$2" >/dev/null || merge_rc=$?
   elif [ "$ci_rc" -eq 3 ]; then
     echo "no se fusiona todavía: el CI sigue en marcha. Para esperarlo y fusionar solo el PR, relanza: $0 fusionar $root $branch" >&2
   else
@@ -161,7 +162,9 @@ ship_end() {
     exit 2
   fi
   git push -q origin --delete "$branch" >/dev/null 2>&1 || true # usually already gone (delete-branch-on-merge)
-  git fetch -q --prune origin || true
+  # another session may be fetching the same clone ("cannot lock ref"): retry once, quietly; the merge already happened
+  git fetch -q --prune origin 2>/dev/null || { sleep 2; git fetch -q --prune origin 2>/dev/null; } \
+    || echo "aviso: git fetch --prune falló; el PR ya está fusionado (haz git fetch más tarde)" >&2
   echo "PR fusionado: $1"
   echo "FIN: ok"
   exit 0

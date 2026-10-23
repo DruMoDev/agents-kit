@@ -190,6 +190,7 @@ status="$(git -C "$path" status --porcelain)" || exit 2
 [ -z "$status" ] || { echo "el worktree tiene cambios; no se borra nada" >&2; exit 1; }
 git worktree remove "$path" || exit 2
 git branch -D "$branch" >/dev/null || exit 2
-git fetch -q --prune origin || echo "aviso: git fetch --prune falló; ya se borraron el worktree y la rama" >&2
+git fetch -q --prune origin 2>/dev/null || { sleep 2; git fetch -q --prune origin 2>/dev/null; } \
+  || echo "aviso: git fetch --prune falló; ya se borraron el worktree y la rama" >&2
 update_main
 echo "FIN: limpio"

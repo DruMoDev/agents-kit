@@ -70,3 +70,19 @@ ci_wait() {
     sleep "$poll"
   done
 }
+# ci_gh_retry <gh args...>: run gh, retrying up to KIT_GH_RETRIES times (default 3 attempts in all, waits of
+# KIT_GH_RETRY_WAIT s, default 10, doubled each time) when it fails with a transient GitHub error (GraphQL "Something
+# went wrong", HTTP 5xx, timeouts). Any other failure, or the last one, returns gh's code with its stderr.
+ci_gh_retry() {
+  local tries="${KIT_GH_RETRIES:-3}" wait="${KIT_GH_RETRY_WAIT:-10}" k=1 err rc
+  err="$(mktemp)" || return 2
+  while :; do
+    gh "$@" 2>"$err"; rc=$?
+    if [ $rc -eq 0 ]; then rm -f "$err"; return 0; fi
+    if [ "$k" -ge "$tries" ] || ! grep -qiE 'something went wrong|HTTP 5[0-9][0-9]|50[234]|timed? ?out|timeout|connection reset|EOF' "$err"; then
+      cat "$err" >&2; rm -f "$err"; return $rc
+    fi
+    echo "aviso: fallo transitorio de GitHub ($(sed -n 1p "$err")); reintento en ${wait}s" >&2
+    sleep "$wait"; wait=$((wait * 2)); k=$((k + 1))
+  done
+}

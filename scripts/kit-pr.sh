@@ -391,8 +391,11 @@ $KIT_HOOK_OUT") ;;
     report
 
     # --match-head-commit: never merge a SHA pushed after the gates were checked
-    gh pr merge "$p" --repo "$slug" --squash --match-head-commit "$oid" >/dev/null \
-      || { echo "error: gh pr merge falló (¿la PR cambió de head tras las comprobaciones?)" >&2; exit 2; }
+    if ! ci_gh_retry pr merge "$p" --repo "$slug" --squash --match-head-commit "$oid" >/dev/null; then
+      # a transient error may hide a merge that did happen: the state decides
+      [ "$(pr_json state | jq -r .state 2>/dev/null)" = MERGED ] \
+        || { echo "error: gh pr merge falló (¿la PR cambió de head tras las comprobaciones?)" >&2; exit 2; }
+    fi
     after="$(pr_json state,url)" || exit 2
     [ "$(printf '%s' "$after" | jq -r .state)" = MERGED ] \
       || { echo "error: la PR #$p no aparece como fusionada tras gh pr merge" >&2; exit 2; }
