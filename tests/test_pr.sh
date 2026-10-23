@@ -317,9 +317,12 @@ grep -q -- "--match-head-commit $sha" "$GH_LOG" || fail "merge sin --match-head-
 # fusionar: everything fine with green CI (no gate-local) -> merge and close the issue
 st '.workflows = 1 | .checks = [{"name":"ci","id":7,"status":"completed","conclusion":"success"}]
   | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))
-  | (.issues[] | select(.number == 3) | .labels) += [{name: "otra"}]'
+  | (.issues[] | select(.number == 3) | .labels) += [{name: "otra"}, {name: "serializa:mig"}]'
+lsha="$(git -C "$wt" commit-tree "$(git -C "$wt" hash-object -t tree /dev/null)" -m "agente:kit-x issue:3 eje:mig")"
+git -C "$wt" push -q origin "$lsha:refs/locks/mig" || fail "candado del issue 3"
 : > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar: $out"
+[ -z "$(git -C "$wt" ls-remote origin refs/locks/mig)" ] || fail "fusionar no liberó el candado del issue"
 grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA de la PR"
 [ "$(last_line "$out")" = "FIN: ok" ] || fail "fusionar FIN: $out"
 case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac
@@ -327,7 +330,7 @@ case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac
 [ "$(flow_issue 3 .state)" = CLOSED ] || fail "no cerró el issue"
 [ "$(flow_issue 3 '.comments[-2].body')" = "Resuelto en #$p." ] || fail "comentario de cierre"
 case "$(flow_issue 3 '.comments[-1].body')" in "<!-- kit-soltado: fusionar -->"*"#$p"*) ;; *) fail "kit-soltado tras fusionar";; esac
-[ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra ] || fail "no quitó en-curso: $(flow_issue 3 '.labels')"
+[ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra,serializa:mig ] || fail "no quitó en-curso: $(flow_issue 3 '.labels')"
 grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso$" "$GH_LOG" || fail "issue edit sin las etiquetas"
 grep -q -- "pr merge $p.*--squash" "$GH_LOG" || fail "merge sin --squash"
 grep -q -- "--delete-branch" "$GH_LOG" && fail "merge con --delete-branch"

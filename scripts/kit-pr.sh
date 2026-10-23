@@ -17,6 +17,7 @@ source "$here/lib/config.sh"
 source "$here/lib/default-branch.sh"
 source "$here/lib/repo-hook.sh"
 source "$here/lib/ci.sh"
+source "$here/lib/locks.sh"
 
 usage() {
   echo "uso: $0 abrir <wt> <N> <titulo> <fichero-cuerpo> | esperar-ci <wt> <pr> |" \
@@ -375,6 +376,16 @@ $KIT_HOOK_OUT") ;;
     if [ "$ist" = OPEN ]; then
       gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
         || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
+    fi
+    # the axis locks of the issue (lib/locks.sh) go before en-curso, as in kit-issue.sh release; a failure only warns, naming the command that frees it
+    if axes="$(gh issue view "$n" --repo "$slug" --json labels --jq '.labels[].name | select(startswith("serializa:"))')"; then
+      while IFS= read -r e; do
+        [ -n "$e" ] && lock_valid "$e" || continue
+        lock_release "$e" "$n" \
+          || echo "AVISO: PR fusionada, pero el candado $(lock_ref "$e") sigue tomado: kit-issue.sh liberar-eje <raíz> ${e#serializa:}" >&2
+      done <<< "$axes"
+    else
+      echo "AVISO: PR fusionada, pero no se pudo leer las etiquetas de #$n: mira si quedó algún candado en refs/locks/" >&2
     fi
     # the claim is over: an own kit-soltado (so a reopened issue can be claimed again), then drop en-curso; a failure
     # only warns, the merge already happened

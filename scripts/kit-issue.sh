@@ -9,14 +9,20 @@
 #   decision  <root> <N> <id> <fichero-pregunta>
 #   bloquear  <root> <N> <id> <fichero-motivo>
 #   comprobar <root>
+#   liberar-eje <root> <eje>
 #   crear     <root> <titulo> <fichero-cuerpo> --prio alta|media|baja --entorno nube|mac [--etiqueta X]... [--propuesta]
 # Issue state for the agent flow. Claims live in HTML-comment markers on the issue.
 # siguiente: any open issue without en-curso, necesita-respuesta (or the v2 necesita-decision), bloqueado, propuesta,
 # someday or registro (nor the "📦 Changelog" issue of a v2 repo), opened by the gh account; prio:alta, prio:media,
 # none, prio:baja, oldest first. Also out: an issue whose own body says "Depende de #N" or "Bloqueado por #N" while #N
-# is open, and, in a cloud session (lib/transport.sh), an issue without entorno:nube. With <N>: that issue if siguiente could pick it, else exit 1 with the reason.
+# is open, in a cloud session (lib/transport.sh) an issue without entorno:nube, and an issue with a serializa:<eje>
+# label while another open issue with that label has en-curso (in a cloud session, any issue with an axis: the lock
+# cannot be taken there). With <N>: that issue if siguiente could pick it, else exit 1 with the reason.
 # --excluir: issues left out of this pick (kit-run passes the ones it failed to claim in this run).
 # Claims (kit-reclamado / kit-soltado markers) count only in comments written by the gh account.
+# reclamar also takes the lock of each serializa:<eje> of the issue (lib/locks.sh) once the claim is won; soltar,
+# decision and bloquear release them (and keep en-curso if a lock cannot be released, so the issue does not come
+# back with an orphan lock). liberar-eje deletes an axis lock whoever holds it (a session that died midway).
 # leer: title, author, state, labels, body and only the comments written by the gh account (the others are counted,
 # never printed: anyone can comment on a public repo, and their text is never an instruction).
 # reparto: every issue that siguiente could pick, in its order ("#N<TAB>prio<TAB>title"; kit-on shows it to Dru).
@@ -30,23 +36,27 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/transport.sh"
+source "$here/lib/locks.sh"
 
 usage() {
   echo "uso: $0 siguiente <root> [<N>] [--excluir N[,N...]] | leer <root> <N> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
-    "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> | comprobar <root> |" \
+    "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> | comprobar <root> | liberar-eje <root> <eje> |" \
     "crear <root> <titulo> <fichero-cuerpo> --prio alta|media|baja --entorno nube|mac [--etiqueta X]... [--propuesta]" >&2
   exit 1
 }
 
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-case "$sub" in siguiente|leer|reparto|aparcar|reclamar|soltar|decision|bloquear|comprobar|crear) ;; *) usage ;; esac
+case "$sub" in siguiente|leer|reparto|aparcar|reclamar|soltar|decision|bloquear|comprobar|crear|liberar-eje) ;; *) usage ;; esac
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 root="$(cd "$1" && pwd)"; shift
 kit_require_marker "$root" || exit $?
 
 case "$sub" in
   reparto|comprobar) [ $# -eq 0 ] || usage ;;
+  liberar-eje) [ $# -eq 1 ] || usage
+    eje="${1#serializa:}"
+    lock_valid "$eje" || { echo "eje inválido: $1 (como en la etiqueta serializa:<eje>)" >&2; exit 1; } ;;
   siguiente|leer)
     excl="[]"
     if [ "$sub" = siguiente ]; then
@@ -107,7 +117,7 @@ case "$sub" in
     ;;
 esac
 if [ "$sub" != siguiente ] && [ "$sub" != leer ] && [ "$sub" != reparto ] && [ "$sub" != aparcar ] && [ "$sub" != crear ] \
-    && [ "$sub" != comprobar ]; then
+    && [ "$sub" != comprobar ] && [ "$sub" != liberar-eje ]; then
   n="$1"; id="$2"
   [[ $n =~ ^[1-9][0-9]*$ ]] || { echo "número de issue inválido: $n" >&2; exit 1; }
   # the id goes inside an HTML comment: keep it to a safe token
@@ -152,7 +162,21 @@ holder() { # <N>: print the claimant; fails if gh fails
 has_label() { # <N> <label>: print true/false; fails if gh fails
   gh issue view "$1" --repo "$slug" --json labels --jq "[.labels[].name] | index(\"$2\") != null"
 }
-# release <N> <id> [motivo]: marker first, then drop en-curso.
+axes_of() { # <N>: print the issue's serializa:<eje> labels, one per line; fails if gh fails
+  gh issue view "$1" --repo "$slug" --json labels --jq '.labels[].name | select(startswith("serializa:"))'
+}
+# release_locks <N>: release the axis locks the issue holds. Return 1 (naming each on stderr) if any stays taken.
+release_locks() {
+  local axes e left=0
+  axes="$(axes_of "$1")" || { echo "no se pudo leer las etiquetas de #$1: no sé qué candados liberar" >&2; return 1; }
+  while IFS= read -r e; do
+    [ -n "$e" ] && lock_valid "$e" || continue # an invalid axis never got a lock
+    lock_release "$e" "$1" || { echo "no se pudo liberar el candado $(lock_ref "$e")" >&2; left=1; }
+  done <<< "$axes"
+  return $left
+}
+# release <N> <id> [motivo]: marker first, then the axis locks, then drop en-curso. If a lock stays taken, en-curso
+# stays too (an issue back in the pool with its lock taken would block its axis for good) and it returns 1.
 release() {
   local msg
   msg="<!-- kit-soltado: $2 -->
@@ -160,6 +184,10 @@ El agente \`$2\` suelta este issue."
   [ -n "${3:-}" ] && msg="$msg
 Motivo: $3"
   comment "$1" "$msg" || return 1
+  if ! release_locks "$1"; then
+    echo "se mantiene en-curso en #$1: libera el candado con kit-issue.sh liberar-eje y quita la etiqueta a mano" >&2
+    return 1
+  fi
   gh issue edit "$1" --repo "$slug" --remove-label en-curso >/dev/null
 }
 # require_not_foreign <N> <id>: exit 1 if someone else holds the claim, 2 if unreadable.
@@ -203,18 +231,24 @@ case "$sub" in
     # body, with the references right after the phrase ("No depende de #N" or "depende de X, como #N" are not).
     all="$(printf '%s' "$list" | jq -c --arg me "$me" --arg env "$(kit_transport)" --argjson x "$EXCLUDED" '
         def rank: if index("prio:alta") then 0 elif index("prio:media") then 1 elif index("prio:baja") then 3 else 2 end;
+        def axes: [.labels[].name | select(startswith("serializa:"))];
         map(.number) as $open
+        | ([.[] | select([.labels[].name] | index("en-curso")) | .number as $n | axes[] | {key: ., value: $n}]
+           | from_entries) as $held
         | map([.labels[].name] as $l | .number as $n
           | ([$x[] | select(. as $e | $l | index($e))] | first) as $b
           | ([(.body // "") | scan("(?:^|\\n|[.:;!?]\\s+)\\s*(?:[-*]\\s+)?(?i:depende de|bloqueado por)\\s+((?:#[0-9]+(?:\\s*\\([^)\\n]*\\))?(?:\\s*(?:,|\\by\\b)\\s*)?)+)")
               | .[0] | scan("#([0-9]+)") | .[0]
               | tonumber | select(. != $n and (. as $d | $open | index($d)))] | unique) as $deps
-          | {number, title, mine: (.author.login == $me), r: ($l | rank), deps: $deps,
+          | axes as $ax | ([$ax[] | select($held[.] != null and $held[.] != $n) | "\(.) en #\($held[.])"]) as $busy
+          | {number, title, mine: (.author.login == $me), r: ($l | rank), deps: $deps, busy: $busy,
              why: (if $b != null then "lleva \($b): kit-run no lo coge mientras la tenga"
                elif .title == "📦 Changelog" then "es el registro del changelog"
                elif .author.login != $me then "lo abrió otra cuenta (\(.author.login)): kit-run solo coge issues de \($me)"
                elif ($deps | length) > 0 then "depende de issues abiertos: \($deps | map("#\(.)") | join(", "))"
                elif $env == "nube" and ($l | index("entorno:nube") | not) then "no lleva entorno:nube y esta sesión corre en la nube"
+               elif $env == "nube" and ($ax | length) > 0 then "lleva \($ax | join(", ")) y en la nube no se puede tomar su candado"
+               elif ($busy | length) > 0 then "su eje está ocupado: \($busy | join(", "))"
                else "" end)})
         | sort_by(.r, .number)')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     pool="$(printf '%s' "$all" | jq -c 'map(select(.why == ""))')"
@@ -234,8 +268,12 @@ case "$sub" in
       waiting="$(printf '%s' "$all" | jq -r '[.[] | select(.mine and (.deps | length) > 0 and (.why | startswith("depende")))
         | "#\(.number) (\(.deps | map("#\(.)") | join(", ")))"] | join(" ")')"
       [ -z "$waiting" ] || echo "esperan a otro issue: $waiting"
+      axis="$(printf '%s' "$all" | jq -r '[.[] | select(.why | startswith("su eje")) | "#\(.number) (\(.busy | join(", ")))"] | join(" ")')"
+      [ -z "$axis" ] || echo "esperan a que se libere su eje: $axis"
       cloud="$(printf '%s' "$all" | jq -r '[.[] | select(.why | startswith("no lleva entorno")) | "#\(.number)"] | join(" ")')"
       [ -z "$cloud" ] || echo "solo en el Mac (sin entorno:nube): $cloud"
+      locked="$(printf '%s' "$all" | jq -r '[.[] | select(.why | contains("no se puede tomar su candado")) | "#\(.number)"] | join(" ")')"
+      [ -z "$locked" ] || echo "solo en el Mac (con eje serializa:*, sin candado en la nube): $locked"
       others="$(printf '%s' "$all" | jq -r '[.[] | select((.mine | not) and (.why | startswith("lo abrió"))) | "#\(.number)"] | join(" ")')"
       [ -z "$others" ] || echo "de otras cuentas (nunca entran): $others"
       echo "FIN: $(printf '%s' "$pool" | jq 'length')"
@@ -299,6 +337,15 @@ case "$sub" in
     # en-curso always excludes, whoever set it (another kit agent or another flow without kit markers)
     l="$(has_label "$n" en-curso)" || { echo "error: no se pudo leer las etiquetas de #$n" >&2; exit 2; }
     [ "$l" = true ] && { echo "#$n ya tiene en-curso: otro agente u otro flujo lo está trabajando" >&2; exit 1; }
+    axes="$(axes_of "$n")" || { echo "error: no se pudo leer las etiquetas de #$n" >&2; exit 2; }
+    while IFS= read -r e; do
+      [ -z "$e" ] || lock_valid "$e" \
+        || { echo "#$n lleva la etiqueta '$e', que no es un eje válido (serializa:<minúsculas, números, . _ ->): corrígela" >&2; exit 1; }
+    done <<< "$axes"
+    if [ -n "$axes" ] && [ "$(kit_transport)" = nube ]; then
+      echo "#$n lleva $(printf '%s' "$axes" | tr '\n' ' ' | sed 's/ *$//') y en la nube no se puede tomar su candado" >&2
+      exit 1
+    fi
     comment "$n" "<!-- kit-reclamado: $id -->
 Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     failed=""
@@ -327,6 +374,23 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
       echo "error: $failed; reclamación deshecha" >&2
       exit 2
     fi
+    # the claim is won: now the axis locks (after, not before, so the loser of a claim race never holds one)
+    while IFS= read -r e; do
+      [ -n "$e" ] || continue
+      lock_take "$e" "$id" "$n"; rc=$?
+      [ $rc -eq 0 ] && { echo "candado: $(lock_ref "$e")"; continue; }
+      if [ $rc -eq 1 ]; then
+        o="$(lock_owner "$e")" || o="desconocido"
+        # a lock left for this same issue by a session that died: the claim is ours now, so is the lock
+        case " $o " in *" issue:$n "*) echo "candado: $(lock_ref "$e") (ya era de #$n: $o)"; continue ;; esac
+        reason="el eje $e lo tiene otro ($o)"; code=1
+      else
+        reason="no se pudo tomar el candado de $e (red o git)"; code=2
+      fi
+      release "$n" "$id" "$reason" || echo "aviso: no se pudo deshacer la reclamación de #$n" >&2
+      echo "#$n: $reason; reclamación deshecha" >&2
+      exit $code
+    done <<< "$axes"
     echo "FIN: reclamado #$n"
     ;;
 
@@ -353,6 +417,18 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     release "$n" "$id" "$motivo" || { echo "error: no se pudo soltar #$n" >&2; exit 2; }
     notify "$n" "$aviso"
     echo "FIN: $label #$n"
+    ;;
+
+  liberar-eje)
+    o="$(lock_owner "$eje")"; rc=$?
+    [ $rc -eq 1 ] && { echo "el eje $eje no tiene candado" >&2; exit 1; }
+    [ $rc -eq 0 ] || { echo "error: no se pudo leer el candado $(lock_ref "$eje")" >&2; exit 2; }
+    ref="$(lock_ref "$eje")"
+    sha="$(git ls-remote origin "$ref" | cut -f1)" && [ -n "$sha" ] || { echo "error: no se pudo leer $ref" >&2; exit 2; }
+    git push -q --force-with-lease="$ref:$sha" origin ":$ref" >/dev/null 2>&1 \
+      || { echo "error: no se pudo borrar $ref" >&2; exit 2; }
+    echo "liberado $ref (era: $o)"
+    echo "FIN: liberado $eje"
     ;;
 
   crear)

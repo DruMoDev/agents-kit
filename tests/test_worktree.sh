@@ -99,9 +99,18 @@ path31="$KIT_WORKTREES/$name/issue-31-bar"
 git -C "$path" reset -q --hard HEAD~1
 set_pr MERGED
 
-# MERGED and clean
+# MERGED and clean; origin/main moved meanwhile (the merge): the main clone fast-forwards
+other="$(mktemp -d)"
+(git clone -q "$o" "$other" && cd "$other" && git config user.email t@e && git config user.name t \
+  && echo m > merged.txt && git add merged.txt && git commit -q -m merged && git push -q origin main) >/dev/null 2>&1 \
+  || fail "mover origin/main"
+echo local > "$r/notas-de-dru.txt"
 out="$(bash "$wt" limpiar "$r" 3 2>&1)" || fail "limpiar: $out"
 [ "$(last_line "$out")" = "FIN: limpio" ] || fail "limpiar sin FIN"
+case "$out" in *"principal al día con origin/main ($(git -C "$r" rev-parse --short HEAD))"*) ;; *) fail "sin principal al día: $out";; esac
+[ "$(git -C "$r" rev-parse HEAD)" = "$(git -C "$other" rev-parse HEAD)" ] || fail "el principal no avanzó"
+[ "$(cat "$r/notas-de-dru.txt")" = local ] || fail "avanzar el principal tocó trabajo sin confirmar"
+rm "$r/notas-de-dru.txt"
 [ ! -e "$path" ] || fail "queda el worktree"
 git -C "$r" rev-parse -q --verify issue-3-foo >/dev/null && fail "queda la rama"
 while IFS= read -r line; do case "$line" in *"dru/demo"*) ;; *) fail "gh sin repo: $line";; esac; done < "$GH_LOG"
@@ -110,6 +119,31 @@ while IFS= read -r line; do case "$line" in *"dru/demo"*) ;; *) fail "gh sin rep
 
 # nothing to clean
 bash "$wt" limpiar "$r" 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin worktree debe dar 1"
+# a modified tracked file that the advance would overwrite: git refuses, the file is kept and it says why
+(cd "$other" && git pull -q && echo nuevo > README.md && git commit -q -am readme && git push -q origin main) >/dev/null 2>&1 || fail "mover main 3"
+echo "edición de Dru" > "$r/README.md"
+bash "$wt" abrir "$r" 32 baz >/dev/null 2>&1 || fail "abrir 32"
+jq --arg oid "$(git -C "$r" rev-parse issue-32-baz)" \
+  '.prs = [{number: 4, headRefName: "issue-32-baz", state: "MERGED", headRefOid: $oid, body: "", comments: []}]' \
+  "$GH_STATE/state.json" > "$GH_STATE/s" && mv "$GH_STATE/s" "$GH_STATE/state.json"
+before="$(git -C "$r" rev-parse HEAD)"
+out="$(bash "$wt" limpiar "$r" 32 2>&1)" || fail "limpiar con README editado: $out"
+case "$out" in *"AVISO: el principal NO se pudo avanzar a origin/main"*) ;; *) fail "sin AVISO de avance rechazado: $out";; esac
+[ "$(cat "$r/README.md")" = "edición de Dru" ] && [ "$(git -C "$r" rev-parse HEAD)" = "$before" ] || fail "el avance pisó la edición de Dru"
+git -C "$r" checkout -q README.md && git -C "$r" merge -q --ff-only origin/main || fail "restaurar README"
+
+# main clone on another branch: limpiar still cleans, the main clone is not moved and it says why
+(cd "$other" && echo n > n.txt && git add n.txt && git commit -q -m n && git push -q origin main) >/dev/null 2>&1 || fail "mover main 2"
+git -C "$r" checkout -q -b trabajo-de-dru || fail "rama de Dru"
+before="$(git -C "$r" rev-parse main)"
+jq --arg oid "$(git -C "$r" rev-parse issue-31-bar)" \
+  '.prs = [{number: 2, headRefName: "issue-31-bar", state: "MERGED", headRefOid: $oid, body: "", comments: []}]' \
+  "$GH_STATE/state.json" > "$GH_STATE/s" && mv "$GH_STATE/s" "$GH_STATE/state.json"
+out="$(bash "$wt" limpiar "$r" 31 2>&1)" || fail "limpiar en otra rama: $out"
+[ "$(last_line "$out")" = "FIN: limpio" ] || fail "limpiar en otra rama sin FIN"
+case "$out" in *"AVISO: el repo principal está en 'trabajo-de-dru', no en 'main': no se actualiza."*) ;; *) fail "sin AVISO de rama: $out";; esac
+[ "$(git -C "$r" rev-parse main)" = "$before" ] && [ "$(git -C "$r" branch --show-current)" = trabajo-de-dru ] || fail "tocó la rama de Dru"
+git -C "$r" checkout -q main && git -C "$r" merge -q --ff-only origin/main || fail "volver a main"
 # setup: runs once in the new worktree; failure -> exit 2 with the output; unsafe path -> exit 2
 mkdir -p "$r/tools"
 printf '#!/bin/sh\necho "preparado" >> "$SETUP_LOG"\n[ -e "$SETUP_OK" ] || { echo "no hay entorno"; exit 1; }\n' > "$r/tools/setup.sh"
