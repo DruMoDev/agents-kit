@@ -7,7 +7,7 @@
 #   ronda      <wt> <pr> <n> <fichero>
 #   fusionar   <wt> <pr> <N>
 # PR lifecycle of an issue branch; <wt> is the issue worktree. Review state lives in HTML-comment markers on the PR.
-# Env: KIT_CI_TIMEOUT (s, default 1800), KIT_CI_POLL (s, default 15),
+# Env: KIT_CI_TIMEOUT (s; default: ciTimeoutMin of the config, else from the repo history, lib/ci.sh), KIT_CI_POLL (s, default 15),
 #   KIT_CI_GRACE (s, default 300: with workflows but no check run for the SHA after it, esperar-ci reports sin-ci).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -uo pipefail
@@ -147,7 +147,10 @@ Cierra #$n"
     sha="$(head_sha)" || exit 2
     oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
     [ "$oid" = "$sha" ] || { echo "la PR apunta a $oid y aquí estás en $sha: empuja o espera" >&2; exit 2; }
-    res="$(ci_wait "$sha")" || exit $?
+    t="$(ci_timeout "$wt")"
+    res="$(ci_wait "$sha" "$t")"; rc=$?
+    [ $rc -ne 3 ] || exit 1 # still running: a rejection, kit-run waits again
+    [ $rc -eq 0 ] || exit $rc
     echo "FIN: $res"
     ;;
 

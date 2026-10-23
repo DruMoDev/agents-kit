@@ -116,7 +116,7 @@ seq_checks "$IP"
 err="$(KIT_CI_TIMEOUT=0 bash "$pr" esperar-ci "$wt" $p 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "timeout: exit $rc"
 sha="$(git -C "$wt" rev-parse HEAD)"
-case "$err" in *"el CI de ${sha:0:8} no concluyó en 0s"*) ;; *) fail "timeout msg: $err";; esac
+case "$err" in *"el CI de ${sha:0:8} sigue en marcha tras 0 min (0s)"*) ;; *) fail "timeout msg: $err";; esac
 # gh failure -> 2
 GH_FAIL_ON="check-runs" bash "$pr" esperar-ci "$wt" $p >/dev/null 2>&1; [ $? -eq 2 ] || fail "fallo de gh debe dar 2"
 # local SHA differs from the PR

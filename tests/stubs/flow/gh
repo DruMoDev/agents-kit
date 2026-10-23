@@ -19,6 +19,7 @@
 #     A PR without "headRefOid" resolves it live from the cwd's origin (git ls-remote refs/heads/<headRefName>).
 #   state.labels: repo label names for `label list` (default: every label of the kit v3)
 #   state.workflows: number reported by `api repos/<slug>/actions/workflows` (default 0)
+#   state.runs: workflow runs reported by `api repos/<slug>/actions/runs` (default [])
 #   state.checks: check runs [{"status": "completed", "conclusion": "success"}] for any commit (default [])
 #   GH_CHECKS_SEQ  file with one JSON array of check runs per line; each check-runs call consumes the next line
 #                  (the last one repeats). Overrides state.checks. Position kept in $GH_STATE/.checks_idx
@@ -176,6 +177,8 @@ case "$cmd" in
         jq -n --arg u "${GH_USER:-dru}" '{login: $u}' | emit ;;
       repos/*/*/actions/workflows)
         jq '{total_count: (.workflows // 0), workflows: []}' "$state" | emit ;;
+      repos/*/*/actions/runs*)
+        jq '{workflow_runs: (.runs // [])}' "$state" | emit ;;
       repos/*/*/commits/*/check-runs*)
         if [ -n "${GH_CHECKS_SEQ:-}" ]; then
           i="$(cat "$GH_STATE/.checks_idx" 2>/dev/null || echo 0)"

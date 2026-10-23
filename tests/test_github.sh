@@ -149,6 +149,25 @@ for c in rojo esperando; do
   case "$out" in *"FIN: PR abierto") ;; *) fail "ship CI $c: '$out'";; esac
   case "$out" in *"gh pr merge falló"*) fail "ship CI $c: culpa a la fusión, que no se intentó ('$out')";; esac
 done
+case "$(ship_ci esperando)" in *"el CI sigue en marcha"*"kit-ship-pr.sh fusionar "*" kit-on"*) ;;
+  *) fail "ship CI esperando: no dice cómo relanzar solo la fusión";; esac
+case "$(ship_ci rojo)" in *"sigue en marcha"*) fail "ship CI rojo: lo trata como CI en marcha";; esac
+
+# --- ship fusionar: only the merge of the open PR, after its CI
+r="$(mk_with_origin main)"
+: > "$GH_LOG"
+out="$(GH_STUB_MODE=pr-open GH_CI=verde KIT_CI_POLL=0 bash "$ship" fusionar "$r" kit-on 2>&1)" || fail "fusionar verde: $out"
+case "$out" in *"CI: verde"*"PR fusionado: https://github.com/dru/demo/pull/5"*"FIN: ok") ;; *) fail "fusionar verde: '$out'";; esac
+grep -q '^api repos/dru/demo/commits/abc123/check-runs' "$GH_LOG" || fail "fusionar: no miró el CI del head del PR"
+grep -q '^pr merge https://github.com/dru/demo/pull/5 .*--squash' "$GH_LOG" || fail "fusionar: no fusionó el PR 5"
+: > "$GH_LOG"
+out="$(GH_STUB_MODE=pr-open GH_CI=esperando KIT_CI_POLL=0 KIT_CI_TIMEOUT=0 bash "$ship" fusionar "$r" kit-on 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "fusionar esperando: exit $rc ($out)"
+grep -q '^pr merge' "$GH_LOG" && fail "fusionar esperando: fusionó sin CI verde"
+case "$out" in *"FIN: PR abierto") ;; *) fail "fusionar esperando: '$out'";; esac
+err="$(bash "$ship" fusionar "$r" kit-on 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "fusionar sin PR: exit $rc"
+case "$err" in *"no hay un PR abierto desde 'kit-on'"*) ;; *) fail "fusionar sin PR: '$err'";; esac
 
 
 # --- real repo shape (tiktok-editor): CLAUDE.md -> AGENTS.md, .claude/skills symlink, core.hooksPath, dirty main tree
