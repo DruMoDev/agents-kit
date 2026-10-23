@@ -12,7 +12,7 @@ Cada ronda `r` revisa el head de la PR con todos los puestos de `revision.puesto
 
 - `revision.rondas` (configuración global): `mezcla` (por defecto) o `completas`. Varias rondas completas multiplican el coste, pero una revisión independiente a veces encuentra algo nuevo: `mezcla` guarda las dos cosas.
 - Ronda 1, o `completas`: todos los puestos revisan el diff entero (`references/revisor.md`).
-- Desde la ronda 2 con `mezcla`: el puesto `((r - 2) mod n) + 1` revisa el diff entero con contexto limpio, así que el independiente rota; los demás verifican (`references/revisor-verificar.md`) que cada `→ aplicado` de la ronda anterior queda resuelto y que los arreglos no rompen nada, sobre el diff desde el head que revisó la ronda anterior (cada informe lo guarda como `<!-- kit-revisado: <sha> -->`). Un hallazgo de verificación es un arreglo que no resuelve o una regresión de un arreglo; se decide igual que cualquier otro.
+- Desde la ronda 2 con `mezcla`: el puesto `((r - 2) mod n) + 1` revisa el diff entero con contexto limpio, así que el independiente rota; los demás (`references/revisor-verificar.md`) revisan entero todo lo que cambió desde el head que revisó la ronda anterior (cada informe lo guarda como `<!-- kit-revisado: <sha> -->`), venga de la revisión, de un fallo del CI o de otro motivo, y comprueban que cada `→ aplicado` de esa ronda queda resuelto. Un hallazgo de verificación es un arreglo que no resuelve, una regresión o un defecto en ese diff; se decide igual que cualquier otro.
 - `fusionar` exige igual una revisión confirmada por puesto en cada ronda, sea cual sea su modo.
 
 ## Puestos sin confirmar

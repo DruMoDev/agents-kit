@@ -132,7 +132,7 @@ trap - INT TERM HUP
 
 : > "$d/puestos.tsv"
 k=0; u=0
-[ -z "$indep" ] || echo "modo: ronda $round (revision.rondas mezcla): el puesto $indep revisa todo el diff con contexto limpio; los demás verifican los arreglos de la ronda $((round - 1))"
+[ -z "$indep" ] || echo "modo: ronda $round (revision.rondas mezcla): el puesto $indep revisa todo el diff con contexto limpio; los demás revisan lo que cambió desde la ronda $((round - 1)) y sus arreglos"
 for i in $seats; do
   k=$((k + 1))
   cat "$d/puesto-$i.log"
