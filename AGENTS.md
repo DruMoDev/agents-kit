@@ -14,12 +14,11 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 - `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso y reglas).
 - `rules/`: reglas inyectadas en las sesiones.
 - `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout` y `kit-run` (con `references/`: plantilla de issue, prompts del revisor (`revisor.md` y `revisor-verificar.md`), esquema JSON de la revisión y formato de ronda).
-- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-ship-pr.sh` (worktree temporal de `kit-on`/`kit-off`), `kit-agents-md.sh` (diff del reordenado de `AGENTS.md`), `kit-review.sh` y `kit-review-all.sh` (modo `completa` o `verificar` por puesto, según `revision.rondas`), `kit-verify.sh` (`verificar.rapido`/`completo` del marcador y estado de hook y CI para `kit-on`), `kit-changelog.sh`, `kit-notify.sh`, `kit-skills-check.sh` (citas rotas a ficheros en las skills; los tests lo pasan sobre el propio kit)...) y `release.sh`.
-- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`, configuración en tres capas; `review-seats.sh`, familia del implementador y candidatos de cada puesto de revisión; `default-branch.sh`; `transport.sh`, dónde corre la sesión; `locks.sh`, candados de eje `refs/locks/<eje>` de los issues `serializa:<eje>` (los usan `kit-issue.sh` y `kit-pr.sh`); `ci.sh`, estado y espera del CI de un commit, con tiempo máximo de `ciTimeoutMin` o del historial del repo (lo usan `kit-pr.sh` y `kit-ship-pr.sh`); `repo-hook.sh`, scripts `setup` y `checks.pre-merge` del repo).
+- `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-ship-pr.sh` (worktree temporal de `kit-on`/`kit-off`), `kit-agents-md.sh` (diff del reordenado de `AGENTS.md`), `kit-review.sh` y `kit-review-all.sh` (modo `completa` o `verificar` por puesto, según `revision.rondas`), `kit-verify.sh` (`verificar.rapido`/`completo` del marcador y estado de hook y CI para `kit-on`), `kit-bg.sh` (lanza un comando desacoplado y espera por su fichero de salida, con tope: todas las esperas largas), `kit-changelog.sh`, `kit-notify.sh`, `kit-skills-check.sh` (citas rotas a ficheros en las skills; los tests lo pasan sobre el propio kit)...) y `release.sh`.
+- `scripts/lib/`: helpers de bash que se cargan con `source` (`github-slug.sh`, parseo del remoto `origin`; `config.sh`, configuración en tres capas; `review-seats.sh`, familia del implementador y candidatos de cada puesto de revisión; `default-branch.sh` (con `kit_fetch`, fetch que reintenta si otra sesión tiene bloqueada la referencia); `transport.sh`, dónde corre la sesión; `locks.sh`, candados de eje `refs/locks/<eje>` de los issues `serializa:<eje>` (los usan `kit-issue.sh` y `kit-pr.sh`); `ci.sh`, estado y espera del CI de un commit (solo cuentan los workflows propios de `.github/workflows/`, no los `dynamic/` de GitHub ni los resultados de code scanning), con tiempo máximo de `ciTimeoutMin` o del historial del repo, y `ci_gh_retry` para errores transitorios de GitHub (lo usan `kit-pr.sh` y `kit-ship-pr.sh`); `repo-hook.sh`, scripts `setup` y `checks.pre-merge` del repo).
 - `templates/`: plantillas que copia `kit-on` (`agents-kit.json`, `AGENTS.md`, `CHANGELOG.md`) y `config.json`, valores por defecto del kit y plantilla de la configuración global `~/.agents-kit/config.json` (o `KIT_CONFIG`). Precedencia: plugin < global < marcador del repo, que solo puede definir las claves de la lista blanca de `scripts/lib/config.sh`.
 - `tests/`: tests de bash con stubs (`opencode_harness.mjs` carga el plugin de OpenCode con node). `tests/fixtures/changelog/` es el contrato del formato de `CHANGELOG.md`: la web lo reutilizará para probar su parser.
 - `web/`: web de changelogs (Astro + Cloudflare Workers), app aparte con su `package.json`. Su parser (`web/src/lib/changelog.ts`) y el validador bash comparten `tests/fixtures/changelog/`: cambiar el formato es tocar los dos y los fixtures.
-- `docs/`: specs y planes.
 
 ## Flujo de issues
 
@@ -27,7 +26,8 @@ Las reglas viven en `rules/` y las inyecta `hooks/session-start` solo si el repo
 
 ## Comandos
 
-- `tests/run.sh`: ejecuta todos los tests.
+- `tests/run.sh`: ejecuta todos los tests (con stubs).
+- `tests/e2e/github.sh DruMoDev/agents-kit-sandbox [--con-revisores]`: prueba de punta a punta contra GitHub de verdad (issue con eje, candado, PR, changelog, gate o CI, ronda, fusión, limpieza, candado de un issue cerrado). Antes de cada versión; tarda minutos, lánzala con `scripts/kit-bg.sh`. Deshace lo suyo si falla.
 - `scripts/release.sh <semver>`: escribe la versión en los manifiestos y el marketplace.
 - `claude plugin validate .`: valida manifiestos y skills.
 - `cd web && npm test && npm run e2e`: tests de la web (no los lanza `tests/run.sh`).
@@ -143,6 +143,13 @@ Ayuda (`--help`) leída el 2026-10-22 con Claude Code 2.1.308, opencode 1.19.0 y
 - `opencode run --pure --format json -m <m> [-s <sesión>] <prompt>` con `OPENCODE_CONFIG_CONTENT` que niega `gh *` y `git push*`. Banderas en la ayuda (`--format json` = eventos JSON en crudo; `--pure` = sin plugins externos). Sin verificar aquí: los eventos `text` (`part.text`, `part.messageID`), `error` y `sessionID` (de `peer-review`). Sin esquema nativo: va en el prompt, y una respuesta fuera de esquema tiene un reintento en la misma sesión (`-s`).
 - `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox workspace-write -c 'approval_policy="never"' -c sandbox_workspace_write.network_access=false --color never -m <m> -C <clon> --output-schema <fichero> -o <fichero> <prompt>`. Banderas en la ayuda; codex-cli 0.163.0 aceptó esta línea completa (arrancó con `approval: never` y salió con código 1 con un modelo inexistente; fue una ejecución accidental de un test). `gh` y `git push` quedan bloqueados porque el sandbox `workspace-write` no tiene red (y no hay credenciales); `--ignore-user-config` evita servidores MCP del usuario con tokens. Sin verificar: que `approval_policy` y `sandbox_workspace_write.network_access` sean las claves exactas en 0.163.0, que el sandbox bloquee la red en macOS en ejecución anidada, y que `-o` escriba el JSON del esquema. Codex lee stdin aunque sea `/dev/null` ("Reading additional input from stdin..."), sin efecto.
 - Entorno del implementador: `CODEX_THREAD_ID` en Codex y `CLAUDECODE` en Claude Code (los usa `peer-review`); `OPENCODE` en OpenCode, sin verificar aquí.
+
+### GitHub en uso real (e2e de la 3.5)
+
+Visto con `tests/e2e/github.sh` el 2026-10-23, no con stubs:
+- `git push -q` sigue escribiendo en stderr las líneas `remote: Create a pull request...` de GitHub: un script que mezcla stderr con su salida las cuela antes de su primera línea. Los pushes del kit las ocultan salvo si fallan.
+- Tras un push, la PR tarda unos segundos en reflejar el nuevo head (`headRefOid`): comparar justo después da un falso "la PR apunta a otro commit". `esperar-ci` espera hasta 60 s si el commit ya está en origin.
+- Los workflows integrados de GitHub (Dependabot, CodeQL por defecto, Copilot) salen en `actions/workflows` con ruta `dynamic/...`, y los resultados de code scanning publican checks de la app `github-advanced-security` en las PRs (comprobado en `dependabot/dependabot-core` y `github/codeql-action`): ninguno es CI del repo.
 
 ### agents-kit v3
 

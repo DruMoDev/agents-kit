@@ -60,6 +60,14 @@ read_file() { # <path>: print contents or exit 1
   [ -f "$1" ] && [ -r "$1" ] || { echo "no se puede leer el fichero: $1" >&2; exit 1; }
   cat "$1"
 }
+# quiet_push <git push args...>: git push without GitHub's "remote: Create a pull request..." lines, which git prints
+# to stderr even with -q and the agent would read as part of the output; on failure they are shown.
+quiet_push() {
+  local e
+  e="$(git push -q "$@" 2>&1)" && return 0
+  printf '%s\n' "$e" >&2
+  return 1
+}
 head_sha() { git rev-parse HEAD 2>/dev/null || { echo "error: no se pudo leer HEAD" >&2; exit 2; }; }
 is_clean() { # exit 2 if git status fails
   local s
@@ -70,7 +78,7 @@ base_branch() { # print origin's default branch after fetching it; exit 2 if unk
   local b
   b="$(kit_default_branch)"
   [ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
-  git fetch -q origin "+refs/heads/$b:refs/remotes/origin/$b" || { echo "error: git fetch falló" >&2; exit 2; }
+  kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b" || { echo "error: git fetch falló" >&2; exit 2; }
   printf '%s' "$b"
 }
 pr_json() { # <fields>: gh pr view of $p, exit 2 if unreadable
@@ -112,6 +120,42 @@ REVIEW_JQ="$OWN_JQ"' as $b
         else "ok" end
     end'
 
+# after_merge <url>: everything fusionar does once the PR is merged (close the issue, release its axis locks, kit-soltado,
+# drop en-curso) and its final lines. Idempotent: a rerun of fusionar on a merged PR comes straight here.
+after_merge() {
+  local url="$1" ist axes e
+  ist="$(gh issue view "$n" --repo "$slug" --json state --jq .state)" \
+    || { echo "error: PR fusionada pero no se pudo leer el issue #$n" >&2; exit 2; }
+  if [ "$ist" = OPEN ]; then
+    gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
+      || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
+  fi
+  # the axis locks of the issue (lib/locks.sh) go before en-curso, as in kit-issue.sh release; a failure only warns, naming the command that frees it
+  if axes="$(gh issue view "$n" --repo "$slug" --json labels --jq '.labels[].name | select(startswith("serializa:"))')"; then
+    while IFS= read -r e; do
+      [ -n "$e" ] && lock_valid "$e" || continue
+      lock_release "$e" "$n" \
+        || echo "AVISO: PR fusionada, pero el candado $(lock_ref "$e") sigue tomado: kit-issue.sh liberar-eje <raíz> ${e#serializa:}" >&2
+    done <<< "$axes"
+  else
+    echo "AVISO: PR fusionada, pero no se pudo leer las etiquetas de #$n: mira si quedó algún candado en refs/locks/" >&2
+  fi
+  # the claim is over: an own kit-soltado (so a reopened issue can be claimed again), then drop en-curso; a failure
+  # only warns, the merge already happened
+  # (both only while en-curso is still there: a rerun after a finished cleanup posts nothing twice)
+  if [ "$(gh issue view "$n" --repo "$slug" --json labels --jq '[.labels[].name] | index("en-curso") != null' 2>/dev/null)" != false ]; then
+    printf '<!-- kit-soltado: fusionar -->\nPR #%s fusionada: este issue queda libre.\n' "$p" > "$tmpd/soltado"
+    gh issue comment "$n" --repo "$slug" --body-file "$tmpd/soltado" >/dev/null \
+      || echo "aviso: PR fusionada, pero no se pudo publicar kit-soltado en el issue #$n" >&2
+    # the issue is done: drop en-curso (a v2 listo stays: never remove a label the repo may not have)
+    gh issue edit "$n" --repo "$slug" --remove-label en-curso >/dev/null \
+      || echo "aviso: PR fusionada y issue cerrado, pero no se pudo quitar la etiqueta en-curso del issue #$n" >&2
+  fi
+  echo "PR fusionado: $url"
+  echo "FIN: ok"
+  exit 0
+}
+
 case "$sub" in
   abrir)
     titulo="$2"
@@ -130,7 +174,7 @@ Cierra #$n"
       || { echo "error: gh pr list falló" >&2; exit 2; }
     open_pr="$(printf '%s' "$open_pr" | jq -r 'if type == "array" then (.[0] // {} | "\(.number // "")\t\(.url // "")") else error("") end' 2>/dev/null)" \
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
-    git push -q -u origin HEAD || { echo "error: git push falló" >&2; exit 2; }
+    quiet_push -u origin HEAD || { echo "error: git push falló" >&2; exit 2; }
     if [ -n "${open_pr%%$'\t'*}" ]; then
       url="${open_pr#*$'\t'}"
     else
@@ -161,16 +205,30 @@ Cierra #$n"
         || { echo "error: no se pudo poner el enlace de la PR en CHANGELOG.md" >&2; exit 2; }
       git -c core.hooksPath=/dev/null commit -q --no-verify -m "changelog: enlace a la PR #$pn" -- CHANGELOG.md ${shots[@]+"${shots[@]}"} \
         || { echo "error: no se pudo confirmar el enlace de la PR en CHANGELOG.md" >&2; exit 2; }
-      git push -q origin HEAD || { echo "error: git push falló tras poner el enlace del changelog" >&2; exit 2; }
-      echo "changelog: enlace a la PR #$pn puesto en CHANGELOG.md"
+      quiet_push origin HEAD || { echo "error: git push falló tras poner el enlace del changelog" >&2; exit 2; }
+      cl_line="changelog: enlace a la PR #$pn puesto en CHANGELOG.md"
     fi
     echo "${url##*/}"
+    [ -z "${cl_line:-}" ] || echo "$cl_line"
     echo "FIN: $url"
     ;;
 
   esperar-ci)
     sha="$(head_sha)" || exit 2
     oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
+    # right after a push GitHub takes a few seconds to move the PR head: if origin already has this commit, wait for
+    # the PR to show it (KIT_PR_LAG s, default 60) instead of failing
+    if [ "$oid" != "$sha" ]; then
+      br="$(git symbolic-ref --short -q HEAD)"
+      if [ -n "$br" ] && [ "$(git ls-remote origin "refs/heads/$br" 2>/dev/null | cut -f1)" = "$sha" ]; then
+        lag="${KIT_PR_LAG:-60}"; [[ $lag =~ ^[0-9]+$ ]] || lag=60
+        lag_end=$((SECONDS + lag))
+        while [ "$oid" != "$sha" ] && [ $SECONDS -lt $lag_end ]; do
+          sleep 3
+          oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
+        done
+      fi
+    fi
     [ "$oid" = "$sha" ] || { echo "la PR apunta a $oid y aquí estás en $sha: empuja o espera" >&2; exit 2; }
     t="$(ci_timeout "$wt")"
     res="$(ci_wait "$sha" "$t")"; rc=$?
@@ -195,6 +253,15 @@ Cierra #$n"
   gate-local)
     out="$(read_file "$2")" || exit 1
     sha="$(head_sha)" || exit 2
+    # GitHub rejects comments over 65536 characters: a long output keeps its head and its tail (where a suite reports)
+    max=60000
+    if [ "${#out}" -gt "$max" ]; then
+      out="${out:0:20000}
+
+[... salida recortada: ${#out} caracteres en total; el fichero completo es $2 en la máquina del agente ...]
+
+${out: -38000}"
+    fi
     {
       echo "<!-- kit-gate-local: $sha -->"
       echo "Gate local sobre \`${sha:0:8}\` (tests, lint y build):"
@@ -251,6 +318,11 @@ Cierra #$n"
     state="$(printf '%s' "$pj" | jq -r .state)"
     oid="$(printf '%s' "$pj" | jq -r '.headRefOid // ""')"
     sha="$(head_sha)" || exit 2
+    # a rerun after a merge whose cleanup did not finish (process killed, gh failure): finish it, nothing else
+    if [ "$state" = MERGED ] && [ "$oid" = "$sha" ]; then
+      echo "la PR ya estaba fusionada: termino la limpieza del issue #$n"
+      after_merge "$(printf '%s' "$pj" | jq -r .url)"
+    fi
     [ "$state" = OPEN ] || reasons+=("la PR no está abierta ($state)")
     [ "$(printf '%s' "$pj" | jq -r .isDraft)" = false ] || reasons+=("la PR está en borrador")
     clean=true
@@ -263,7 +335,7 @@ Cierra #$n"
     if ! git merge-base --is-ancestor "origin/$base" HEAD; then
       if [ "$clean" = true ] && [ "$same" = true ]; then
         if git rebase -q "origin/$base" >/dev/null 2>&1; then
-          git push -q --force-with-lease origin HEAD \
+          quiet_push --force-with-lease origin HEAD \
             || { echo "error: git push --force-with-lease falló tras rebasar sobre $base" >&2; exit 2; }
           rebased=true
           reasons+=("rebasada sobre $base: vuelve a esperar el CI")
@@ -276,19 +348,29 @@ Cierra #$n"
       fi
     fi
 
-    # CI of the PR head, skipped after a rebase (that SHA is gone). An own gate-local stands in for the CI only
-    # when the SHA has no check run at all (no workflows, or workflows that never run on PRs).
+    # CI of the PR head, skipped after a rebase (that SHA is gone). The CI is the check runs of the repo's own workflow
+    # runs (lib/ci.sh): when they exist they decide; when none ran for the SHA (no own workflows, or own ones that never
+    # run on PRs) an own gate-local is required, whatever GitHub's built-in workflows or third-party apps report. A red
+    # third-party check (a deploy preview, say) always blocks; a pending one does not.
     if [ "$rebased" = false ]; then
       s="$(ci_state "$oid")" || ci_unreadable
-      case "$s" in
-        verde) ;;
-        rojo*) reasons+=("el CI terminó en '${s#rojo }'") ;;
-        ninguno)
-          printf '%s' "$pj" | jq -e --arg me "$me" --arg m "<!-- kit-gate-local: $oid -->" \
-            "$OWN_JQ"' | any(.[]; startswith($m))' >/dev/null \
-            || reasons+=("no hay CI y falta el gate local de ${oid:0:8}") ;;
-        *) reasons+=("el CI de ${oid:0:8} no ha concluido") ;;
-      esac
+      x="$(ci_state "$oid" externos)" || ci_unreadable
+      own="$(ci_has_workflows)" || ci_unreadable
+      has_gate() {
+        printf '%s' "$pj" | jq -e --arg me "$me" --arg m "<!-- kit-gate-local: $oid -->" \
+          "$OWN_JQ"' | any(.[]; startswith($m))' >/dev/null
+      }
+      if [ "$own" = true ]; then
+        case "$s" in
+          verde) ;;
+          rojo*) reasons+=("el CI terminó en '${s#rojo }'") ;;
+          ninguno) has_gate || reasons+=("no hay CI y falta el gate local de ${oid:0:8}") ;;
+          *) reasons+=("el CI de ${oid:0:8} no ha concluido") ;;
+        esac
+      else
+        has_gate || reasons+=("el repo no tiene CI propio y falta el gate local de ${oid:0:8}")
+      fi
+      case "$x" in rojo*) reasons+=("un check externo terminó en '${x#rojo }'") ;; esac
     fi
 
     # review: at least one kit-ronda, no kit-revision after the last one (by position) and, in that round, an own
@@ -407,37 +489,11 @@ $KIT_HOOK_OUT") ;;
     if ! ci_gh_retry pr merge "$p" --repo "$slug" --squash --match-head-commit "$oid" >/dev/null; then
       # a transient error may hide a merge that did happen: the state decides
       [ "$(pr_json state | jq -r .state 2>/dev/null)" = MERGED ] \
-        || { echo "error: gh pr merge falló (¿la PR cambió de head tras las comprobaciones?)" >&2; exit 2; }
+        || { echo "error: gh pr merge falló (el error de gh está arriba: la PR cambió de head tras las comprobaciones, el repo no permite squash...)" >&2; exit 2; }
     fi
     after="$(pr_json state,url)" || exit 2
     [ "$(printf '%s' "$after" | jq -r .state)" = MERGED ] \
       || { echo "error: la PR #$p no aparece como fusionada tras gh pr merge" >&2; exit 2; }
-    url="$(printf '%s' "$after" | jq -r .url)"
-    ist="$(gh issue view "$n" --repo "$slug" --json state --jq .state)" \
-      || { echo "error: PR fusionada pero no se pudo leer el issue #$n" >&2; exit 2; }
-    if [ "$ist" = OPEN ]; then
-      gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
-        || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
-    fi
-    # the axis locks of the issue (lib/locks.sh) go before en-curso, as in kit-issue.sh release; a failure only warns, naming the command that frees it
-    if axes="$(gh issue view "$n" --repo "$slug" --json labels --jq '.labels[].name | select(startswith("serializa:"))')"; then
-      while IFS= read -r e; do
-        [ -n "$e" ] && lock_valid "$e" || continue
-        lock_release "$e" "$n" \
-          || echo "AVISO: PR fusionada, pero el candado $(lock_ref "$e") sigue tomado: kit-issue.sh liberar-eje <raíz> ${e#serializa:}" >&2
-      done <<< "$axes"
-    else
-      echo "AVISO: PR fusionada, pero no se pudo leer las etiquetas de #$n: mira si quedó algún candado en refs/locks/" >&2
-    fi
-    # the claim is over: an own kit-soltado (so a reopened issue can be claimed again), then drop en-curso; a failure
-    # only warns, the merge already happened
-    printf '<!-- kit-soltado: fusionar -->\nPR #%s fusionada: este issue queda libre.\n' "$p" > "$tmpd/soltado"
-    gh issue comment "$n" --repo "$slug" --body-file "$tmpd/soltado" >/dev/null \
-      || echo "aviso: PR fusionada, pero no se pudo publicar kit-soltado en el issue #$n" >&2
-    # the issue is done: drop en-curso (a v2 listo stays: never remove a label the repo may not have); a failure only warns, the merge already happened
-    gh issue edit "$n" --repo "$slug" --remove-label en-curso >/dev/null \
-      || echo "aviso: PR fusionada y issue cerrado, pero no se pudo quitar la etiqueta en-curso del issue #$n" >&2
-    echo "PR fusionado: $url"
-    echo "FIN: ok"
+    after_merge "$(printf '%s' "$after" | jq -r .url)"
     ;;
 esac

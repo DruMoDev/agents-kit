@@ -19,6 +19,7 @@ set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
+source "$here/lib/default-branch.sh"
 source "$here/lib/ci.sh"
 
 usage() {
@@ -84,7 +85,7 @@ info="$(gh repo view "$slug" --json nameWithOwner,defaultBranchRef 2>/dev/null)"
   || { echo "sin remoto de GitHub: no se pudo leer $slug" >&2; exit 1; }
 base="$(printf '%s' "$info" | jq -r '.defaultBranchRef.name // empty')"
 [ -n "$base" ] || { echo "error: no se pudo determinar la rama por defecto" >&2; exit 2; }
-if ! git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base"; then
+if ! kit_fetch origin "+refs/heads/$base:refs/remotes/origin/$base"; then
   if [ "$sub" = enviar ] && [ -d "$path" ]; then echo "error: git fetch origin falló; tu trabajo sigue en el worktree $path" >&2
   else echo "error: git fetch origin falló" >&2; fi
   exit 2
@@ -163,7 +164,7 @@ ship_end() {
   fi
   git push -q origin --delete "$branch" >/dev/null 2>&1 || true # usually already gone (delete-branch-on-merge)
   # another session may be fetching the same clone ("cannot lock ref"): retry once, quietly; the merge already happened
-  git fetch -q --prune origin 2>/dev/null || { sleep 2; git fetch -q --prune origin 2>/dev/null; } \
+  kit_fetch --prune origin 2>/dev/null \
     || echo "aviso: git fetch --prune falló; el PR ya está fusionado (haz git fetch más tarde)" >&2
   echo "PR fusionado: $1"
   echo "FIN: ok"
@@ -199,7 +200,8 @@ if ! git -C "$w" diff --cached --quiet; then
 fi
 ahead="$(git -C "$w" rev-list --count "refs/remotes/origin/$base..HEAD")" || exit 2
 [ "$ahead" != 0 ] || { echo "nada que enviar: el worktree $w no tiene cambios; bórralo con descartar" >&2; exit 1; }
-git -C "$w" push -q -u origin "$branch" \
+# without GitHub's "remote: Create a pull request..." lines (stderr even with -q); shown only if the push fails
+push_err="$(git -C "$w" push -q -u origin "$branch" 2>&1)" || { printf '%s\n' "$push_err" >&2; false; } \
   || { echo "error: git push falló; $keep. Arregla el problema y relanza abrir y enviar" >&2; exit 2; }
 url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$title" --body "$body")" \
   || { echo "error: gh pr create falló; la rama $branch ya está en origin y $keep. Relanza abrir y enviar" >&2; exit 2; }

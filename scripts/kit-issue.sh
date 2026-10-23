@@ -184,6 +184,31 @@ release_locks() {
   done <<< "$axes"
   return $left
 }
+# take_axis <eje> <id> <N>: lock_take, plus two recoveries; prints "candado: <ref>[ (nota)]". Return 0 taken, 1 held
+# by another live issue (owner in $axis_owner), 2 network or git error.
+#   - a lock left for this same issue (a session that died): it is ours now.
+#   - a lock of an issue that is already closed (merged by hand with autoMerge false, closed as obsolete...): nobody
+#     will release it, so it is deleted (conditional on its SHA) and taken again.
+take_axis() {
+  local e="$1" id="$2" num="$3" rc m st ref sha
+  axis_owner=""
+  lock_take "$e" "$id" "$num"; rc=$?
+  [ $rc -eq 0 ] && { echo "candado: $(lock_ref "$e")"; return 0; }
+  [ $rc -eq 1 ] || return 2
+  axis_owner="$(lock_owner "$e")" || { axis_owner="desconocido"; return 1; }
+  case " $axis_owner " in *" issue:$num "*) echo "candado: $(lock_ref "$e") (ya era de #$num: $axis_owner)"; return 0 ;; esac
+  m="$(printf '%s' "$axis_owner" | sed -n 's/.*issue:\([0-9][0-9]*\).*/\1/p')"
+  [ -n "$m" ] || return 1
+  st="$(gh issue view "$m" --repo "$slug" --json state --jq .state 2>/dev/null)" || return 1
+  [ "$st" = CLOSED ] || return 1
+  ref="$(lock_ref "$e")"
+  sha="$(git ls-remote origin "$ref" 2>/dev/null | cut -f1)"
+  [ -n "$sha" ] && git push -q --force-with-lease="$ref:$sha" origin ":$ref" >/dev/null 2>&1 || return 1
+  lock_take "$e" "$id" "$num"; rc=$?
+  [ $rc -eq 0 ] && { echo "candado: $ref (era de #$m, ya cerrado)"; return 0; }
+  [ $rc -eq 1 ] && { axis_owner="$(lock_owner "$e" 2>/dev/null || echo desconocido)"; return 1; }
+  return 2
+}
 # release <N> <id> [motivo]: marker first, then the axis locks, then drop en-curso. If a lock stays taken, en-curso
 # stays too (an issue back in the pool with its lock taken would block its axis for good) and it returns 1.
 release() {
@@ -387,13 +412,10 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
     # the claim is won: now the axis locks (after, not before, so the loser of a claim race never holds one)
     while IFS= read -r e; do
       [ -n "$e" ] || continue
-      lock_take "$e" "$id" "$n"; rc=$?
-      [ $rc -eq 0 ] && { echo "candado: $(lock_ref "$e")"; continue; }
+      take_axis "$e" "$id" "$n"; rc=$?
+      [ $rc -eq 0 ] && continue
       if [ $rc -eq 1 ]; then
-        o="$(lock_owner "$e")" || o="desconocido"
-        # a lock left for this same issue by a session that died: the claim is ours now, so is the lock
-        case " $o " in *" issue:$n "*) echo "candado: $(lock_ref "$e") (ya era de #$n: $o)"; continue ;; esac
-        reason="el eje $e lo tiene otro ($o)"; code=1
+        reason="el eje $e lo tiene otro ($axis_owner)"; code=1
       else
         reason="no se pudo tomar el candado de $e (red o git)"; code=2
       fi
@@ -440,14 +462,10 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     fi
     gh issue edit "$n" --repo "$slug" --add-label "serializa:$eje" >/dev/null \
       || { echo "error: no se pudo poner serializa:$eje en #$n" >&2; exit 2; }
-    lock_take "$eje" "$id" "$n"; rc=$?
+    take_axis "$eje" "$id" "$n"; rc=$?
     case $rc in
-      0) echo "candado: $(lock_ref "$eje")" ;;
-      1) o="$(lock_owner "$eje")" || o="desconocido"
-         case " $o " in
-           *" issue:$n "*) echo "candado: $(lock_ref "$eje") (ya era de #$n)" ;;
-           *) echo "el eje serializa:$eje lo tiene otro ($o): #$n ya lleva la etiqueta; suéltalo con el motivo y siguiente lo traerá cuando el eje quede libre" >&2; exit 1 ;;
-         esac ;;
+      0) ;;
+      1) echo "el eje serializa:$eje lo tiene otro ($axis_owner): #$n ya lleva la etiqueta; suéltalo con el motivo y siguiente lo traerá cuando el eje quede libre" >&2; exit 1 ;;
       *) echo "error: no se pudo tomar el candado de serializa:$eje (red o git); #$n ya lleva la etiqueta" >&2; exit 2 ;;
     esac
     echo "FIN: eje serializa:$eje tomado para #$n"

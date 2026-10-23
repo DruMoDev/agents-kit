@@ -1,20 +1,35 @@
 #!/usr/bin/env bash
 # Sourced helper: CI state of a commit on GitHub. Needs $slug (owner/repo). No side effects on source.
 
-# ci_has_workflows: print true/false; return 2 if gh fails or the answer is unreadable.
+# Only the repo's own active workflows (.github/workflows/) are its CI. GitHub's built-in ones (path dynamic/...:
+# Dependabot, CodeQL default setup, Copilot) are not, and the results of code scanning (app github-advanced-security,
+# checked on dependabot/dependabot-core and github/codeql-action) are analysis, not tests: neither counts as CI.
+_CI_OWN_WF='[.workflows[]? | select((.path // "") | startswith(".github/workflows/")) | select((.state // "active") == "active")] | length'
+
+# ci_has_workflows: print true/false (own active workflows, see above); return 2 if gh fails or it is unreadable.
 ci_has_workflows() {
   local c
-  c="$(gh api "repos/$slug/actions/workflows" --jq .total_count)" || return 2
+  c="$(ci_gh_retry api "repos/$slug/actions/workflows?per_page=100" --jq "$_CI_OWN_WF")" || return 2
   [[ $c =~ ^[0-9]+$ ]] || return 2
   if [ "$c" -gt 0 ]; then echo true; else echo false; fi
 }
-# ci_state <sha>: one read of the check runs (latest attempt per app and check name, by id);
-# prints ninguno (no check run) | esperando | verde | rojo <conclusion>; return 2 if unreadable.
+# ci_state <sha> [externos]: one read of the workflow runs and check runs of <sha>. By default only the check runs of
+# the repo's own workflow runs (path .github/workflows/, matched by check suite) count: the CI. With "externos", the
+# others: not GitHub's built-in workflows (dynamic/...) nor code scanning results, but third-party apps (deploy
+# previews...). Latest attempt per app and check name, by id. Prints ninguno | esperando | verde | rojo <conclusion>;
+# return 2 if unreadable.
 ci_state() {
-  local r
-  r="$(gh api "repos/$slug/commits/$1/check-runs?filter=all&per_page=100")" || return 2
-  printf '%s' "$r" | jq -r '
-    if (.check_runs | type) != "array" then error("sin check_runs") else .check_runs end
+  local runs r
+  runs="$(ci_gh_retry api "repos/$slug/actions/runs?head_sha=$1&per_page=100")" || return 2
+  r="$(ci_gh_retry api "repos/$slug/commits/$1/check-runs?filter=all&per_page=100")" || return 2
+  printf '%s' "$r" | jq -r --argjson runs "$runs" --arg mode "${2:-propio}" '
+    ([$runs.workflow_runs[]? | select((.path // "") | startswith(".github/workflows/")) | .check_suite_id]) as $own
+    | ([$runs.workflow_runs[]? | select((.path // "") | startswith(".github/workflows/") | not) | .check_suite_id]) as $builtin
+    | if (.check_runs | type) != "array" then error("sin check_runs") else .check_runs end
+    | map(select((.app.slug // "") != "github-advanced-security"))
+    | map((.check_suite.id // null) as $cs
+        | select(if $mode == "externos" then ($own | index($cs) | not) and ($builtin | index($cs) | not)
+                 else ($own | index($cs)) != null end))
     | group_by([.app.id, .name]) | map(max_by(.id))
     | if length == 0 then "ninguno"
       elif any(.[]; .status != "completed") then "esperando"
@@ -56,8 +71,15 @@ ci_wait() {
     || { echo "error: KIT_CI_TIMEOUT, KIT_CI_POLL y KIT_CI_GRACE deben ser segundos enteros" >&2; return 2; }
   wf="$(ci_has_workflows)" || { echo "error: no se pudo leer el estado del CI" >&2; return 2; }
   if [ "$wf" = false ]; then echo sin-ci; return 0; fi
+  local fails=0
   while :; do
-    s="$(ci_state "$1")" || { echo "error: no se pudo leer el estado del CI" >&2; return 2; }
+    # a wait of hours must survive a bad minute of GitHub: 5 failed reads in a row end it, not one
+    if ! s="$(ci_state "$1")"; then
+      fails=$((fails + 1))
+      [ "$fails" -lt 5 ] || { echo "error: no se pudo leer el estado del CI (5 lecturas seguidas fallidas)" >&2; return 2; }
+      sleep "$poll"; continue
+    fi
+    fails=0
     case "$s" in
       verde) echo verde; return 0 ;;
       rojo*) echo "el CI terminó en '${s#rojo }'" >&2; return 1 ;;

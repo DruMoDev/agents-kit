@@ -6,7 +6,8 @@ plugin="$REPO_ROOT/.opencode/plugins/agents-kit.js"
 [ -f "$plugin" ] || fail ".opencode/plugins/agents-kit.js missing"
 NODE="$(command -v node)"
 run() { "$NODE" --no-warnings "$TESTS_DIR/opencode_harness.mjs" "$@"; }
-allowed='["scripts","skills","rules","templates"] | map($r + "/" + . + "/**")'
+export KIT_WORKTREES="$(mktemp -d)/wt" KIT_TMP="$(mktemp -d)/tmp"
+allowed='(["scripts","skills","rules","templates"] | map($r + "/" + . + "/**")) + [$wt + "/" + $name + "/**", $tmp + "/**"]'
 
 repo="$(mk_repo)"
 
@@ -34,9 +35,9 @@ printf '%s' "$out" | jq -e '(.texts | length) == 2 and .texts[1] == "hola"
   and (.texts[0] | contains("agents-kit está activo"))
   and (.texts[0] | contains("## Escribe menos código"))' >/dev/null \
   || fail "marked repo must inject rules once: $out"
-printf '%s' "$out" | jq -e --arg r "$REPO_ROOT" "(.permission.external_directory | keys | sort) == ($allowed | sort)
+printf '%s' "$out" | jq -e --arg r "$REPO_ROOT" --arg wt "$KIT_WORKTREES" --arg tmp "$KIT_TMP" --arg name "$(basename "$repo")" "(.permission.external_directory | keys | sort) == ($allowed | sort)
   and ([.permission.external_directory[]] | all(. == \"allow\"))" >/dev/null \
-  || fail "marked repo must allow only the plugin's scripts/skills/rules/templates: $out"
+  || fail "marked repo must allow only the plugin's scripts/skills/rules/templates, its issue worktrees and the kit tmp: $out"
 
 # a user rule wins; a global string rule is left alone
 out="$(run "$plugin" "$repo" "{\"permission\":{\"external_directory\":{\"$REPO_ROOT/scripts/**\":\"deny\"}}}")" || fail "harness failed: $out"

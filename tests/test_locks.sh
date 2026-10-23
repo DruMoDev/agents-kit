@@ -148,4 +148,12 @@ bash "$issue" tomar-eje "$r" 31 kit-otro d1 >/dev/null 2>&1; [ $? -eq 1 ] || fai
 CLAUDE_CODE_REMOTE=true bash "$issue" tomar-eje "$r" 31 kit-iiii d1 >/dev/null 2>&1; [ $? -eq 1 ] || fail "tomar-eje en la nube debe dar 1"
 bash "$issue" tomar-eje "$r" 31 kit-iiii "d1 x" >/dev/null 2>&1; [ $? -eq 1 ] || fail "tomar-eje con eje inválido debe dar 1"
 [ -z "$(git -C "$o" for-each-ref refs/locks/d1)" ] || fail "tomar-eje rechazado creó un candado"
+# a lock left by an issue that is already closed (merged by hand with autoMerge false): reclamar recovers it
+flow_add_issue 40 "cerrado con candado" serializa:e1
+st_close() { local t; t="$(mktemp)"; jq --argjson n "$1" '(.issues[] | select(.number == $n)).state = "CLOSED"' "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json"; }
+take_as e1 agente-viejo 40; st_close 40
+flow_add_issue 41 "mismo eje, después" serializa:e1
+out="$(bash "$issue" reclamar "$r" 41 kit-jjjj 2>&1)" || fail "candado de issue cerrado: $out"
+case "$out" in *"candado: refs/locks/e1 (era de #40, ya cerrado)"*"FIN: reclamado #41") ;; *) fail "candado de issue cerrado: $out";; esac
+[ "$(lock_msg e1)" = "agente:kit-jjjj issue:41 eje:e1" ] || fail "candado de issue cerrado: $(lock_msg e1)"
 echo "OK test_locks"

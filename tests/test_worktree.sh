@@ -169,6 +169,25 @@ bash "$wt" abrir "$r" 42 tres >/dev/null 2>"$tmpe"; rc=$?
 git -C "$r" worktree remove --force "$KIT_WORKTREES/$name/issue-42-tres" 2>/dev/null; git -C "$r" branch -q -D issue-42-tres 2>/dev/null
 echo '{}' > "$r/.agents-kit.json"
 
+# abrir an issue that went on in another clone (or the cloud): the local branch catches up by fast-forward
+bash "$wt" abrir "$r" 60 viejo >/dev/null 2>&1 || fail "abrir 60"
+p60="$KIT_WORKTREES/$name/issue-60-viejo"
+(cd "$p60" && echo a > a60.txt && git add a60.txt && git commit -q -m a60 && git push -q origin HEAD) >/dev/null 2>&1 || fail "push 60"
+o60="$(mktemp -d)"
+(git clone -q "$o" "$o60" && cd "$o60" && git config user.email t@e && git config user.name t && git checkout -q issue-60-viejo \
+  && echo b > b60.txt && git add b60.txt && git commit -q -m b60 && git push -q origin issue-60-viejo) >/dev/null 2>&1 || fail "avance remoto 60"
+out="$(bash "$wt" abrir "$r" 60 viejo 2>&1)" || fail "abrir 60 retomado: $out"
+case "$out" in *"ya existía"*"rama al día con origin/issue-60-viejo"*) ;; *) fail "abrir 60 retomado: $out";; esac
+[ "$(git -C "$p60" rev-parse HEAD)" = "$(git -C "$o60" rev-parse HEAD)" ] || fail "la rama local no avanzó a origin"
+# diverged: never merged here, exit 1 saying both tips
+(cd "$p60" && echo c > c60.txt && git add c60.txt && git commit -q -m c60) || fail "commit local 60"
+(cd "$o60" && echo d > d60.txt && git add d60.txt && git commit -q -m d60 && git push -q origin issue-60-viejo) >/dev/null 2>&1 || fail "avance remoto 60 bis"
+err="$(bash "$wt" abrir "$r" 60 viejo 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "rama divergida: exit $rc ($err)"
+case "$err" in *"han divergido"*) ;; *) fail "rama divergida: $err";; esac
+git -C "$r" worktree remove --force "$p60" && git -C "$r" branch -q -D issue-60-viejo || fail "quitar 60"
+git -C "$r" push -q origin --delete issue-60-viejo 2>/dev/null
+
 # barrer: only clean worktrees of the kit dir that are finished (merged PR at the tip, or closed issue without commits)
 bash "$wt" barrer "$r" extra >/dev/null 2>&1; [ $? -eq 1 ] || fail "barrer con argumentos debe dar 1"
 for spec in "50 abierto" "51 cerrado" "52 fusionado" "53 sucio" "54 conpr" "55 ajeno"; do

@@ -78,6 +78,10 @@ out="$(CLAUDECODE=1 bash "$all" "$r" 7 1 3 2>&1)" || fail "ronda 1: $out"
 d1="$(sed -n 's/^salidas: //p' <<<"$out")"
 [ "$(cut -f8 "$d1/puestos.tsv" | tr '\n' ' ')" = "completa completa completa " ] || fail "ronda 1: $(cut -f8 "$d1/puestos.tsv")"
 grep -q '^modo: ronda' <<<"$out" && fail "ronda 1 no debe anunciar modo"
+# --completa (first round of a resumed issue): every seat complete even in round 3
+out="$(CLAUDECODE=1 bash "$all" "$r" 7 3 3 --completa 2>&1)" || fail "--completa: $out"
+dk="$(sed -n 's/^salidas: //p' <<<"$out")"
+[ "$(cut -f8 "$dk/puestos.tsv" | tr '\n' ' ')" = "completa completa completa " ] || fail "--completa: $(cut -f8 "$dk/puestos.tsv")"
 # revision.rondas completas: every seat complete in every round
 g="$(cat "$KIT_CONFIG")"
 set_global "$(jq -c '.revision.rondas = "completas"' <<<"$g")"

@@ -36,4 +36,8 @@ w="$(cat "$d/c.pid")"; kids="$(pgrep -P "$w")"; kill -KILL "$w"; kill $kids 2>/d
 sleep 1
 bash "$bg" esperar "$d/c" 5 >/dev/null 2>&1; [ $? -eq 2 ] || fail "muerto sin SALIDA debe dar 2"
 bash "$bg" esperar "$d/no-existe" 1 >/dev/null 2>&1; [ $? -eq 2 ] || fail "sin fichero debe dar 2"
+# an empty file from mktemp is accepted; one with content is not
+mt="$(mktemp)"
+bash "$bg" lanzar "$mt" true >/dev/null || fail "lanzar sobre un fichero vacío de mktemp"
+bash "$bg" esperar "$mt" 20 >/dev/null || fail "esperar mktemp"
 echo "OK test_bg"
