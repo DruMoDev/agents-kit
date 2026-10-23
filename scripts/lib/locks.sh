@@ -41,7 +41,7 @@ lock_owner() {
   git log -1 --format=%B "$sha" 2>/dev/null | sed -n 1p | grep . || return 2
 }
 
-# lock_release <eje> <N>: release the axis if issue <N> holds it. Return 0 released, free, or held for another issue
+# lock_release <eje> <N>: release the axis if issue <N> holds it, printing "candado soltado: <ref>". Return 0 released, free, or held for another issue
 # (not ours: nothing to release, and not a failure); 2 if it could not be read or deleted.
 # The delete is conditional on the SHA read (--force-with-lease): if the lock changed hands meanwhile, it is not touched.
 lock_release() {
@@ -54,4 +54,5 @@ lock_release() {
   case $? in 0) ;; 1) return 0 ;; *) return 2 ;; esac
   case " $msg " in *" issue:$2 "*) ;; *) return 0 ;; esac
   git push -q --force-with-lease="$ref:$sha" origin ":$ref" >/dev/null 2>&1 || return 2
+  echo "candado soltado: $ref"
 }
