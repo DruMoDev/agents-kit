@@ -17,6 +17,7 @@ source "$here/lib/config.sh"
 source "$here/lib/default-branch.sh"
 source "$here/lib/repo-hook.sh"
 source "$here/lib/ci.sh"
+source "$here/lib/locks.sh"
 
 usage() {
   echo "uso: $0 abrir <wt> <N> <titulo> <fichero-cuerpo> | esperar-ci <wt> <pr> |" \
@@ -384,6 +385,15 @@ $KIT_HOOK_OUT") ;;
     # the issue is done: drop en-curso (a v2 listo stays: never remove a label the repo may not have); a failure only warns, the merge already happened
     gh issue edit "$n" --repo "$slug" --remove-label en-curso >/dev/null \
       || echo "aviso: PR fusionada y issue cerrado, pero no se pudo quitar la etiqueta en-curso del issue #$n" >&2
+    # the axis locks of the issue (lib/locks.sh) go too; a failure only warns, naming the command that frees it
+    if axes="$(gh issue view "$n" --repo "$slug" --json labels --jq '.labels[].name | select(startswith("serializa:"))')"; then
+      for e in $axes; do
+        lock_release "$e" "$n" \
+          || echo "AVISO: PR fusionada, pero el candado $(lock_ref "$e") sigue tomado: kit-issue.sh liberar-eje <raíz> ${e#serializa:}" >&2
+      done
+    else
+      echo "AVISO: PR fusionada, pero no se pudo leer las etiquetas de #$n: mira si quedó algún candado en refs/locks/" >&2
+    fi
     echo "PR fusionado: $url"
     echo "FIN: ok"
     ;;

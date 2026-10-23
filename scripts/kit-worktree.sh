@@ -4,6 +4,7 @@
 #   limpiar <root> <N>
 #   barrer  <root>
 # Worktree per issue: ${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/<repo>/issue-<N>-<slug>.
+# limpiar: after the merge, removes the issue's worktree and branch and fast-forwards <root> (update_main).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -144,6 +145,31 @@ if [ "$sub" = barrer ]; then
   exit 0
 fi
 
+# update_main: bring what was just merged to the main clone (<root>), where Dru works, so the session can keep going
+# with the fix without a manual pull. Only --ff-only and only on the default branch: git itself refuses when the
+# advance would overwrite a modified file, so uncommitted work is never touched. Not a failure of limpiar (that is
+# done): prints "principal al día con origin/<base> (<sha>)" or an "AVISO: ..." on stderr saying why not.
+update_main() {
+  local base cur err
+  base="$(kit_default_branch)"
+  [ -n "$base" ] || { echo "AVISO: no pude saber la rama por defecto de origin: el principal NO está al día." >&2; return 0; }
+  cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [ "$cur" != "$base" ]; then
+    echo "AVISO: el repo principal está en '$cur', no en '$base': no se actualiza." >&2
+    return 0
+  fi
+  if ! git fetch -q origin "$base" 2>/dev/null; then
+    echo "AVISO: no se pudo hacer fetch de origin/$base: el principal NO está al día." >&2
+    return 0
+  fi
+  if err="$(git merge --ff-only -q "origin/$base" 2>&1)"; then
+    echo "principal al día con origin/$base ($(git rev-parse --short HEAD))"
+  else
+    echo "AVISO: el principal NO se pudo avanzar a origin/$base, sigue con el código viejo:" >&2
+    printf '%s\n' "$err" | sed 's/^/  /' >&2
+  fi
+}
+
 # limpiar
 branch="$(git worktree list --porcelain | sed -n "s|^branch refs/heads/\\(issue-$n-.*\\)\$|\\1|p")"
 [ -n "$branch" ] || { echo "no hay worktree para el issue $n" >&2; exit 1; }
@@ -165,4 +191,5 @@ status="$(git -C "$path" status --porcelain)" || exit 2
 git worktree remove "$path" || exit 2
 git branch -D "$branch" >/dev/null || exit 2
 git fetch -q --prune origin || echo "aviso: git fetch --prune falló; ya se borraron el worktree y la rama" >&2
+update_main
 echo "FIN: limpio"
