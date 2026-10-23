@@ -3,22 +3,26 @@
 #   abrir     <root> <rama> con-marcador|sin-marcador
 #   enviar    <root> <rama> <titulo> <cuerpo>
 #   descartar <root> <rama>
+#   fusionar  <root> <rama>
 # Changes of kit-on/kit-off go through a temporary worktree of origin/<default branch>, never through Dru's tree:
 # ${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/<repo>/<rama>, on a new local branch <rama>.
 #   abrir: checks that origin/<default> has (con-marcador) or lacks (sin-marcador) .agents-kit.json, that no open PR
 #     comes from <rama> and that no stale <rama> exists; creates the worktree, or reuses it ("ya existía").
 #   enviar: commits everything in the worktree (project hooks skipped: the worktree has no setup), pushes, opens the PR,
-#     waits for its CI (lib/ci.sh: green or no CI; red or timed out leaves the PR open) and squash-merges it. Once the PR exists the worktree and the local branch are removed (the work lives in the
+#     waits for its CI (lib/ci.sh: green or no CI; red or still running at the timeout leaves the PR open) and
+#     squash-merges it. Once the PR exists the worktree and the local branch are removed (the work lives in the
 #     PR); before that, any failure keeps the worktree and names its path.
 #   descartar: removes the worktree (with its changes) and the local branch.
+#   fusionar: for the open PR from <rama> (after enviar left it open), waits for its CI and squash-merges it, like enviar.
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error (also "FIN: PR abierto" when the PR stays open).
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
+source "$here/lib/config.sh"
 source "$here/lib/ci.sh"
 
 usage() {
-  echo "uso: $0 abrir <root> <rama> con-marcador|sin-marcador | enviar <root> <rama> <titulo> <cuerpo> | descartar <root> <rama>" >&2
+  echo "uso: $0 abrir <root> <rama> con-marcador|sin-marcador | enviar <root> <rama> <titulo> <cuerpo> | descartar <root> <rama> | fusionar <root> <rama>" >&2
   exit 1
 }
 [ $# -ge 3 ] && [ -n "$2" ] && [ -n "$3" ] || usage
@@ -27,7 +31,7 @@ case "$sub" in
   abrir) [ $# -eq 4 ] || usage
     case "$4" in con-marcador|sin-marcador) ;; *) echo "estado inválido: $4 (con-marcador o sin-marcador)" >&2; exit 1 ;; esac ;;
   enviar) [ $# -eq 5 ] && [ -n "$4" ] || usage ;;
-  descartar) [ $# -eq 3 ] || usage ;;
+  descartar|fusionar) [ $# -eq 3 ] || usage ;;
   *) usage ;;
 esac
 git check-ref-format --branch "$3" >/dev/null 2>&1 || { echo "nombre de rama inválido: $3" >&2; exit 1; }
@@ -126,6 +130,60 @@ if [ "$sub" = abrir ]; then
   exit 0
 fi
 
+# ship_merge <url> <sha>: wait for the CI of <sha> and squash-merge <url> (like kit-pr.sh fusionar: an admin merge would
+# skip required checks). Sets state (the PR state afterwards) and prints the reason on stderr when it does not merge.
+ship_merge() {
+  local ci="" ci_rc=0 merge_rc=0 t
+  [ -n "$2" ] || ci_rc=2
+  if [ "$ci_rc" -eq 0 ]; then
+    # kit-off's worktree has no marker any more: then the config comes from Dru's clone
+    t="$(ci_timeout ${w:+"$w"} "$root")"
+    ci="$(ci_wait "$2" "$t")" || ci_rc=$?
+  fi
+  if [ "$ci_rc" -eq 0 ]; then
+    echo "CI: $ci"
+    # no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted in ship_end
+    # --match-head-commit: never merge a head other than the one whose CI was just checked
+    gh pr merge "$1" --repo "$slug" --squash --match-head-commit "$2" >/dev/null || merge_rc=$?
+  elif [ "$ci_rc" -eq 3 ]; then
+    echo "no se fusiona todavía: el CI sigue en marcha. Para esperarlo y fusionar solo el PR, relanza: $0 fusionar $root $branch" >&2
+  else
+    echo "no se fusiona: el CI del PR no salió verde" >&2
+  fi
+  state="$(gh pr view "$1" --repo "$slug" --json state -q .state 2>/dev/null)"
+  [ "$state" = MERGED ] || [ "$merge_rc" -eq 0 ] || echo "error: gh pr merge falló" >&2
+}
+# ship_end <url>: final lines after ship_merge; exit 2 with "FIN: PR abierto" if the PR did not merge.
+ship_end() {
+  if [ "$state" != MERGED ]; then
+    echo "el PR sigue abierto (estado: ${state:-desconocido}): $1" >&2
+    echo "FIN: PR abierto"
+    exit 2
+  fi
+  git push -q origin --delete "$branch" >/dev/null 2>&1 || true # usually already gone (delete-branch-on-merge)
+  git fetch -q --prune origin || true
+  echo "PR fusionado: $1"
+  echo "FIN: ok"
+  exit 0
+}
+
+if [ "$sub" = fusionar ]; then
+  # only PRs from this repo's own branch: --head also matches a fork's branch with the same name
+  prs="$(gh pr list --repo "$slug" --head "$branch" --state open --json url,headRefOid,isCrossRepository)" \
+    || { echo "error: gh pr list falló" >&2; exit 2; }
+  prs="$(printf '%s' "$prs" | jq -c 'map(select(.isCrossRepository == false))')" \
+    || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+  case "$(printf '%s' "$prs" | jq length)" in
+    0) echo "no hay un PR abierto desde '$branch'" >&2; exit 1 ;;
+    1) url="$(printf '%s' "$prs" | jq -r '.[0].url')" ;;
+    *) echo "hay varios PR abiertos desde '$branch'; fusiona el bueno a mano" >&2; exit 1 ;;
+  esac
+  w="$(kit_wt)" || exit 1
+  [ -z "$w" ] || { echo "el worktree $w sigue ahí: envía con enviar o bórralo con descartar" >&2; exit 1; }
+  ship_merge "$url" "$(printf '%s' "$prs" | jq -r '.[0].headRefOid // empty')"
+  ship_end "$url"
+fi
+
 # enviar
 title="$4"; body="$5"
 w="$(kit_wt)" || exit 1
@@ -142,18 +200,8 @@ git -C "$w" push -q -u origin "$branch" \
   || { echo "error: git push falló; $keep. Arregla el problema y relanza abrir y enviar" >&2; exit 2; }
 url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$title" --body "$body")" \
   || { echo "error: gh pr create falló; la rama $branch ya está en origin y $keep. Relanza abrir y enviar" >&2; exit 2; }
-# the PR merges only after its CI, like kit-pr.sh fusionar (an admin merge would skip required checks)
-merge_rc=0 ci_rc=0
-sha="$(git -C "$w" rev-parse HEAD)" || ci_rc=2
-[ "$ci_rc" -ne 0 ] || ci="$(ci_wait "$sha")" || ci_rc=$?
-if [ "$ci_rc" -eq 0 ]; then
-  echo "CI: $ci"
-  # no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted below
-  gh pr merge "$url" --repo "$slug" --squash >/dev/null || merge_rc=$?
-else
-  echo "no se fusiona: el CI del PR no salió verde" >&2
-fi
-state="$(gh pr view "$url" --repo "$slug" --json state -q .state 2>/dev/null)"
+sha="$(git -C "$w" rev-parse HEAD)" || sha=""
+ship_merge "$url" "$sha"
 
 # the PR holds the work from here on: the worktree and the local branch go away, merged or not
 if git worktree remove "$w" 2>/dev/null || git worktree remove --force "$w"; then
@@ -161,13 +209,4 @@ if git worktree remove "$w" 2>/dev/null || git worktree remove --force "$w"; the
 else
   echo "aviso: no se pudo borrar el worktree $w; bórralo con descartar" >&2
 fi
-if [ "$state" != MERGED ]; then
-  [ "$merge_rc" -ne 0 ] && echo "error: gh pr merge falló" >&2
-  echo "el PR sigue abierto (estado: ${state:-desconocido}): $url" >&2
-  echo "FIN: PR abierto"
-  exit 2
-fi
-git push -q origin --delete "$branch" >/dev/null 2>&1 || true # usually already gone (delete-branch-on-merge)
-git fetch -q --prune origin || true
-echo "PR fusionado: $url"
-echo "FIN: ok"
+ship_end "$url"

@@ -23,5 +23,5 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
 4. **PR.** `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-ship-pr.sh" enviar <raíz> kit-off "chore: desactivar agents-kit" "Borra .agents-kit.json. AGENTS.md, CHANGELOG.md y las skills del proyecto se quedan."`
    - Exit 1 (`nada que enviar`): explícalo y borra el worktree con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-ship-pr.sh" descartar <raíz> kit-off`.
    - Exit 2 sin `FIN:`: el PR no se creó y el cambio sigue en el worktree que nombra el error; dile a Dru esa ruta, qué falló y que relanzar `kit-off` lo retoma.
-   - Exit 2 con `FIN: PR abierto`: el PR se creó pero no se fusionó; dale la URL. El worktree ya se borró.
+   - Exit 2 con `FIN: PR abierto`: el PR se creó pero no se fusionó. Si stderr dice que el CI sigue en marcha, relanza el comando `kit-ship-pr.sh fusionar <raíz> kit-off` que da (espera al CI y fusiona); si no, dale la URL y el motivo. El worktree ya se borró.
 5. **Resumen.** Dile a Dru el PR ya fusionado (línea `PR fusionado:` con la URL; el cambio ya está en la rama por defecto). Su clon principal no se tocó: el marcador desaparece cuando haga `git pull` en `<base>`, y desde entonces las sesiones en este repo ya no cargan las reglas del kit. `AGENTS.md`, `CHANGELOG.md` y las skills de `.agents/skills` se quedan porque son del proyecto.

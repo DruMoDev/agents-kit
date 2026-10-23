@@ -23,11 +23,35 @@ ci_state() {
       | if $bad == null then "verde" else "rojo \($bad)" end
       end' 2>/dev/null || return 2
 }
-# ci_wait <sha>: wait for the CI of <sha>. Prints verde, or sin-ci (no workflows, or workflows that start no check run
-# for the SHA within KIT_CI_GRACE). Return 1 (reason on stderr) if it ends red or exceeds KIT_CI_TIMEOUT, 2 if unreadable.
-# KIT_CI_TIMEOUT (s, default 1800), KIT_CI_POLL (s, default 15), KIT_CI_GRACE (s, default 300).
+_CI_SLOWEST='[.workflow_runs[] | select(.run_started_at and .updated_at) | (.updated_at | fromdate) - (.run_started_at | fromdate)] | max // 0'
+# ci_timeout [dir...]: seconds ci_wait waits by default. KIT_CI_TIMEOUT if set; else ciTimeoutMin (minutes) from the
+# kit config of the first <dir> with .agents-kit.json (needs lib/config.sh); else from the repo history: the larger of
+# 1800 and 1.5 x the slowest of the last 20 successful runs, at most 10800. gh failure or no history = 1800.
+ci_timeout() {
+  local d m slow t
+  if [ -n "${KIT_CI_TIMEOUT:-}" ]; then printf '%s\n' "$KIT_CI_TIMEOUT"; return 0; fi
+  if declare -F kit_config >/dev/null; then
+    for d in "$@"; do
+      [ -f "$d/.agents-kit.json" ] || continue
+      m="$(kit_config "$d" '.ciTimeoutMin // empty' 2>/dev/null)" || m=""
+      if [[ $m =~ ^[1-9][0-9]*$ ]]; then echo $((m * 60)); return 0; fi
+      [ -z "$m" ] || echo "aviso: ciTimeoutMin debe ser un número entero de minutos; se ignora '$m'" >&2
+      break
+    done
+  fi
+  slow="$(gh api "repos/$slug/actions/runs?status=success&per_page=20" --jq "$_CI_SLOWEST" 2>/dev/null)" || slow=0
+  [[ $slow =~ ^[0-9]+$ ]] || slow=0
+  t=$((slow * 3 / 2))
+  [ "$t" -ge 1800 ] || t=1800
+  [ "$t" -le 10800 ] || t=10800
+  echo "$t"
+}
+# ci_wait <sha> [timeout]: wait for the CI of <sha>. Prints verde, or sin-ci (no workflows, or workflows that start no
+# check run for the SHA within KIT_CI_GRACE). Return 1 (reason on stderr) if it ends red, 3 if checks are still running
+# after <timeout> seconds (default KIT_CI_TIMEOUT, else 1800), 2 if unreadable.
+# KIT_CI_POLL (s, default 15), KIT_CI_GRACE (s, default 300).
 ci_wait() {
-  local timeout="${KIT_CI_TIMEOUT:-1800}" poll="${KIT_CI_POLL:-15}" grace="${KIT_CI_GRACE:-300}" wf s start=$SECONDS
+  local timeout="${2:-${KIT_CI_TIMEOUT:-1800}}" poll="${KIT_CI_POLL:-15}" grace="${KIT_CI_GRACE:-300}" wf s start=$SECONDS
   [[ $timeout =~ ^[0-9]+$ ]] && [[ $poll =~ ^[0-9]+$ ]] && [[ $grace =~ ^[0-9]+$ ]] \
     || { echo "error: KIT_CI_TIMEOUT, KIT_CI_POLL y KIT_CI_GRACE deben ser segundos enteros" >&2; return 2; }
   wf="$(ci_has_workflows)" || { echo "error: no se pudo leer el estado del CI" >&2; return 2; }
@@ -40,8 +64,8 @@ ci_wait() {
       ninguno) if [ $((SECONDS - start)) -ge "$grace" ]; then echo sin-ci; return 0; fi ;;
     esac
     if [ $((SECONDS - start)) -ge "$timeout" ]; then
-      echo "el CI de ${1:0:8} no concluyó en ${timeout}s" >&2
-      return 1
+      echo "el CI de ${1:0:8} sigue en marcha tras $((timeout / 60)) min (${timeout}s)" >&2
+      return 3
     fi
     sleep "$poll"
   done
