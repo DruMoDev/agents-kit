@@ -96,6 +96,18 @@ git -C "$wt" config --unset core.hooksPath
 # esperar-ci: no workflows
 out="$(bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "sin-ci: $out"
 [ "$(last_line "$out")" = "FIN: sin-ci" ] || fail "sin-ci FIN: $out"
+# draft or in conflict with its base: GitHub may never start the CI; that is ready or rebase, never the local gate
+st '.workflows = 1 | .prs[0].isDraft = true'
+seq_checks '[]'
+err="$(KIT_CI_GRACE=0 bash "$pr" esperar-ci "$wt" $p 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "esperar-ci en borrador: exit $rc ($err)"
+case "$err" in *"la PR está en borrador"*"gh pr ready"*) ;; *) fail "esperar-ci en borrador: $err";; esac
+st '.prs[0].isDraft = false | .prs[0].mergeable = "CONFLICTING"'
+err="$(KIT_CI_GRACE=0 bash "$pr" esperar-ci "$wt" $p 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "esperar-ci en conflicto: exit $rc ($err)"
+case "$err" in *"conflictos con su base"*"rebasa"*) ;; *) fail "esperar-ci en conflicto: $err";; esac
+st '.prs[0].mergeable = "MERGEABLE" | .workflows = 0'
+unset GH_CHECKS_SEQ
 # in_progress then success
 st '.workflows = 1'
 seq_checks "$IP" "$OK"

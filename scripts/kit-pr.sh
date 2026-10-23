@@ -176,6 +176,19 @@ Cierra #$n"
     res="$(ci_wait "$sha" "$t")"; rc=$?
     [ $rc -ne 3 ] || exit 1 # still running: a rejection, kit-run waits again
     [ $rc -eq 0 ] || exit $rc
+    # no check run can also mean GitHub never started the CI: a draft or a PR in conflict with its base. Then the fix
+    # is ready or rebase, never the local gate (the full suite on the agent's machine). A repo without workflows has no CI.
+    if [ "$res" = sin-ci ] && [ "$(ci_has_workflows)" = true ]; then
+      st="$(pr_json isDraft,mergeable)" || exit 2
+      if [ "$(printf '%s' "$st" | jq -r '.isDraft // false')" = true ]; then
+        echo "la PR está en borrador y su CI puede no arrancar: quítale el borrador (gh pr ready $p --repo $slug) y vuelve a esperar" >&2
+        exit 1
+      fi
+      if [ "$(printf '%s' "$st" | jq -r '.mergeable // ""')" = CONFLICTING ]; then
+        echo "la PR tiene conflictos con su base y GitHub no lanza su CI: rebasa, empuja y vuelve a esperar" >&2
+        exit 1
+      fi
+    fi
     echo "FIN: $res"
     ;;
 

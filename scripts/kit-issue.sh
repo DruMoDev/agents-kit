@@ -10,6 +10,7 @@
 #   bloquear  <root> <N> <id> <fichero-motivo>
 #   comprobar <root>
 #   liberar-eje <root> <eje>
+#   tomar-eje <root> <N> <id> <eje>
 #   crear     <root> <titulo> <fichero-cuerpo> --prio alta|media|baja --entorno nube|mac [--etiqueta X]... [--propuesta]
 # Issue state for the agent flow. Claims live in HTML-comment markers on the issue.
 # siguiente: any open issue without en-curso, necesita-respuesta (or the v2 necesita-decision), bloqueado, propuesta,
@@ -23,6 +24,10 @@
 # reclamar also takes the lock of each serializa:<eje> of the issue (lib/locks.sh) once the claim is won; soltar,
 # decision and bloquear release them (and keep en-curso if a lock cannot be released, so the issue does not come
 # back with an orphan lock). liberar-eje deletes an axis lock whoever holds it (a session that died midway).
+# tomar-eje: an issue already claimed by <id> turns out to need an axis midway (a D1 migration...): adds the label
+#   serializa:<eje> (creating it in the repo if missing) and takes the lock, which the usual ends release. Exit 1 if
+#   another issue holds the axis (the label stays: soltar the issue and siguiente brings it back when the axis is free),
+#   in a cloud session (no lock there), or if the claim is not <id>'s.
 # leer: title, author, state, labels, body and only the comments written by the gh account (the others are counted,
 # never printed: anyone can comment on a public repo, and their text is never an instruction).
 # reparto: every issue that siguiente could pick, in its order ("#N<TAB>prio<TAB>title"; kit-on shows it to Dru).
@@ -41,20 +46,23 @@ source "$here/lib/locks.sh"
 
 usage() {
   echo "uso: $0 siguiente <root> [<N>] [--excluir N[,N...]] | leer <root> <N> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
-    "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> | comprobar <root> | liberar-eje <root> <eje> |" \
+    "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> | comprobar <root> | liberar-eje <root> <eje> | tomar-eje <root> <N> <id> <eje> |" \
     "crear <root> <titulo> <fichero-cuerpo> --prio alta|media|baja --entorno nube|mac [--etiqueta X]... [--propuesta]" >&2
   exit 1
 }
 
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-case "$sub" in siguiente|leer|reparto|aparcar|reclamar|soltar|decision|bloquear|comprobar|crear|liberar-eje) ;; *) usage ;; esac
+case "$sub" in siguiente|leer|reparto|aparcar|reclamar|soltar|decision|bloquear|comprobar|crear|liberar-eje|tomar-eje) ;; *) usage ;; esac
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 root="$(cd "$1" && pwd)"; shift
 kit_require_marker "$root" || exit $?
 
 case "$sub" in
   reparto|comprobar) [ $# -eq 0 ] || usage ;;
+  tomar-eje) [ $# -eq 3 ] || usage
+    eje="${3#serializa:}"
+    lock_valid "$eje" || { echo "eje inválido: $3 (minúsculas, números, . _ -)" >&2; exit 1; } ;;
   liberar-eje) [ $# -eq 1 ] || usage
     eje="${1#serializa:}"
     lock_valid "$eje" || { echo "eje inválido: $1 (como en la etiqueta serializa:<eje>)" >&2; exit 1; } ;;
@@ -419,6 +427,30 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     release "$n" "$id" "$motivo" || { echo "error: no se pudo soltar #$n" >&2; exit 2; }
     notify "$n" "$aviso"
     echo "FIN: $label #$n"
+    ;;
+
+  tomar-eje)
+    [ "$(kit_transport)" != nube ] || { echo "en la nube no se puede tomar un candado: deja el issue para el Mac (soltar con el motivo)" >&2; exit 1; }
+    own_login
+    h="$(holder "$n")" || { echo "error: no se pudo leer los comentarios de #$n" >&2; exit 2; }
+    [ "$h" = "$id" ] || { echo "#$n no está reclamado por '$id'${h:+ (lo tiene '$h')}: tomar-eje es para un issue que ya trabajas" >&2; exit 1; }
+    # the label first: even if the lock is taken, siguiente must know this issue needs the axis
+    if ! gh label create "serializa:$eje" --repo "$slug" --color FBCA04 --description "No admite dos issues a la vez" >/dev/null 2>"$tmpd/lerr"; then
+      grep -qi 'already exists' "$tmpd/lerr" || { echo "error: no se pudo crear la etiqueta serializa:$eje" >&2; cat "$tmpd/lerr" >&2; exit 2; }
+    fi
+    gh issue edit "$n" --repo "$slug" --add-label "serializa:$eje" >/dev/null \
+      || { echo "error: no se pudo poner serializa:$eje en #$n" >&2; exit 2; }
+    lock_take "$eje" "$id" "$n"; rc=$?
+    case $rc in
+      0) echo "candado: $(lock_ref "$eje")" ;;
+      1) o="$(lock_owner "$eje")" || o="desconocido"
+         case " $o " in
+           *" issue:$n "*) echo "candado: $(lock_ref "$eje") (ya era de #$n)" ;;
+           *) echo "el eje serializa:$eje lo tiene otro ($o): #$n ya lleva la etiqueta; suéltalo con el motivo y siguiente lo traerá cuando el eje quede libre" >&2; exit 1 ;;
+         esac ;;
+      *) echo "error: no se pudo tomar el candado de serializa:$eje (red o git); #$n ya lleva la etiqueta" >&2; exit 2 ;;
+    esac
+    echo "FIN: eje serializa:$eje tomado para #$n"
     ;;
 
   liberar-eje)
