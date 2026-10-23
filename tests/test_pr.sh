@@ -388,6 +388,14 @@ reset_open; : > "$GH_LOG"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con changelog válido: $out"
 [ "$(last_line "$out")" = "FIN: ok" ] || fail "changelog válido FIN: $out"
 [ "$(pr_q .state)" = MERGED ] || fail "changelog válido: no fusionó"
+# an entry with the pending link [#PR](PR) is valid for validar but never merges unfilled
+printf '# Changelog\n\n## 2026-10-18\n\n### Nuevo: Algo · [#PR](PR)\n' > "$wt/CHANGELOG.md"
+reset_open; : > "$GH_LOG"
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "fusionar con enlace pendiente: exit $rc"
+case "$err" in *"enlace pendiente [#PR](PR)"*) ;; *) fail "fusionar con enlace pendiente: $err";; esac
+grep -q "pr merge" "$GH_LOG" && fail "fusionó con el enlace pendiente"
+printf '# Changelog\n\n## 2026-10-18\n\n### Nuevo: Algo · [#1](https://github.com/dru/demo/pull/1)\n' > "$wt/CHANGELOG.md"
 # kit-changelog exit 2 (awk roto) -> fusionar exit 2, sin fusionar
 reset_open; : > "$GH_LOG"
 awkd="$(mktemp -d)"; printf '#!/bin/sh\nexit 2\n' > "$awkd/awk"; chmod +x "$awkd/awk"

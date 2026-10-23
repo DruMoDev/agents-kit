@@ -18,7 +18,13 @@ case "$sub" in
     [ $# -ge 1 ] || usage
     [ ! -e "$f" ] || { echo "el fichero $f ya existe: usa otro (un resultado viejo parecería terminado)" >&2; exit 1; }
     : > "$f" || { echo "error: no se pudo crear $f" >&2; exit 2; }
-    nohup bash -c '"$@" </dev/null; echo "SALIDA: $?"' _ "$@" >> "$f" 2>&1 &
+    rm -f "$f.rc"
+    export KIT_BG_RC="$f.rc"
+    # own process group (perl setpgrp, as lib/repo-hook.sh): a tool that kills the caller's group when its call returns
+    # (or on a timeout) does not take the command with it. The code goes to <fichero>.rc, which only this wrapper
+    # writes, so a "SALIDA:" line printed by the command itself never looks like the end.
+    nohup perl -e 'setpgrp(0, 0); exec @ARGV or exit 127' bash -c '"$@" </dev/null; rc=$?; echo "$rc" > "$KIT_BG_RC"; echo "SALIDA: $rc"' _ "$@" \
+      >> "$f" 2>&1 </dev/null &
     pid=$!
     echo "$pid" > "$f.pid"
     echo "lanzado: $pid"
@@ -30,7 +36,8 @@ case "$sub" in
     [ -e "$f" ] || { echo "error: no existe $f (¿se lanzó con kit-bg.sh lanzar?)" >&2; exit 2; }
     start=$SECONDS
     while :; do
-      if grep -Eq '^SALIDA: [0-9]+$' "$f"; then
+      if [ -s "$f.rc" ]; then
+        sleep 1 # let the wrapper's own SALIDA line land after the .rc file
         cat "$f"
         echo "FIN: terminado"
         exit 0
@@ -38,7 +45,7 @@ case "$sub" in
       pid="$(cat "$f.pid" 2>/dev/null)"
       if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
         sleep 1 # the SALIDA line may land right after the process ends
-        grep -Eq '^SALIDA: [0-9]+$' "$f" && continue
+        [ -s "$f.rc" ] && continue
         echo "error: el comando terminó sin su línea SALIDA (¿lo mataron?); su salida está en $f" >&2
         exit 2
       fi
