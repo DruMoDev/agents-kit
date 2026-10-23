@@ -123,4 +123,29 @@ take_as mig agente-x 10
 [ -n "$(git -C "$o" for-each-ref refs/locks/mig)" ] || fail "lock_release liberó el candado de otro issue"
 (cd "$r" && source "$REPO_ROOT/scripts/lib/locks.sh" && lock_release serializa:mig 10) || fail "lock_release propio falló"
 [ -z "$(git -C "$o" for-each-ref refs/locks/mig)" ] || fail "lock_release no liberó el propio"
+# tomar-eje: an issue already claimed needs an axis midway
+flow_add_issue 30 "descubre una migración" prio:media
+bash "$issue" reclamar "$r" 30 kit-hhhh >/dev/null 2>&1 || fail "reclamar 30"
+out="$(bash "$issue" tomar-eje "$r" 30 kit-hhhh serializa:d1 2>&1)" || fail "tomar-eje: $out"
+case "$out" in *"candado: refs/locks/d1"*"FIN: eje serializa:d1 tomado para #30") ;; *) fail "tomar-eje: '$out'";; esac
+[ "$(lock_msg d1)" = "agente:kit-hhhh issue:30 eje:d1" ] || fail "tomar-eje: candado '$(lock_msg d1)'"
+[ "$(flow_issue 30 '[.labels[].name] | index("serializa:d1") != null')" = true ] || fail "tomar-eje: sin etiqueta"
+grep -q '^label create serializa:d1 --repo dru/demo' "$GH_LOG" || fail "tomar-eje no crea la etiqueta del eje"
+out="$(bash "$issue" soltar "$r" 30 kit-hhhh 2>&1)" || fail "soltar 30: $out"
+[ -z "$(git -C "$o" for-each-ref refs/locks/d1)" ] || fail "soltar no liberó el candado tomado a mitad"
+# axis held by another issue: exit 1, the label stays so the issue waits for the axis
+flow_add_issue 31 "otra migración" prio:media
+bash "$issue" reclamar "$r" 31 kit-iiii >/dev/null 2>&1 || fail "reclamar 31"
+take_as d1 agente-ajeno 96
+err="$(bash "$issue" tomar-eje "$r" 31 kit-iiii d1 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "tomar-eje ocupado: exit $rc ($err)"
+case "$err" in *"el eje serializa:d1 lo tiene otro (agente:agente-ajeno issue:96 eje:d1)"*) ;; *) fail "tomar-eje ocupado: '$err'";; esac
+[ "$(flow_issue 31 '[.labels[].name] | index("serializa:d1") != null')" = true ] || fail "tomar-eje ocupado: quitó la etiqueta"
+[ "$(lock_msg d1)" = "agente:agente-ajeno issue:96 eje:d1" ] || fail "tomar-eje ocupado: tocó el candado ajeno"
+git -C "$r" push -q origin ":refs/locks/d1"
+# not the claimant, cloud, invalid axis
+bash "$issue" tomar-eje "$r" 31 kit-otro d1 >/dev/null 2>&1; [ $? -eq 1 ] || fail "tomar-eje sin ser el que reclamó debe dar 1"
+CLAUDE_CODE_REMOTE=true bash "$issue" tomar-eje "$r" 31 kit-iiii d1 >/dev/null 2>&1; [ $? -eq 1 ] || fail "tomar-eje en la nube debe dar 1"
+bash "$issue" tomar-eje "$r" 31 kit-iiii "d1 x" >/dev/null 2>&1; [ $? -eq 1 ] || fail "tomar-eje con eje inválido debe dar 1"
+[ -z "$(git -C "$o" for-each-ref refs/locks/d1)" ] || fail "tomar-eje rechazado creó un candado"
 echo "OK test_locks"

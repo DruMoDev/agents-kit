@@ -168,6 +168,7 @@ case "$cmd" in
     fi
     save '(.prs[] | select(.number == $n)) |= (.headRefOid = (.headRefOid // $o) | .state = "MERGED")' \
       --argjson n "${pos[0]}" --arg o "$(pr_json "${pos[0]}" | jq -r .headRefOid)" || exit 1 ;;
+  "label create") echo "https://github.com/$repo/labels/x" ;;
   "label list")
     jq '(.labels // ["en-curso", "necesita-respuesta", "bloqueado", "propuesta", "someday", "registro",
         "prio:alta", "prio:media", "prio:baja", "entorno:nube", "entorno:mac"]) | map({name: .})' "$state" | emit ;;
