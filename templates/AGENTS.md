@@ -20,16 +20,9 @@
 - lint:
 - build:
 
-## Skills del proyecto
-
-<!-- Tabla de skills de .agents/skills y cuándo cargar cada una. -->
-
-| Skill | Cuándo cargarla |
-| ----- | --------------- |
-
 ## Mapa del código
 
-<!-- Solo los directorios de primer nivel, una línea por cada uno. -->
+<!-- Solo los directorios de primer nivel, una línea por cada uno. Las skills (.agents/skills/) no se listan: cada herramienta ya ve su descripción. -->
 
 ## Reglas del proyecto
 

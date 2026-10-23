@@ -57,6 +57,8 @@ label registro EDEDED "Issue de registro del kit (📦 Changelog)"
 label prio:alta B60205 "Prioridad alta"
 label prio:media FBCA04 "Prioridad media"
 label prio:baja 0E8A16 "Prioridad baja"
+label entorno:nube 5319E7 "Se puede hacer en una sesión en la nube"
+label entorno:mac 0052CC "Solo se puede hacer en el Mac de Dru"
 
 gh repo edit "$slug" --enable-squash-merge --delete-branch-on-merge >/dev/null \
   || { echo "error: no se pudo configurar el repo" >&2; exit 2; }

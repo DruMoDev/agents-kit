@@ -71,13 +71,14 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 ## Flujo git
 
 - Todo el código entra en la rama por defecto por PR con squash merge.
-- Contenido: las rutas que el proyecto declare en `contenido` (`.agents-kit.json`) pueden ir directas a la rama por defecto en una sesión con Dru. Van por PR igualmente lo que haga `kit-run`, un cambio mixto (contenido y código) y todo lo que vaya a una rama protegida.
+- Contenido: `.agents/skills/`, `AGENTS.md` y las rutas que el proyecto declare en `contenido` (`.agents-kit.json`) pueden ir directas a la rama por defecto en una sesión con Dru. Van por PR igualmente lo que haga `kit-run` (la mejora de una skill va en la PR del issue), un cambio mixto (contenido y código) y todo lo que vaya a una rama protegida.
+- `git add` siempre con rutas explícitas, nunca `-A` ni `.`: puede haber otras sesiones trabajando en el mismo clon.
 - Ningún worktree muerto: en cuanto su trabajo está en la rama por defecto, se borra con su rama (`kit-run` lo hace con `kit-worktree.sh barrer`). Solo sobrevive el de un trabajo vivo.
 - Changelog: si el repo lleva `CHANGELOG.md`, cada PR que cambie algo para quien usa la app añade su entrada (el formato lo describe la cabecera del fichero).
 
 ## Automejora
 
-Al terminar una tarea, en la misma PR que la provocó:
+Al terminar una tarea, en la misma PR que la provocó (en una sesión con Dru sin PR, directo a la rama por defecto: las skills y `AGENTS.md` son contenido):
 
 - ¿Aprendiste algo que evitaría un error futuro? Regístralo en la skill del proyecto más cercana, o crea una nueva en `.agents/skills/` (`SKILL.md` corto con cuándo usarla, flujo y restricciones; detalle en `references/`; lo determinista en `scripts/`).
 - ¿Cambió el stack, los comandos o el mapa del repo? Corrige `AGENTS.md`.
@@ -101,6 +102,7 @@ Al terminar una tarea, en la misma PR que la provocó:
 
 ## Comunicación
 
+- Nunca rayas largas (U+2014) en nada de lo que escribas: código, docs, commits, issues, PRs ni chat. Usa dos puntos, comas o paréntesis.
 - Muestra rutas de fichero clicables.
 - Explica qué has hecho y por qué.
 - Planes ultracortos. Termina cada plan con la lista de preguntas sin resolver.

@@ -16,6 +16,7 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/default-branch.sh"
 source "$here/lib/repo-hook.sh"
+source "$here/lib/ci.sh"
 
 usage() {
   echo "uso: $0 abrir <wt> <N> <titulo> <fichero-cuerpo> | esperar-ci <wt> <pr> |" \
@@ -79,28 +80,6 @@ comment() { # <body-file>
     || { echo "error: no se pudo comentar en la PR #$p" >&2; exit 2; }
 }
 
-# CI. ci_has_workflows (esperar-ci): print true/false; return 2 if gh fails or the answer is unreadable.
-ci_has_workflows() {
-  local c
-  c="$(gh api "repos/$slug/actions/workflows" --jq .total_count)" || return 2
-  [[ $c =~ ^[0-9]+$ ]] || return 2
-  if [ "$c" -gt 0 ]; then echo true; else echo false; fi
-}
-# ci_state <sha>: one read of the check runs (latest attempt per app and check name, by id);
-# prints ninguno (no check run) | esperando | verde | rojo <conclusion>; return 2 if unreadable.
-ci_state() {
-  local r
-  r="$(gh api "repos/$slug/commits/$1/check-runs?filter=all&per_page=100")" || return 2
-  printf '%s' "$r" | jq -r '
-    if (.check_runs | type) != "array" then error("sin check_runs") else .check_runs end
-    | group_by([.app.id, .name]) | map(max_by(.id))
-    | if length == 0 then "ninguno"
-      elif any(.[]; .status != "completed") then "esperando"
-      else ([.[] | .conclusion // "sin conclusión" | select(. as $x | ["success", "skipped", "neutral"] | index($x) | not)]
-        | first) as $bad
-      | if $bad == null then "verde" else "rojo \($bad)" end
-      end' 2>/dev/null || return 2
-}
 ci_unreadable() { echo "error: no se pudo leer el estado del CI" >&2; exit 2; }
 # own_login: set $me to the gh login of this run; flow markers are trusted only from it. Exit 2 if unreadable.
 own_login() {
@@ -165,29 +144,11 @@ Cierra #$n"
     ;;
 
   esperar-ci)
-    timeout="${KIT_CI_TIMEOUT:-1800}"; poll="${KIT_CI_POLL:-15}"; grace="${KIT_CI_GRACE:-300}"
-    [[ $timeout =~ ^[0-9]+$ ]] && [[ $poll =~ ^[0-9]+$ ]] && [[ $grace =~ ^[0-9]+$ ]] \
-      || { echo "error: KIT_CI_TIMEOUT, KIT_CI_POLL y KIT_CI_GRACE deben ser segundos enteros" >&2; exit 2; }
     sha="$(head_sha)" || exit 2
     oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
     [ "$oid" = "$sha" ] || { echo "la PR apunta a $oid y aquí estás en $sha: empuja o espera" >&2; exit 2; }
-    wf="$(ci_has_workflows)" || ci_unreadable
-    if [ "$wf" = false ]; then echo "FIN: sin-ci"; exit 0; fi
-    start=$SECONDS
-    while :; do
-      s="$(ci_state "$sha")" || ci_unreadable
-      case "$s" in
-        verde) echo "FIN: verde"; exit 0 ;;
-        rojo*) echo "el CI terminó en '${s#rojo }'" >&2; exit 1 ;;
-        # workflows that never start a check run for this SHA (e.g. no pull_request trigger)
-        ninguno) if [ $((SECONDS - start)) -ge "$grace" ]; then echo "FIN: sin-ci"; exit 0; fi ;;
-      esac
-      if [ $((SECONDS - start)) -ge "$timeout" ]; then
-        echo "el CI de ${sha:0:8} no concluyó en ${timeout}s" >&2
-        exit 1
-      fi
-      sleep "$poll"
-    done
+    res="$(ci_wait "$sha")" || exit $?
+    echo "FIN: $res"
     ;;
 
   gate-local)

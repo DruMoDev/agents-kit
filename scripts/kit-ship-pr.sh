@@ -7,14 +7,15 @@
 # ${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/<repo>/<rama>, on a new local branch <rama>.
 #   abrir: checks that origin/<default> has (con-marcador) or lacks (sin-marcador) .agents-kit.json, that no open PR
 #     comes from <rama> and that no stale <rama> exists; creates the worktree, or reuses it ("ya existía").
-#   enviar: commits everything in the worktree (project hooks skipped: the worktree has no setup), pushes, opens the PR
-#     and squash-merges it. Once the PR exists the worktree and the local branch are removed (the work lives in the
+#   enviar: commits everything in the worktree (project hooks skipped: the worktree has no setup), pushes, opens the PR,
+#     waits for its CI (lib/ci.sh: green or no CI; red or timed out leaves the PR open) and squash-merges it. Once the PR exists the worktree and the local branch are removed (the work lives in the
 #     PR); before that, any failure keeps the worktree and names its path.
 #   descartar: removes the worktree (with its changes) and the local branch.
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error (also "FIN: PR abierto" when the PR stays open).
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
+source "$here/lib/ci.sh"
 
 usage() {
   echo "uso: $0 abrir <root> <rama> con-marcador|sin-marcador | enviar <root> <rama> <titulo> <cuerpo> | descartar <root> <rama>" >&2
@@ -141,9 +142,17 @@ git -C "$w" push -q -u origin "$branch" \
   || { echo "error: git push falló; $keep. Arregla el problema y relanza abrir y enviar" >&2; exit 2; }
 url="$(gh pr create --repo "$slug" --base "$base" --head "$branch" --title "$title" --body "$body")" \
   || { echo "error: gh pr create falló; la rama $branch ya está en origin y $keep. Relanza abrir y enviar" >&2; exit 2; }
-# no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted below
+# the PR merges only after its CI, like kit-pr.sh fusionar (an admin merge would skip required checks)
 merge_rc=0
-gh pr merge "$url" --repo "$slug" --squash >/dev/null || merge_rc=$?
+sha="$(git -C "$w" rev-parse HEAD)" || merge_rc=1
+if [ "$merge_rc" -eq 0 ]; then
+  ci="$(ci_wait "$sha")" || merge_rc=$?
+fi
+if [ "$merge_rc" -eq 0 ]; then
+  echo "CI: $ci"
+  # no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted below
+  gh pr merge "$url" --repo "$slug" --squash >/dev/null || merge_rc=$?
+fi
 state="$(gh pr view "$url" --repo "$slug" --json state -q .state 2>/dev/null)"
 
 # the PR holds the work from here on: the worktree and the local branch go away, merged or not

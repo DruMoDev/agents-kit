@@ -13,7 +13,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 
 ## Reglas
 
-- Nunca te salgas del scope del issue. Lo que encuentres fuera se abre con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" crear <raíz> "<título>" <fichero> --prio <prio> --propuesta` (plantilla de `skills/kit-plan/references/issue.md`, con la evidencia; antes busca duplicados entre los abiertos).
+- Nunca te salgas del scope del issue. Lo que encuentres fuera se abre con `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" crear <raíz> "<título>" <fichero> --prio <prio> --entorno nube|mac --propuesta` (plantilla de `skills/kit-plan/references/issue.md`, con la evidencia; antes busca duplicados entre los abiertos).
 - Nunca afirmes nada que no hayas ejecutado.
 - Lee la salida completa de cada script hasta su línea `FIN:` y su código de salida; nunca la recortes con `head` ni `tail`. Exit 1 es un rechazo con motivo en stderr; exit 2, un error de entorno.
 - Una duda de producto nunca la resuelves tú: ve al paso 7.
@@ -29,7 +29,7 @@ Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa vari
 
 ## Por cada issue
 
-1. **Coger.** Lleva en esta ejecución una lista de excluidos (al empezar, vacía). `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" siguiente <raíz>`, con `--excluir <N>,<N>...` si la lista no está vacía: exit 0 da `<N>` en `FIN: <N>`; exit 1 (`no hay issues disponibles`) termina el bucle y vas al resumen. Con `kit-run <N>`, en su lugar `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" siguiente <raíz> <N>`: exit 1 dice por qué ese issue no se coge (cerrado, abierto por otra cuenta, o con `en-curso`, `necesita-respuesta`, `bloqueado`, `propuesta`, `someday` o `registro`); díselo a Dru con el motivo (y qué etiqueta quitar, si es eso) y termina sin coger nada. Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" reclamar <raíz> <N> <id>`:
+1. **Coger.** Lleva en esta ejecución una lista de excluidos (al empezar, vacía). `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" siguiente <raíz>`, con `--excluir <N>,<N>...` si la lista no está vacía: exit 0 da `<N>` en `FIN: <N>`; exit 1 (`no hay issues disponibles`) termina el bucle y vas al resumen. Con `kit-run <N>`, en su lugar `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" siguiente <raíz> <N>`: exit 1 dice por qué ese issue no se coge (cerrado, abierto por otra cuenta, con `en-curso`, `necesita-respuesta`, `bloqueado`, `propuesta`, `someday` o `registro`, con una dependencia abierta, o sin `entorno:nube` en una sesión en la nube); díselo a Dru con el motivo (y qué etiqueta quitar, si es eso) y termina sin coger nada. Después `"${CLAUDE_PLUGIN_ROOT}/scripts/kit-issue.sh" reclamar <raíz> <N> <id>`:
    - Exit 1: otro agente lo cogió antes, o ya tiene `en-curso` (puesto por el kit u otro flujo). Añade `<N>` a la lista de excluidos y vuelve a `siguiente` con `--excluir`: así nunca das vueltas sobre el mismo issue (con `kit-run <N>`, dilo y termina). Cuéntalo en el resumen como posible reclamo colgado si sigue con `en-curso`.
    - Exit 2 con `no se pudo comentar en`, o con `reclamación deshecha` sin `no se pudo deshacer`: no queda reclamo tuyo. Explícalo y para.
    - Cualquier otro exit 2, incluido `no se pudo deshacer` (el reclamo se publicó y puede seguir ahí): dile a Dru que puede quedar colgado y dale el comando exacto para soltarlo, `"$PLUGIN/scripts/kit-issue.sh" soltar <raíz> <N> <id> "reclamo sin confirmar"` con los valores reales. Para.

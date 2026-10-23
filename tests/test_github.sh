@@ -34,9 +34,9 @@ case "$err" in *"sin remoto de GitHub"*) ;; *) fail "origin no GitHub: stderr '$
 out="$(GH_STUB_MODE=ok bash "$setup" "$r" 2>&1)" || fail "setup ok: exit $?"
 grep -q -- '--force' "$GH_LOG" && fail "setup: usa --force (pisaría etiquetas existentes)"
 grep -q '^label list .*--repo dru/demo' "$GH_LOG" || fail "setup: no lista las etiquetas existentes"
-kit_labels="en-curso necesita-respuesta bloqueado propuesta someday registro prio:alta prio:media prio:baja"
+kit_labels="en-curso necesita-respuesta bloqueado propuesta someday registro prio:alta prio:media prio:baja entorno:nube entorno:mac"
 n="$(grep -c '^label create ' "$GH_LOG")"
-[ "$n" -eq 9 ] || fail "esperadas 9 etiquetas creadas, hay $n"
+[ "$n" -eq 11 ] || fail "esperadas 11 etiquetas creadas, hay $n"
 for l in $kit_labels; do
   grep -q "^label create $l " "$GH_LOG" || fail "falta label $l"
 done
@@ -60,7 +60,7 @@ for l in en-curso prio:alta; do
   grep -q "^label create $l " "$GH_LOG" && fail "recrea la etiqueta existente $l"
 done
 n="$(grep -c '^label create ' "$GH_LOG")"
-[ "$n" -eq 7 ] || fail "labels-exist: esperadas 7 creadas, hay $n"
+[ "$n" -eq 9 ] || fail "labels-exist: esperadas 9 creadas, hay $n"
 case "$out" in *"etiqueta: en-curso (ya existía)"*"etiqueta: necesita-respuesta (creada)"*) ;; *) fail "labels-exist: salida '$out'";; esac
 
 # --- setup: label list fails -> exit 2, nothing created
@@ -127,6 +127,27 @@ while IFS= read -r line; do
   case "$line" in "auth status"*) continue;; esac
   case "$line" in *"dru/demo"*) ;; *) fail "gh sin repo explícito: $line";; esac
 done < "$GH_LOG"
+
+
+# --- ship: the PR merges only after its CI (green); red or timed out leaves it open
+ship_ci() { # <GH_CI>: abrir + activar + enviar on a fresh repo; prints enviar's output, returns its exit code
+  local r w
+  r="$(mk_with_origin main)"
+  bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1 || { echo "abrir falló"; return 9; }
+  w="$KIT_WORKTREES/$(basename "$r")/kit-on"
+  bash "$REPO_ROOT/scripts/kit-activate.sh" "$w" >/dev/null 2>&1 || { echo "activate falló"; return 9; }
+  : > "$GH_LOG"
+  GH_CI="$1" KIT_CI_POLL=0 KIT_CI_TIMEOUT=1 bash "$ship" enviar "$r" kit-on "chore: activar agents-kit" "cuerpo" 2>&1
+}
+out="$(ship_ci verde)" || fail "ship CI verde: exit $? ($out)"
+case "$out" in *"CI: verde"*"FIN: ok") ;; *) fail "ship CI verde: '$out'";; esac
+grep -q '^api repos/dru/demo/commits/.*/check-runs' "$GH_LOG" || fail "ship CI verde: no miró los checks"
+for c in rojo esperando; do
+  out="$(ship_ci "$c")"; rc=$?
+  [ $rc -eq 2 ] || fail "ship CI $c: exit $rc ($out)"
+  grep -q '^pr merge' "$GH_LOG" && fail "ship CI $c: fusionó sin CI verde"
+  case "$out" in *"FIN: PR abierto") ;; *) fail "ship CI $c: '$out'";; esac
+done
 
 
 # --- real repo shape (tiktok-editor): CLAUDE.md -> AGENTS.md, .claude/skills symlink, core.hooksPath, dirty main tree

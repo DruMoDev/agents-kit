@@ -169,7 +169,7 @@ case "$cmd" in
       --argjson n "${pos[0]}" --arg o "$(pr_json "${pos[0]}" | jq -r .headRefOid)" || exit 1 ;;
   "label list")
     jq '(.labels // ["en-curso", "necesita-respuesta", "bloqueado", "propuesta", "someday", "registro",
-        "prio:alta", "prio:media", "prio:baja"]) | map({name: .})' "$state" | emit ;;
+        "prio:alta", "prio:media", "prio:baja", "entorno:nube", "entorno:mac"]) | map({name: .})' "$state" | emit ;;
   api)
     case "$apipath" in
       user)

@@ -9,11 +9,12 @@
 #   decision  <root> <N> <id> <fichero-pregunta>
 #   bloquear  <root> <N> <id> <fichero-motivo>
 #   comprobar <root>
-#   crear     <root> <titulo> <fichero-cuerpo> --prio alta|media|baja [--etiqueta X]... [--propuesta]
+#   crear     <root> <titulo> <fichero-cuerpo> --prio alta|media|baja --entorno nube|mac [--etiqueta X]... [--propuesta]
 # Issue state for the agent flow. Claims live in HTML-comment markers on the issue.
 # siguiente: any open issue without en-curso, necesita-respuesta (or the v2 necesita-decision), bloqueado, propuesta,
 # someday or registro (nor the "📦 Changelog" issue of a v2 repo), opened by the gh account; prio:alta, prio:media,
-# none, prio:baja, oldest first. With <N>: that issue if siguiente could pick it, else exit 1 with the reason.
+# none, prio:baja, oldest first. Also out: an issue whose own body says "Depende de #N" or "Bloqueado por #N" while #N
+# is open, and, in a cloud session (lib/transport.sh), an issue without entorno:nube. With <N>: that issue if siguiente could pick it, else exit 1 with the reason.
 # --excluir: issues left out of this pick (kit-run passes the ones it failed to claim in this run).
 # Claims (kit-reclamado / kit-soltado markers) count only in comments written by the gh account.
 # leer: title, author, state, labels, body and only the comments written by the gh account (the others are counted,
@@ -28,11 +29,12 @@ set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
+source "$here/lib/transport.sh"
 
 usage() {
   echo "uso: $0 siguiente <root> [<N>] [--excluir N[,N...]] | leer <root> <N> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
     "decision <root> <N> <id> <fichero> | bloquear <root> <N> <id> <fichero> | comprobar <root> |" \
-    "crear <root> <titulo> <fichero-cuerpo> --prio alta|media|baja [--etiqueta X]... [--propuesta]" >&2
+    "crear <root> <titulo> <fichero-cuerpo> --prio alta|media|baja --entorno nube|mac [--etiqueta X]... [--propuesta]" >&2
   exit 1
 }
 
@@ -73,18 +75,23 @@ case "$sub" in
     [ $# -ge 2 ] || usage
     title="$1"; file="$2"; shift 2
     [ -n "$title" ] || usage
-    prio=""; propuesta=false; extra=()
+    prio=""; entorno=""; propuesta=false; extra=()
     while [ $# -gt 0 ]; do
       case "$1" in
         --prio)
           [ $# -ge 2 ] || { echo "falta el valor de --prio (alta, media o baja)" >&2; exit 1; }
           case "$2" in alta|media|baja) prio="$2" ;; *) echo "prioridad inválida: $2 (alta, media o baja)" >&2; exit 1 ;; esac
           shift 2 ;;
+        --entorno)
+          [ $# -ge 2 ] || { echo "falta el valor de --entorno (nube o mac)" >&2; exit 1; }
+          case "$2" in nube|mac) entorno="$2" ;; *) echo "entorno inválido: $2 (nube o mac)" >&2; exit 1 ;; esac
+          shift 2 ;;
         --etiqueta)
           [ $# -ge 2 ] && [ -n "$2" ] || { echo "falta el valor de --etiqueta" >&2; exit 1; }
           case "$2" in
             *,*) echo "etiqueta inválida: $2 (sin comas; repite --etiqueta)" >&2; exit 1 ;;
             prio:*) echo "la prioridad va en --prio, no en --etiqueta" >&2; exit 1 ;;
+            entorno:*) echo "el entorno va en --entorno, no en --etiqueta" >&2; exit 1 ;;
             propuesta) echo "usa --propuesta en vez de --etiqueta propuesta" >&2; exit 1 ;;
             listo|en-curso|necesita-respuesta|necesita-decision|bloqueado|registro)
               echo "etiqueta de estado no admitida al crear: $2" >&2; exit 1 ;;
@@ -96,6 +103,7 @@ case "$sub" in
       esac
     done
     [ -n "$prio" ] || { echo "falta --prio alta|media|baja" >&2; exit 1; }
+    [ -n "$entorno" ] || { echo "falta --entorno nube|mac (mac: solo se puede hacer en el Mac de Dru)" >&2; exit 1; }
     ;;
 esac
 if [ "$sub" != siguiente ] && [ "$sub" != leer ] && [ "$sub" != reparto ] && [ "$sub" != aparcar ] && [ "$sub" != crear ] \
@@ -117,7 +125,7 @@ tmpd="$(mktemp -d)" || exit 2
 trap 'rm -rf "$tmpd"' EXIT
 
 # Labels kit-on creates (kit-github-setup.sh) and keys of a v2 marker: comprobar asks for kit-on if any is off.
-KIT_LABELS='["en-curso", "necesita-respuesta", "bloqueado", "propuesta", "someday", "registro", "prio:alta", "prio:media", "prio:baja"]'
+KIT_LABELS='["en-curso", "necesita-respuesta", "bloqueado", "propuesta", "someday", "registro", "prio:alta", "prio:media", "prio:baja", "entorno:nube", "entorno:mac"]'
 V2_KEYS='["reviewers", "implementer", "notify"]'
 # Labels that keep an issue out of the pool (necesita-decision is the v2 name of necesita-respuesta).
 EXCLUDED='["en-curso", "necesita-respuesta", "necesita-decision", "bloqueado", "propuesta", "someday", "registro"]'
@@ -185,41 +193,50 @@ read_file() { # <path>: print contents or exit 1
 
 case "$sub" in
   siguiente|reparto)
-    list="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title,labels,author)" \
+    list="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title,labels,author,body)" \
       || { echo "error: no se pudo listar los issues" >&2; exit 2; }
     # only issues opened by this gh account: anyone can open an issue in a public repo, and kit-run acts on it unattended
     me="$(gh api user --jq .login)" && [ -n "$me" ] || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
-    # the pool: one object per issue, in the order siguiente picks them
-    pool="$(printf '%s' "$list" | jq -c --arg me "$me" --argjson x "$EXCLUDED" '
+    # every open issue with why it stays out ("" = in the pool), in the order siguiente picks them. why: an excluding
+    # label, the changelog issue, another author, an open dependency ("Depende de #N" / "Bloqueado por #N" in an own
+    # body) or, in a cloud session, no entorno:nube.
+    all="$(printf '%s' "$list" | jq -c --arg me "$me" --arg env "$(kit_transport)" --argjson x "$EXCLUDED" '
         def rank: if index("prio:alta") then 0 elif index("prio:media") then 1 elif index("prio:baja") then 3 else 2 end;
-        map([.labels[].name] as $l | select(.title != "📦 Changelog"
-            and ($x | any(. as $e | $l | index($e)) | not))
-          | {number, title, mine: (.author.login == $me), r: ($l | rank)})
+        map(.number) as $open
+        | map([.labels[].name] as $l | .number as $n
+          | ([$x[] | select(. as $e | $l | index($e))] | first) as $b
+          | ([(.body // "") | scan("(?i)(?:depende de|bloqueado por)([^.\\n]*)") | .[0] | scan("#([0-9]+)") | .[0]
+              | tonumber | select(. != $n and (. as $d | $open | index($d)))] | unique) as $deps
+          | {number, title, mine: (.author.login == $me), r: ($l | rank), deps: $deps,
+             why: (if $b != null then "lleva \($b): kit-run no lo coge mientras la tenga"
+               elif .title == "📦 Changelog" then "es el registro del changelog"
+               elif .author.login != $me then "lo abrió otra cuenta (\(.author.login)): kit-run solo coge issues de \($me)"
+               elif ($deps | length) > 0 then "depende de issues abiertos: \($deps | map("#\(.)") | join(", "))"
+               elif $env == "nube" and ($l | index("entorno:nube") | not) then "no lleva entorno:nube y esta sesión corre en la nube"
+               else "" end)})
         | sort_by(.r, .number)')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+    pool="$(printf '%s' "$all" | jq -c 'map(select(.why == ""))')"
     if [ "$sub" = siguiente ] && [ -n "$want" ]; then
-      why="$(printf '%s' "$list" | jq -r --arg me "$me" --argjson n "$want" --argjson x "$EXCLUDED" '
-          (map(select(.number == $n)) | first) as $i |
-          if $i == null then "#\($n) no está abierto o no existe"
-          else ([$i.labels[].name] as $l | [$x[] | select(. as $e | $l | index($e))] | first) as $b |
-            if $b != null then "#\($n) lleva \($b): kit-run no lo coge mientras la tenga"
-            elif $i.title == "📦 Changelog" then "#\($n) es el registro del changelog"
-            elif $i.author.login != $me then "#\($n) lo abrió otra cuenta (\($i.author.login)): kit-run solo coge issues de \($me)"
-            else "" end
-          end')" || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+      why="$(printf '%s' "$all" | jq -r --argjson n "$want" '(map(select(.number == $n)) | first) as $i
+          | if $i == null then "#\($n) no está abierto o no existe" elif $i.why == "" then "" else "#\($n) \($i.why)" end')"
       [ -z "$why" ] || { echo "$why" >&2; exit 1; }
       echo "$want"
       echo "FIN: $want"
     elif [ "$sub" = siguiente ]; then
-      next="$(printf '%s' "$pool" | jq -r --argjson ex "$excl" 'map(select(.mine and (.number as $n | $ex | index($n) | not))) | first | .number // empty')"
+      next="$(printf '%s' "$pool" | jq -r --argjson ex "$excl" 'map(select(.number as $n | $ex | index($n) | not)) | first | .number // empty')"
       [ -n "$next" ] || { echo "no hay issues disponibles" >&2; exit 1; }
       echo "$next"
       echo "FIN: $next"
     else
-      printf '%s' "$pool" | jq -r 'map(select(.mine))[]
-        | "#\(.number)\t\(["prio:alta", "prio:media", "sin prio", "prio:baja"][.r])\t\(.title)"'
-      others="$(printf '%s' "$pool" | jq -r '[map(select(.mine | not))[] | "#\(.number)"] | join(" ")')"
+      printf '%s' "$pool" | jq -r '.[] | "#\(.number)\t\(["prio:alta", "prio:media", "sin prio", "prio:baja"][.r])\t\(.title)"'
+      waiting="$(printf '%s' "$all" | jq -r '[.[] | select(.mine and (.deps | length) > 0 and (.why | startswith("depende")))
+        | "#\(.number) (\(.deps | map("#\(.)") | join(", ")))"] | join(" ")')"
+      [ -z "$waiting" ] || echo "esperan a otro issue: $waiting"
+      cloud="$(printf '%s' "$all" | jq -r '[.[] | select(.why | startswith("no lleva entorno")) | "#\(.number)"] | join(" ")')"
+      [ -z "$cloud" ] || echo "solo en el Mac (sin entorno:nube): $cloud"
+      others="$(printf '%s' "$all" | jq -r '[.[] | select((.mine | not) and (.why | startswith("lo abrió"))) | "#\(.number)"] | join(" ")')"
       [ -z "$others" ] || echo "de otras cuentas (nunca entran): $others"
-      echo "FIN: $(printf '%s' "$pool" | jq 'map(select(.mine)) | length')"
+      echo "FIN: $(printf '%s' "$pool" | jq 'length')"
     fi
     ;;
 
@@ -344,7 +361,7 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
       'map(select((.title | ascii_downcase) == ($t | ascii_downcase))) | first | .number // empty')" \
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
     [ -z "$dup" ] || { echo "ya existe #$dup con ese título" >&2; exit 1; }
-    largs=(--label "prio:$prio")
+    largs=(--label "prio:$prio" --label "entorno:$entorno")
     $propuesta && largs+=(--label propuesta)
     for e in ${extra[@]+"${extra[@]}"}; do largs+=(--label "$e"); done
     url="$(gh issue create --repo "$slug" --title "$title" --body-file "$file" "${largs[@]}")" \
