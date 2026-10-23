@@ -13,6 +13,7 @@
 #   pr-create-fails     `gh pr create` fails
 # CI (gh api), chosen by $GH_CI: empty = no workflows; verde | rojo | esperando = one workflow whose check run ends so.
 # $GH_RUNS_SLOW: seconds of the slowest recent green run (actions/runs, default 0).
+# $GH_MERGE_FLAKY: the first n `gh pr merge` calls fail with a transient GraphQL error.
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
 mode="${GH_STUB_MODE:-ok}"
 branch=main
@@ -37,6 +38,11 @@ case "$1 $2" in
   "pr view") # MERGED only once a merge was attempted (logged), unless merge-open
     if [ "$mode" = merge-open ] || { [ -n "${GH_LOG:-}" ] && ! grep -q '^pr merge' "$GH_LOG"; }; then echo OPEN; else echo MERGED; fi ;;
   "pr merge") [ "$mode" = merge-fails-merged ] && exit 1
+    # GH_MERGE_FLAKY=<n>: the first n merges fail with a transient GraphQL error (counter in $GH_LOG.flaky)
+    if [ -n "${GH_MERGE_FLAKY:-}" ]; then
+      c="$(cat "$GH_LOG.flaky" 2>/dev/null || echo 0)"; echo $((c + 1)) > "$GH_LOG.flaky"
+      if [ "$c" -lt "$GH_MERGE_FLAKY" ]; then echo "GraphQL: Something went wrong while executing your query." >&2; exit 1; fi
+    fi
     case " $* " in *" --delete-branch "*) git push -q origin --delete "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 ;; esac ;;
   "pr create") [ "$mode" = pr-create-fails ] && exit 1; echo "https://github.com/dru/demo/pull/1" ;;
   "api repos/dru/demo/actions/workflows") if [ -n "${GH_CI:-}" ]; then echo 1; else echo 0; fi ;;

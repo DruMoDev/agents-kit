@@ -153,6 +153,14 @@ case "$(ship_ci esperando)" in *"el CI sigue en marcha"*"kit-ship-pr.sh fusionar
   *) fail "ship CI esperando: no dice cómo relanzar solo la fusión";; esac
 case "$(ship_ci rojo)" in *"sigue en marcha"*) fail "ship CI rojo: lo trata como CI en marcha";; esac
 
+# --- a transient GraphQL error in gh pr merge is retried; the output says so and ends in FIN: ok
+rm -f "$GH_LOG.flaky"
+out="$(GH_MERGE_FLAKY=1 KIT_GH_RETRY_WAIT=0 ship_ci verde)" || fail "merge con fallo transitorio: exit $? ($out)"
+case "$out" in *"aviso: fallo transitorio de GitHub"*"FIN: ok") ;; *) fail "merge con fallo transitorio: '$out'";; esac
+[ "$(grep -c '^pr merge' "$GH_LOG")" = 2 ] || fail "merge transitorio: $(grep -c '^pr merge' "$GH_LOG") intentos"
+case "$out" in *"esperando al CI del PR (hasta "*" min)"*) ;; *) fail "enviar no avisa de la espera al CI: '$out'";; esac
+rm -f "$GH_LOG.flaky"
+
 # --- ship fusionar: only the merge of the open PR, after its CI
 r="$(mk_with_origin main)"
 : > "$GH_LOG"
