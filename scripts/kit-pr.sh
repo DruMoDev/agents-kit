@@ -377,6 +377,16 @@ $KIT_HOOK_OUT") ;;
       gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
         || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
     fi
+    # the axis locks of the issue (lib/locks.sh) go before en-curso, as in kit-issue.sh release; a failure only warns, naming the command that frees it
+    if axes="$(gh issue view "$n" --repo "$slug" --json labels --jq '.labels[].name | select(startswith("serializa:"))')"; then
+      while IFS= read -r e; do
+        [ -n "$e" ] && lock_valid "$e" || continue
+        lock_release "$e" "$n" \
+          || echo "AVISO: PR fusionada, pero el candado $(lock_ref "$e") sigue tomado: kit-issue.sh liberar-eje <raíz> ${e#serializa:}" >&2
+      done <<< "$axes"
+    else
+      echo "AVISO: PR fusionada, pero no se pudo leer las etiquetas de #$n: mira si quedó algún candado en refs/locks/" >&2
+    fi
     # the claim is over: an own kit-soltado (so a reopened issue can be claimed again), then drop en-curso; a failure
     # only warns, the merge already happened
     printf '<!-- kit-soltado: fusionar -->\nPR #%s fusionada: este issue queda libre.\n' "$p" > "$tmpd/soltado"
@@ -385,15 +395,6 @@ $KIT_HOOK_OUT") ;;
     # the issue is done: drop en-curso (a v2 listo stays: never remove a label the repo may not have); a failure only warns, the merge already happened
     gh issue edit "$n" --repo "$slug" --remove-label en-curso >/dev/null \
       || echo "aviso: PR fusionada y issue cerrado, pero no se pudo quitar la etiqueta en-curso del issue #$n" >&2
-    # the axis locks of the issue (lib/locks.sh) go too; a failure only warns, naming the command that frees it
-    if axes="$(gh issue view "$n" --repo "$slug" --json labels --jq '.labels[].name | select(startswith("serializa:"))')"; then
-      for e in $axes; do
-        lock_release "$e" "$n" \
-          || echo "AVISO: PR fusionada, pero el candado $(lock_ref "$e") sigue tomado: kit-issue.sh liberar-eje <raíz> ${e#serializa:}" >&2
-      done
-    else
-      echo "AVISO: PR fusionada, pero no se pudo leer las etiquetas de #$n: mira si quedó algún candado en refs/locks/" >&2
-    fi
     echo "PR fusionado: $url"
     echo "FIN: ok"
     ;;

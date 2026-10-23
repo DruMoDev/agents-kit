@@ -56,7 +56,7 @@ case "$sub" in
   reparto|comprobar) [ $# -eq 0 ] || usage ;;
   liberar-eje) [ $# -eq 1 ] || usage
     eje="${1#serializa:}"
-    [[ $eje =~ ^[a-z0-9][a-z0-9._-]*$ ]] || { echo "eje inválido: $1 (como en la etiqueta serializa:<eje>)" >&2; exit 1; } ;;
+    lock_valid "$eje" || { echo "eje inválido: $1 (como en la etiqueta serializa:<eje>)" >&2; exit 1; } ;;
   siguiente|leer)
     excl="[]"
     if [ "$sub" = siguiente ]; then
@@ -169,9 +169,10 @@ axes_of() { # <N>: print the issue's serializa:<eje> labels, one per line; fails
 release_locks() {
   local axes e left=0
   axes="$(axes_of "$1")" || { echo "no se pudo leer las etiquetas de #$1: no sé qué candados liberar" >&2; return 1; }
-  for e in $axes; do
+  while IFS= read -r e; do
+    [ -n "$e" ] && lock_valid "$e" || continue # an invalid axis never got a lock
     lock_release "$e" "$1" || { echo "no se pudo liberar el candado $(lock_ref "$e")" >&2; left=1; }
-  done
+  done <<< "$axes"
   return $left
 }
 # release <N> <id> [motivo]: marker first, then the axis locks, then drop en-curso. If a lock stays taken, en-curso
@@ -337,6 +338,10 @@ case "$sub" in
     l="$(has_label "$n" en-curso)" || { echo "error: no se pudo leer las etiquetas de #$n" >&2; exit 2; }
     [ "$l" = true ] && { echo "#$n ya tiene en-curso: otro agente u otro flujo lo está trabajando" >&2; exit 1; }
     axes="$(axes_of "$n")" || { echo "error: no se pudo leer las etiquetas de #$n" >&2; exit 2; }
+    while IFS= read -r e; do
+      [ -z "$e" ] || lock_valid "$e" \
+        || { echo "#$n lleva la etiqueta '$e', que no es un eje válido (serializa:<minúsculas, números, . _ ->): corrígela" >&2; exit 1; }
+    done <<< "$axes"
     if [ -n "$axes" ] && [ "$(kit_transport)" = nube ]; then
       echo "#$n lleva $(printf '%s' "$axes" | tr '\n' ' ' | sed 's/ *$//') y en la nube no se puede tomar su candado" >&2
       exit 1
@@ -370,11 +375,14 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
       exit 2
     fi
     # the claim is won: now the axis locks (after, not before, so the loser of a claim race never holds one)
-    for e in $axes; do
+    while IFS= read -r e; do
+      [ -n "$e" ] || continue
       lock_take "$e" "$id" "$n"; rc=$?
       [ $rc -eq 0 ] && { echo "candado: $(lock_ref "$e")"; continue; }
       if [ $rc -eq 1 ]; then
         o="$(lock_owner "$e")" || o="desconocido"
+        # a lock left for this same issue by a session that died: the claim is ours now, so is the lock
+        case " $o " in *" issue:$n "*) echo "candado: $(lock_ref "$e") (ya era de #$n: $o)"; continue ;; esac
         reason="el eje $e lo tiene otro ($o)"; code=1
       else
         reason="no se pudo tomar el candado de $e (red o git)"; code=2
@@ -382,7 +390,7 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
       release "$n" "$id" "$reason" || echo "aviso: no se pudo deshacer la reclamación de #$n" >&2
       echo "#$n: $reason; reclamación deshecha" >&2
       exit $code
-    done
+    done <<< "$axes"
     echo "FIN: reclamado #$n"
     ;;
 

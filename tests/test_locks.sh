@@ -64,9 +64,44 @@ flow_issue 14 '.comments[-1].body' | grep -q '^<!-- kit-soltado: kit-aaaa -->' |
 out="$(bash "$issue" soltar "$r" 12 kit-aaaa 2>&1)" || fail "soltar 12: $out"
 [ -z "$(git -C "$o" for-each-ref refs/locks/otro)" ] || fail "soltar 12: el candado sigue"
 [ "$(flow_issue 12 '[.labels[].name] | index("en-curso") != null')" = false ] || fail "soltar 12: dejó en-curso"
-flow_add_issue 15 "suelta sin candado propio" serializa:tres
+# reclamar que pierde el eje deshace su reclamación sin liberar el candado ajeno
+flow_add_issue 15 "pierde el eje" serializa:tres
 out="$(bash "$issue" reclamar "$r" 15 kit-bbbb 2>&1)"; [ $? -eq 1 ] || fail "reclamar 15 debía perder el eje"
-[ "$(lock_msg tres)" = "agente:agente-ajeno issue:99 eje:tres" ] || fail "soltar sin candado propio liberó el ajeno"
+[ "$(lock_msg tres)" = "agente:agente-ajeno issue:99 eje:tres" ] || fail "reclamar perdido liberó el candado ajeno"
+# soltar an issue whose axis is held for another issue: the other lock stays
+flow_add_issue 16 "soltar sin candado propio" serializa:cuatro
+out="$(bash "$issue" reclamar "$r" 16 kit-dddd 2>&1)" || fail "reclamar 16: $out"
+git -C "$r" push -q origin ":refs/locks/cuatro" && take_as cuatro agente-ajeno 98
+out="$(bash "$issue" soltar "$r" 16 kit-dddd 2>&1)" || fail "soltar 16: $out"
+[ "$(lock_msg cuatro)" = "agente:agente-ajeno issue:98 eje:cuatro" ] || fail "soltar liberó un candado de otro issue"
+git -C "$r" push -q origin ":refs/locks/cuatro"
+
+# two axes, the second held by someone else: the first is released, the other untouched
+flow_add_issue 20 "dos ejes" serializa:a1 serializa:b1
+take_as b1 agente-ajeno 97
+err="$(bash "$issue" reclamar "$r" 20 kit-eeee 2>&1 >/dev/null)"; [ $? -eq 1 ] || fail "dos ejes: debía perder ($err)"
+[ -z "$(git -C "$o" for-each-ref refs/locks/a1)" ] || fail "dos ejes: quedó el candado del primer eje"
+[ "$(lock_msg b1)" = "agente:agente-ajeno issue:97 eje:b1" ] || fail "dos ejes: tocó el candado ajeno"
+git -C "$r" push -q origin ":refs/locks/b1"
+
+# a lock left for this same issue by a dead session: the new claim takes it over
+flow_add_issue 21 "candado viejo propio" serializa:c1
+take_as c1 agente-muerto 21
+out="$(bash "$issue" reclamar "$r" 21 kit-ffff 2>&1)" || fail "candado viejo propio: $out"
+case "$out" in *"candado: refs/locks/c1 (ya era de #21: agente:agente-muerto issue:21 eje:c1)"*"FIN: reclamado #21") ;; *) fail "candado viejo propio: '$out'";; esac
+bash "$issue" soltar "$r" 21 kit-ffff >/dev/null 2>&1 || fail "soltar 21"
+[ -z "$(git -C "$o" for-each-ref refs/locks/c1)" ] || fail "soltar 21 no liberó el candado viejo"
+
+# labels with spaces or that cannot be refs: rejected before claiming, never split into other axes
+flow_add_issue 22 "eje con espacio" "serializa:db mig"
+flow_add_issue 23 "eje inválido" "serializa:a..b"
+for x in 22 23; do
+  err="$(bash "$issue" reclamar "$r" $x kit-gggg 2>&1 >/dev/null)"; rc=$?
+  [ $rc -eq 1 ] || fail "eje inválido #$x: exit $rc ($err)"
+  case "$err" in *"no es un eje válido"*) ;; *) fail "eje inválido #$x: '$err'";; esac
+  [ "$(flow_issue $x '.comments | length')" = 0 ] || fail "eje inválido #$x: publicó comentario"
+done
+[ -z "$(git -C "$o" for-each-ref refs/locks/db refs/locks/mig)" ] || fail "eje con espacio: creó candados partidos"
 
 # --- bloquear releases too
 out="$(bash "$issue" reclamar "$r" 13 kit-cccc 2>&1)" || fail "reclamar 13: $out"

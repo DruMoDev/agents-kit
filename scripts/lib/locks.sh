@@ -9,6 +9,13 @@
 # "agente:<id> issue:<N> eje:<eje>", is the same format as tiktok-editor's own flow, so locks survive the switch.
 # A cloud session cannot push refs/locks (403): kit-issue.sh never picks an issue with an axis there.
 
+# lock_valid <eje>: true if the axis name can be a lock ref (lowercase, digits, . _ -; no "..", no "/": a ref
+# refs/locks/db next to refs/locks/db/x would make one of them impossible to create).
+lock_valid() {
+  local e="${1#serializa:}"
+  [[ $e =~ ^[a-z0-9][a-z0-9._-]*$ ]] && [[ $e != *..* ]] && [[ $e != *. ]] && [[ $e != *.lock ]]
+}
+
 # lock_ref <eje>: the ref of the axis (with or without the serializa: prefix).
 lock_ref() { printf 'refs/locks/%s\n' "${1#serializa:}"; }
 

@@ -119,6 +119,19 @@ while IFS= read -r line; do case "$line" in *"dru/demo"*) ;; *) fail "gh sin rep
 
 # nothing to clean
 bash "$wt" limpiar "$r" 3 >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin worktree debe dar 1"
+# a modified tracked file that the advance would overwrite: git refuses, the file is kept and it says why
+(cd "$other" && git pull -q && echo nuevo > README.md && git commit -q -am readme && git push -q origin main) >/dev/null 2>&1 || fail "mover main 3"
+echo "edición de Dru" > "$r/README.md"
+bash "$wt" abrir "$r" 32 baz >/dev/null 2>&1 || fail "abrir 32"
+jq --arg oid "$(git -C "$r" rev-parse issue-32-baz)" \
+  '.prs = [{number: 4, headRefName: "issue-32-baz", state: "MERGED", headRefOid: $oid, body: "", comments: []}]' \
+  "$GH_STATE/state.json" > "$GH_STATE/s" && mv "$GH_STATE/s" "$GH_STATE/state.json"
+before="$(git -C "$r" rev-parse HEAD)"
+out="$(bash "$wt" limpiar "$r" 32 2>&1)" || fail "limpiar con README editado: $out"
+case "$out" in *"AVISO: el principal NO se pudo avanzar a origin/main"*) ;; *) fail "sin AVISO de avance rechazado: $out";; esac
+[ "$(cat "$r/README.md")" = "edición de Dru" ] && [ "$(git -C "$r" rev-parse HEAD)" = "$before" ] || fail "el avance pisó la edición de Dru"
+git -C "$r" checkout -q README.md && git -C "$r" merge -q --ff-only origin/main || fail "restaurar README"
+
 # main clone on another branch: limpiar still cleans, the main clone is not moved and it says why
 (cd "$other" && echo n > n.txt && git add n.txt && git commit -q -m n && git push -q origin main) >/dev/null 2>&1 || fail "mover main 2"
 git -C "$r" checkout -q -b trabajo-de-dru || fail "rama de Dru"
