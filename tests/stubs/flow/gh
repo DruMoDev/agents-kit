@@ -21,6 +21,8 @@
 #   state.workflows: own workflows (.github/workflows/) reported by `api repos/<slug>/actions/workflows` (default 0)
 #   state.dynamic: GitHub built-in workflows (path dynamic/...) reported there too (default 0)
 #   state.runs: workflow runs reported by `api repos/<slug>/actions/runs` (default [])
+#   state.own_runs: own workflow runs for any commit (`actions/runs?head_sha=`, default state.workflows): 0 = own
+#     workflows that never run on PRs
 #   state.checks: check runs [{"status": "completed", "conclusion": "success"}] for any commit (default [])
 #   GH_CHECKS_SEQ  file with one JSON array of check runs per line; each check-runs call consumes the next line
 #                  (the last one repeats). Overrides state.checks. Position kept in $GH_STATE/.checks_idx
@@ -182,6 +184,10 @@ case "$cmd" in
         jq '([range(.workflows // 0) | {path: ".github/workflows/ci\(.).yml", state: "active"}]
             + [range(.dynamic // 0) | {path: "dynamic/dependabot/dependabot-updates\(.)", state: "active"}]) as $w
             | {total_count: ($w | length), workflows: $w}' "$state" | emit ;;
+      repos/*/*/actions/runs\?head_sha=*)
+        # the runs of a commit: one per own workflow (check suite 1) and per built-in one (dynamic/..., check suite 2)
+        jq '{workflow_runs: ([range(.own_runs // .workflows // 0) | {path: ".github/workflows/ci\(.).yml", check_suite_id: 1}]
+            + [range(.dynamic // 0) | {path: "dynamic/github-code-scanning/codeql", check_suite_id: 2}])}' "$state" | emit ;;
       repos/*/*/actions/runs*)
         jq '{workflow_runs: (.runs // [])}' "$state" | emit ;;
       repos/*/*/commits/*/check-runs*)
@@ -194,7 +200,8 @@ case "$cmd" in
         else
           runs="$(jq -c '.checks // []' "$state")"
         fi
-        printf '%s' "$runs" | jq '{total_count: length, check_runs: .}' | emit ;;
+        # a check run without check_suite belongs to suite 1 (the own workflows' runs)
+        printf '%s' "$runs" | jq '{total_count: length, check_runs: map(.check_suite //= {id: 1})}' | emit ;;
       *) echo "stub: ruta de api no soportada: $apipath" >&2; exit 99 ;;
     esac ;;
   *)

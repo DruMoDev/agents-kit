@@ -14,8 +14,17 @@ const MARK = 'agents-kit está activo';
 const ALLOWED_DIRS = ['scripts', 'skills', 'rules', 'templates'];
 // Outside the project the kit also works in the repo's issue worktrees and in its temp dir (bodies, rounds, waits).
 const KIT_HOME = path.join(process.env.HOME || '', '.agents-kit');
+// The worktrees dir is named after the main clone, also when OpenCode starts inside an issue worktree.
+const mainRoot = (root) => {
+  try {
+    const common = execFileSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return path.basename(common) === '.git' ? path.dirname(common) : root;
+  } catch {
+    return root;
+  }
+};
 const workDirs = (root) => [
-  path.join(process.env.KIT_WORKTREES || path.join(KIT_HOME, 'worktrees'), path.basename(root)),
+  path.join(process.env.KIT_WORKTREES || path.join(KIT_HOME, 'worktrees'), path.basename(mainRoot(root))),
   process.env.KIT_TMP || path.join(KIT_HOME, 'tmp'),
 ];
 

@@ -284,6 +284,14 @@ bash "$pr" gate-local "$wt" $p "$tmp/gate" >/dev/null 2>&1 || fail "gate-local o
 st '.dynamic = 0 | .workflows = 1 | .checks = [{"name":"CodeQL","id":1,"status":"completed","conclusion":"success","app":{"id":57789,"slug":"github-advanced-security"}}]'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"CI"*|*"gate local"*) fail "el resultado de CodeQL contó como CI: $err";; esac
+# own workflows that never run on PRs (deploy on push) plus CodeQL default setup: its green Analyze jobs (a built-in
+# workflow's check suite) are not the CI, so the gate-local is still required
+st '.workflows = 1 | .own_runs = 0 | .dynamic = 1 | .checks = [{"name":"Analyze (python)","id":1,"status":"completed","conclusion":"success","check_suite":{"id":2}}]
+  | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"no hay CI y falta el gate local de ${sha:0:8}"*) ;; *) fail "CodeQL por defecto sustituyó al CI: $err";; esac
+bash "$pr" gate-local "$wt" $p "$tmp/gate" >/dev/null 2>&1 || fail "gate-local tras CodeQL"
+st 'del(.own_runs) | .dynamic = 0'
 st '.workflows = 0 | .checks = []'
 st '.checks = [{"name":"x","id":1,"status":"completed","conclusion":"failure"}]'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"

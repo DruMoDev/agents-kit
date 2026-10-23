@@ -221,7 +221,8 @@ Cierra #$n"
     if [ "$oid" != "$sha" ]; then
       br="$(git symbolic-ref --short -q HEAD)"
       if [ -n "$br" ] && [ "$(git ls-remote origin "refs/heads/$br" 2>/dev/null | cut -f1)" = "$sha" ]; then
-        lag_end=$((SECONDS + ${KIT_PR_LAG:-60}))
+        lag="${KIT_PR_LAG:-60}"; [[ $lag =~ ^[0-9]+$ ]] || lag=60
+        lag_end=$((SECONDS + lag))
         while [ "$oid" != "$sha" ] && [ $SECONDS -lt $lag_end ]; do
           sleep 3
           oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
@@ -347,12 +348,13 @@ ${out: -38000}"
       fi
     fi
 
-    # CI of the PR head, skipped after a rebase (that SHA is gone). The CI is the repo's own workflows (lib/ci.sh):
-    # with them, their checks decide and an own gate-local stands in only when the SHA has no check run at all
-    # (workflows that never run on PRs); without them, the gate-local is always required, and a red external check
-    # (a deploy preview, say) still blocks while a pending one does not.
+    # CI of the PR head, skipped after a rebase (that SHA is gone). The CI is the check runs of the repo's own workflow
+    # runs (lib/ci.sh): when they exist they decide; when none ran for the SHA (no own workflows, or own ones that never
+    # run on PRs) an own gate-local is required, whatever GitHub's built-in workflows or third-party apps report. A red
+    # third-party check (a deploy preview, say) always blocks; a pending one does not.
     if [ "$rebased" = false ]; then
       s="$(ci_state "$oid")" || ci_unreadable
+      x="$(ci_state "$oid" externos)" || ci_unreadable
       own="$(ci_has_workflows)" || ci_unreadable
       has_gate() {
         printf '%s' "$pj" | jq -e --arg me "$me" --arg m "<!-- kit-gate-local: $oid -->" \
@@ -367,8 +369,8 @@ ${out: -38000}"
         esac
       else
         has_gate || reasons+=("el repo no tiene CI propio y falta el gate local de ${oid:0:8}")
-        case "$s" in rojo*) reasons+=("un check externo terminó en '${s#rojo }'") ;; esac
       fi
+      case "$x" in rojo*) reasons+=("un check externo terminó en '${x#rojo }'") ;; esac
     fi
 
     # review: at least one kit-ronda, no kit-revision after the last one (by position) and, in that round, an own
