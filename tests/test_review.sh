@@ -313,7 +313,7 @@ KIT_REVIEW_MODO=raro bash "$rv" "$wt" 4 1 claude claude opus foco 2 3 >/dev/null
 head="$(jq -r '.prs[0].comments[] | .body | capture("<!-- kit-revisado: (?<s>[0-9a-f]{40}) -->").s' "$GH_STATE/state.json" | sed -n 1p)"
 out="$(KIT_REVIEW_MODO=verificar REVIEW_STUB_MODE=cero bash "$rv" "$wt" 4 2 claude claude sonnet "bordes y errores" 3 3 2>&1)" || fail "verificar: $out"
 p="$(prompt claude)"
-for x in "Verificación de arreglos, ronda 3" "los arreglos de la ronda 2" "git diff $head..HEAD" "bordes y errores"; do
+for x in "Verificación de arreglos, ronda 3" "los arreglos de esa ronda" "venga de donde venga" "Revisa entero cada cambio" "git diff $head..HEAD" "bordes y errores"; do
   case "$p" in *"$x"*) ;; *) fail "verificar: el prompt no contiene '$x'";; esac
 done
 case "$p" in *"{{DESDE}}"*|*"{{ANTERIOR}}"*|*"{{BASE}}"*) fail "verificar: queda un marcador sin sustituir";; esac

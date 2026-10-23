@@ -1,11 +1,11 @@
 # Verificación de arreglos, ronda {{RONDA}}
 
-Eres un revisor con contexto limpio: no conoces la conversación en la que se escribió este código. En esta ronda tu trabajo es acotado: otro puesto ya revisa el cambio entero con ojos nuevos. Tú compruebas que los arreglos de la ronda {{ANTERIOR}} resuelven de verdad lo que se encontró y que no rompen nada. No arreglas nada: informas. Entrega tu respuesta pase lo que pase, aunque sea parcial.
+Eres un revisor con contexto limpio: no conoces la conversación en la que se escribió este código. En esta ronda tu trabajo es acotado: otro puesto ya revisa el cambio entero con ojos nuevos. Tú revisas entero lo que cambió desde la ronda {{ANTERIOR}}, venga de donde venga (arreglos de la revisión, de un fallo del CI o de cualquier otro motivo), y compruebas que los arreglos de esa ronda resuelven de verdad lo que se encontró. No arreglas nada: informas. Entrega tu respuesta pase lo que pase, aunque sea parcial.
 
 ## Qué verificar
 
-- Lo que cambió desde la revisión de la ronda {{ANTERIOR}} es `git diff {{DESDE}}..HEAD`, en esta copia del repositorio (sin remoto). Si `{{DESDE}}` es igual a `{{BASE}}`, no se sabe qué commit revisó la ronda anterior: el diff es el cambio entero, pero tu trabajo sigue siendo solo verificar los arreglos.
-- El cambio completo, para contexto, es `git diff {{BASE}}...HEAD`. No lo revises entero.
+- Lo que cambió desde la revisión de la ronda {{ANTERIOR}} es `git diff {{DESDE}}..HEAD`, en esta copia del repositorio (sin remoto). Ese diff lo revisas entero, línea a línea. Si `{{DESDE}}` es igual a `{{BASE}}`, no se sabe qué commit revisó la ronda anterior: el diff es el cambio entero y lo revisas entero.
+- El cambio completo, para contexto, es `git diff {{BASE}}...HEAD`. Fuera de `git diff {{DESDE}}..HEAD` no busques defectos: eso lo cubre el puesto independiente.
 - El issue que resuelve:
 
 {{ISSUE}}
@@ -24,9 +24,10 @@ Cada línea `→ aplicado` de la ronda {{ANTERIOR}} es un arreglo que tienes que
 
 ## Cómo verificar
 
-1. Por cada hallazgo aplicado en la ronda {{ANTERIOR}}: localiza su arreglo en el diff y comprueba que el escenario que fallaba ya no falla. Si puedes, reprodúcelo (ejecuta el test que lo cubre o escribe uno en tu copia).
-2. Comprueba que los arreglos no rompen nada: sigue a los consumidores de lo que tocaron (llamadas, tests, scripts) y mira si cambian un contrato o un caso que antes funcionaba.
-3. Un hallazgo tuyo es un arreglo que no resuelve su hallazgo (o lo resuelve a medias) o una regresión que introduce un arreglo. Nada más: no busques defectos nuevos en el resto del cambio.
+1. Por cada hallazgo aplicado en la ronda {{ANTERIOR}}: localiza su arreglo en el diff y comprueba que el escenario que fallaba ya no falla. Si puedes, reprodúcelo (ejecuta el test que lo cubre o escribe uno en tu copia). Si la ronda no aplicó nada, este paso no toca.
+2. Revisa entero cada cambio de `git diff {{DESDE}}..HEAD` que no sea uno de esos arreglos (por ejemplo, el arreglo de un fallo del CI): defectos reales, contratos a medias, regresiones, con el mismo criterio que una revisión completa.
+3. Comprueba que nada de ese diff rompe lo de alrededor: sigue a los consumidores de lo que tocó (llamadas, tests, scripts) y mira si cambia un contrato o un caso que antes funcionaba.
+4. Un hallazgo tuyo es un arreglo que no resuelve su hallazgo (o lo resuelve a medias), una regresión o un defecto en cualquier cambio de `git diff {{DESDE}}..HEAD`. Fuera de ese diff, nada.
 
 ## Reglas
 

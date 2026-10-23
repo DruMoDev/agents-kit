@@ -68,7 +68,7 @@ grep -qx "args: $r 7 3 claude claude sonnet simplicidad, reutilización y scope 
 # revision.rondas mezcla (default), round 2: seat 1 reviews everything, the others verify the fixes
 grep -qx "modo: completa" "$d/rev-1.out" && grep -qx "modo: verificar" "$d/rev-2.out" && grep -qx "modo: verificar" "$d/rev-3.out" \
   || fail "modos ronda 2: $(grep -h '^modo' "$d"/rev-[123].out | tr '\n' ' ')"
-has "modo: ronda 2 (revision.rondas mezcla): el puesto 1 revisa todo el diff con contexto limpio; los demás verifican los arreglos de la ronda 1"
+has "modo: ronda 2 (revision.rondas mezcla): el puesto 1 revisa todo el diff con contexto limpio; los demás revisan lo que cambió desde la ronda 1 y sus arreglos"
 [ "$(cut -f8 "$d/puestos.tsv" | tr '\n' ' ')" = "completa verificar verificar " ] || fail "puestos.tsv sin modo: $(cat "$d/puestos.tsv")"
 # round 3: the independent seat rotates to seat 2; round 1: every seat complete
 out="$(CLAUDECODE=1 bash "$all" "$r" 7 3 3 2>&1)" || fail "ronda 3: $out"

@@ -93,7 +93,7 @@ Los revisores se ejecutan sin supervisión y con todos los permisos locales, cad
 
 - `proveedores`: familias de modelos que pagas, cada una con su `cli` (`claude`, `opencode` o `codex`) y sus modelos `profundo` y `rapido`. Solo en el global.
 - `revision.puestos`: los puestos de revisión (ver "Revisores").
-- `revision.rondas` (solo en el global): `mezcla` (por defecto) o `completas`. Con `mezcla`, desde la ronda 2 un puesto, que rota cada ronda, revisa todo el diff con contexto limpio y los demás solo verifican que los arreglos de la ronda anterior resuelven sus hallazgos sin romper nada: cuesta menos que repetir revisiones completas y conserva una mirada independiente por ronda.
+- `revision.rondas` (solo en el global): `mezcla` (por defecto) o `completas`. Con `mezcla`, desde la ronda 2 un puesto, que rota cada ronda, revisa todo el diff con contexto limpio y los demás revisan entero lo que cambió desde la ronda anterior (arreglos de la revisión, del CI o de otro motivo) y verifican que los arreglos resuelven sus hallazgos: cuesta menos que repetir revisiones completas y conserva una mirada independiente por ronda.
 - `implementador`: `{"familia": "claude", "nivel": "profundo"}`, el modelo que implementa en `kit-run`. Solo en el global.
 - `notify`: canal de avisos (ver "Avisos"). Solo en el global.
 - `autoMerge` y `maxReviewRounds`.
