@@ -352,6 +352,7 @@ ${out: -38000}"
     # runs (lib/ci.sh): when they exist they decide; when none ran for the SHA (no own workflows, or own ones that never
     # run on PRs) an own gate-local is required, whatever GitHub's built-in workflows or third-party apps report. A red
     # third-party check (a deploy preview, say) always blocks; a pending one does not.
+    admin=false
     if [ "$rebased" = false ]; then
       s="$(ci_state "$oid")" || ci_unreadable
       x="$(ci_state "$oid" externos)" || ci_unreadable
@@ -364,6 +365,9 @@ ${out: -38000}"
         case "$s" in
           verde) ;;
           rojo*) reasons+=("el CI terminó en '${s#rojo }'") ;;
+          # with the gate the merge goes with --admin: a required status check of the branch protection never ran
+          sin-cuota) if has_gate; then admin=true
+                     else reasons+=("GitHub no lanzó el CI por falta de minutos de Actions y falta el gate local de ${oid:0:8}"); fi ;;
           ninguno) has_gate || reasons+=("no hay CI y falta el gate local de ${oid:0:8}") ;;
           *) reasons+=("el CI de ${oid:0:8} no ha concluido") ;;
         esac
@@ -485,8 +489,14 @@ $KIT_HOOK_OUT") ;;
     review_reason "$late"
     report
 
-    # --match-head-commit: never merge a SHA pushed after the gates were checked
-    if ! ci_gh_retry pr merge "$p" --repo "$slug" --squash --match-head-commit "$oid" >/dev/null; then
+    # --match-head-commit: never merge a SHA pushed after the gates were checked. --admin only when GitHub had no
+    # Actions minutes for the CI and the own gate-local of this SHA stands in for it
+    adm=()
+    if [ "$admin" = true ]; then
+      adm=(--admin)
+      echo "aviso: CI de GitHub sin minutos de Actions: se fusiona con --admin sobre el gate local de ${oid:0:8}"
+    fi
+    if ! ci_gh_retry pr merge "$p" --repo "$slug" --squash --match-head-commit "$oid" ${adm[@]+"${adm[@]}"} >/dev/null; then
       # a transient error may hide a merge that did happen: the state decides
       [ "$(pr_json state | jq -r .state 2>/dev/null)" = MERGED ] \
         || { echo "error: gh pr merge falló (el error de gh está arriba: la PR cambió de head tras las comprobaciones, el repo no permite squash...)" >&2; exit 2; }

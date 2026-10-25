@@ -125,6 +125,39 @@ seq_checks '[{"name":"ci","id":5,"app":{"id":1},"status":"completed","conclusion
 err="$(bash "$pr" esperar-ci "$wt" $p 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "dos apps: exit $rc"
 case "$err" in *"el CI terminó en 'failure'"*) ;; *) fail "dos apps msg: $err";; esac
+# jobs GitHub never started for billing (no Actions minutes) read as failures: sin-cuota, not red
+BILL='[{"annotation_level":"failure","message":"The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the '"'"'Billing & plans'"'"' section in your settings"}]'
+st ".annotations = {\"7\": $BILL, \"8\": $BILL}"
+seq_checks '[{"name":"js","id":7,"status":"completed","conclusion":"failure"},{"name":"py","id":8,"status":"completed","conclusion":"failure"}]'
+st '.own_run = {"id": 41, "conclusion": "failure", "updated_at": "2099-01-01T00:00:00Z"}'
+: > "$GH_LOG"
+out="$(bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "sin cuota: $out"
+[ "$(last_line "$out")" = "FIN: sin-cuota" ] || fail "sin cuota FIN: $out"
+! grep -q 'rerun-failed-jobs' "$GH_LOG" || fail "relanzó un CI bloqueado este mes"
+# blocked before this month's billing period: the minutes may be back, so the failed jobs are re-run once
+B2='[{"name":"js","id":7,"status":"completed","conclusion":"failure"},{"name":"py","id":8,"status":"completed","conclusion":"failure"}]'
+st '.own_run = {"id": 41, "conclusion": "failure", "updated_at": "2000-01-01T00:00:00Z"}'
+seq_checks "$B2" "$OK"
+out="$(KIT_CI_POLL=0 bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "cuota renovada: $out"
+[ "$(last_line "$out")" = "FIN: verde" ] || fail "cuota renovada FIN: $out"
+grep -q 'repos/dru/demo/actions/runs/41/rerun-failed-jobs' "$GH_LOG" || fail "no relanzó el CI del mes anterior"
+case "$out" in *"relanzado (1 workflows)"*) ;; *) fail "relanzar sin aviso: $out";; esac
+# re-run and still no minutes: sin-cuota, a single re-run
+: > "$GH_LOG"
+seq_checks "$B2"
+out="$(KIT_CI_POLL=0 bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "sigue sin cuota: $out"
+[ "$(last_line "$out")" = "FIN: sin-cuota" ] || fail "sigue sin cuota FIN: $out"
+[ "$(grep -c 'rerun-failed-jobs' "$GH_LOG")" = 1 ] || fail "más de un relanzamiento"
+st 'del(.own_run)'
+seq_checks "$B2"
+# one job blocked and another that really failed: red
+seq_checks '[{"name":"js","id":7,"status":"completed","conclusion":"failure"},{"name":"py","id":9,"status":"completed","conclusion":"failure"}]'
+err="$(bash "$pr" esperar-ci "$wt" $p 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "cuota y fallo real: exit $rc ($err)"
+case "$err" in *"el CI terminó en 'failure'"*) ;; *) fail "cuota y fallo real msg: $err";; esac
+seq_checks '[{"name":"js","id":7,"status":"completed","conclusion":"cancelled"}]'
+bash "$pr" esperar-ci "$wt" $p >/dev/null 2>&1; [ $? -eq 1 ] || fail "cancelado con anotación de cuota debe dar 1"
+st 'del(.annotations)'
 # workflows but no check run for the SHA after the grace period: no CI for this PR
 seq_checks '[]'
 out="$(KIT_CI_GRACE=0 KIT_CI_TIMEOUT=2 bash "$pr" esperar-ci "$wt" $p 2>&1)" || fail "sin checks: $out"
@@ -261,6 +294,12 @@ gb="$(jq -r '.prs[0].comments[-1].body' "$GH_STATE/state.json")"
 case "$gb" in *"linea de test 1"*"salida recortada"*"RESULTADO FINAL: 0 fallos"*) ;; *) fail "gate-local largo sin cabeza, aviso o cola";; esac
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"gate local"*|*"CI"*) fail "gate propio rechazado: $err";; esac
+# jobs blocked for billing (no Actions minutes): the own gate-local is accepted
+st '.workflows = 1 | .checks = [{"name":"js","id":7,"status":"completed","conclusion":"failure"}]
+  | .annotations = {"7": [{"annotation_level":"failure","message":"The job was not started because your spending limit needs to be increased."}]}'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"gate local"*|*"CI"*) fail "gate con CI sin cuota rechazado: $err";; esac
+st 'del(.annotations)'
 # workflows that never ran for the SHA (no check run): the own gate-local is accepted
 st '.workflows = 1 | .checks = []'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
@@ -290,6 +329,11 @@ st '.workflows = 1 | .own_runs = 0 | .dynamic = 1 | .checks = [{"name":"Analyze 
   | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))'
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"no hay CI y falta el gate local de ${sha:0:8}"*) ;; *) fail "CodeQL por defecto sustituyó al CI: $err";; esac
+st '.own_runs = 1 | .dynamic = 0 | .checks = [{"name":"js","id":7,"status":"completed","conclusion":"failure"}]
+  | .annotations = {"7": [{"annotation_level":"failure","message":"The job was not started because your spending limit needs to be increased."}]}'
+err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
+case "$err" in *"falta de minutos de Actions y falta el gate local de ${sha:0:8}"*) ;; *) fail "sin cuota y sin gate: $err";; esac
+st 'del(.annotations) | .own_runs = 0 | .dynamic = 1'
 bash "$pr" gate-local "$wt" $p "$tmp/gate" >/dev/null 2>&1 || fail "gate-local tras CodeQL"
 st 'del(.own_runs) | .dynamic = 0'
 st '.workflows = 0 | .checks = []'
@@ -406,6 +450,7 @@ case "$(flow_issue 3 '.comments[-1].body')" in "<!-- kit-soltado: fusionar -->"*
 grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso$" "$GH_LOG" || fail "issue edit sin las etiquetas"
 grep -q -- "pr merge $p.*--squash" "$GH_LOG" || fail "merge sin --squash"
 grep -q -- "--delete-branch" "$GH_LOG" && fail "merge con --delete-branch"
+grep -q -- "--admin" "$GH_LOG" && fail "merge con CI verde usó --admin"
 while IFS= read -r line; do case "$line" in *"dru/demo"*|"api user --jq .login") ;; *) fail "gh sin repo: $line";; esac; done < "$GH_LOG"
 
 # fusionar again after a merge whose cleanup died halfway (issue open, en-curso, lock): it finishes the cleanup only
@@ -419,6 +464,19 @@ grep -q '^pr merge' "$GH_LOG" && fail "fusionar relanzado volvió a fusionar"
 nc="$(flow_issue 3 '.comments | length')"
 out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar relanzado sin nada pendiente: $out"
 [ "$(flow_issue 3 '.comments | length')" = "$nc" ] || fail "fusionar relanzado duplicó comentarios"
+
+# fusionar: CI blocked for lack of Actions minutes + own gate-local -> merge with --admin (a required check never ran)
+st '.prs[0].state = "OPEN" | (.issues[] | select(.number == 3)) |= (.state = "OPEN" | .labels = [{name: "en-curso"}])
+  | .checks = [{"name":"suite","id":7,"status":"completed","conclusion":"failure"}]
+  | .annotations = {"7": [{"annotation_level":"failure","message":"The job was not started because your spending limit needs to be increased."}]}'
+bash "$pr" gate-local "$wt" $p "$tmp/gate" >/dev/null 2>&1 || fail "gate-local sin cuota"
+: > "$GH_LOG"
+out="$(bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar sin cuota: $out"
+[ "$(last_line "$out")" = "FIN: ok" ] || fail "fusionar sin cuota FIN: $out"
+case "$out" in *"se fusiona con --admin sobre el gate local de ${sha:0:8}"*) ;; *) fail "fusionar sin cuota sin aviso: $out";; esac
+grep -q -- "pr merge $p.*--match-head-commit $sha.*--admin" "$GH_LOG" || fail "fusionar sin cuota sin --admin"
+[ "$(pr_q .state)" = MERGED ] || fail "sin cuota: no fusionó"
+st 'del(.annotations) | .checks = [{"name":"ci","id":7,"status":"completed","conclusion":"success"}]'
 
 # fusionar: a failing label cleanup is only a warning, the merge still counts
 st '.prs[0].state = "OPEN" | .prs[0].comments |= map(select(.body | startswith("<!-- kit-gate-local") | not))

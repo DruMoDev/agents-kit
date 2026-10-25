@@ -146,7 +146,11 @@ ship_merge() {
     echo "CI: $ci"
     # no --delete-branch: gh would try to switch branches in the worktree; the remote branch is deleted in ship_end
     # --match-head-commit: never merge a head other than the one whose CI was just checked
-    ci_gh_retry pr merge "$1" --repo "$slug" --squash --match-head-commit "$2" >/dev/null || merge_rc=$?
+    # no Actions minutes (sin-cuota): a required status check never runs, so the merge needs --admin, as with sin-ci
+    # these PRs only touch the kit's own files
+    local adm=()
+    [ "$ci" != sin-cuota ] || adm=(--admin)
+    ci_gh_retry pr merge "$1" --repo "$slug" --squash --match-head-commit "$2" ${adm[@]+"${adm[@]}"} >/dev/null || merge_rc=$?
   elif [ "$ci_rc" -eq 3 ]; then
     echo "no se fusiona todavía: el CI sigue en marcha. Para esperarlo y fusionar solo el PR, relanza: $0 fusionar $root $branch" >&2
   else

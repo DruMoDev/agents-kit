@@ -24,6 +24,8 @@
 #   state.own_runs: own workflow runs for any commit (`actions/runs?head_sha=`, default state.workflows): 0 = own
 #     workflows that never run on PRs
 #   state.checks: check runs [{"status": "completed", "conclusion": "success"}] for any commit (default [])
+#   state.own_run: fields merged into each own workflow run of `actions/runs?head_sha=` (id, conclusion, updated_at)
+#   state.annotations: {"<check run id>": [annotations]} for `api repos/<slug>/check-runs/<id>/annotations` (default [])
 #   GH_CHECKS_SEQ  file with one JSON array of check runs per line; each check-runs call consumes the next line
 #                  (the last one repeats). Overrides state.checks. Position kept in $GH_STATE/.checks_idx
 #                  (delete it to restart the sequence).
@@ -55,7 +57,7 @@ while [ $# -gt 0 ]; do
     --head|-H) head="$2"; shift 2 ;;
     --base|-B) base="$2"; shift 2 ;;
     --draft|-d) draft=true; shift ;;
-    --squash|--delete-branch) shift ;;
+    --squash|--delete-branch|--admin) shift ;;
     --match-head-commit) match="$2"; shift 2 ;;
     --comment|-c) comment="$2"; shift 2 ;;
     --limit|-L|--search|-S) shift 2 ;;
@@ -184,9 +186,10 @@ case "$cmd" in
         jq '([range(.workflows // 0) | {path: ".github/workflows/ci\(.).yml", state: "active"}]
             + [range(.dynamic // 0) | {path: "dynamic/dependabot/dependabot-updates\(.)", state: "active"}]) as $w
             | {total_count: ($w | length), workflows: $w}' "$state" | emit ;;
+      repos/*/*/actions/runs/*/rerun-failed-jobs) ;; # logged in GH_LOG; the next check-runs answer is the re-run
       repos/*/*/actions/runs\?head_sha=*)
         # the runs of a commit: one per own workflow (check suite 1) and per built-in one (dynamic/..., check suite 2)
-        jq '{workflow_runs: ([range(.own_runs // .workflows // 0) | {path: ".github/workflows/ci\(.).yml", check_suite_id: 1}]
+        jq '(.own_run // {}) as $o | {workflow_runs: ([range(.own_runs // .workflows // 0) | {path: ".github/workflows/ci\(.).yml", check_suite_id: 1} + $o]
             + [range(.dynamic // 0) | {path: "dynamic/github-code-scanning/codeql", check_suite_id: 2}])}' "$state" | emit ;;
       repos/*/*/actions/runs*)
         jq '{workflow_runs: (.runs // [])}' "$state" | emit ;;
@@ -202,6 +205,9 @@ case "$cmd" in
         fi
         # a check run without check_suite belongs to suite 1 (the own workflows' runs)
         printf '%s' "$runs" | jq '{total_count: length, check_runs: map(.check_suite //= {id: 1})}' | emit ;;
+      repos/*/*/check-runs/*/annotations)
+        id="${apipath%/annotations}"; id="${id##*/}"
+        jq --arg id "$id" '.annotations[$id] // []' "$state" | emit ;;
       *) echo "stub: ruta de api no soportada: $apipath" >&2; exit 99 ;;
     esac ;;
   *)
