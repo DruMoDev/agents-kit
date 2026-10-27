@@ -4,7 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 # Value of a frontmatter key (first --- block) in a SKILL.md.
 fm() { awk -v k="$2" 'NR==1&&$0!="---"{exit} NR>1&&$0=="---"{exit} NR>1&&index($0,k": ")==1{print substr($0,length(k)+3); exit}' "$1"; }
 
-for s in kit-on kit-off kit-plan kit-run kit-scout; do
+for s in kit-on kit-off kit-plan kit-run kit-scout kit-revisar; do
   [ -f "$REPO_ROOT/skills/$s/SKILL.md" ] || fail "missing skills/$s/SKILL.md"
 done
 

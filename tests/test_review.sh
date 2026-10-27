@@ -150,6 +150,25 @@ body="$(jq -r '.prs[0].comments[2].body' "$GH_STATE/state.json")"
 case "$body" in *$'\x1b'*|*"> build"*|*"Voy a revisar"*) fail "opencode comentario con ruido: $body";; esac
 [ "$(wts)" = 2 ] || fail "opencode dejó el worktree desechable"
 
+# local (no PR, no gh): reviews BASE...HEAD of the env with the context in place of the issue; prints, never posts
+n0="$(ncom)"; rm -f "$REVIEW_DUMP"/claude.*
+nogh="$(mktemp -d)"; for c in git jq perl claude sed awk cat mktemp rm mkdir cp chmod dirname basename env tr grep sort wc printf; do
+  p="$(command -v "$c")" && ln -s "$p" "$nogh/$c"; done
+out="$(PATH="$nogh:/usr/bin:/bin" KIT_REVIEW_BASE="$base" KIT_REVIEW_HEAD="$head" KIT_REVIEW_CONTEXTO="arregla el foo local" \
+  REVIEW_STUB_MODE=ok bash "$rv" "$wt" local 2 claude claude sonnet "foco local" 1 - 2>&1)" || fail "local: $out"
+[ "$(last_line "$out")" = "FIN: 2 hallazgos" ] || fail "local FIN: $out"
+case "$out" in *"### Revisión del puesto 2: claude/sonnet, ronda 1"*) ;; *) fail "local sin informe: $out";; esac
+case "$out" in *"kit-revision"*|*"kit-revisado"*) fail "local con marcadores de PR: $out";; esac
+[ "$(ncom)" = "$n0" ] || fail "local publicó en la PR"
+case "$(prompt claude)" in *"arregla el foo local"*"(revisión local: no hay PR)"*"git diff $base...HEAD"*) fail "orden inesperado";;
+  *"git diff $base...HEAD"*"arregla el foo local"*"(revisión local: no hay PR)"*) ;; *) fail "local prompt: $(prompt claude)";; esac
+[ "$(sed -n 1p "$REVIEW_DUMP/claude.git")" = "$head" ] || fail "local: el revisor no está en HEAD"
+# local without its commits, or asking for verificar: refused
+out="$(KIT_REVIEW_BASE="$base" bash "$rv" "$wt" local 2 claude claude sonnet f 1 - 2>&1)"; rc=$?
+[ $rc -eq 2 ] && case "$out" in *KIT_REVIEW_HEAD*) true;; *) false;; esac || fail "local sin HEAD: $rc $out"
+bash "$rv" "$wt" local 2 claude claude sonnet f 2 - >/dev/null 2>&1; [ $? -eq 1 ] || fail "local con ronda 2 debe dar 1"
+KIT_REVIEW_MODO=verificar bash "$rv" "$wt" local 2 claude claude sonnet f 1 - >/dev/null 2>&1; [ $? -eq 1 ] || fail "local verificar debe dar 1"
+
 # opencode 2.x: no --pure; --standalone so the config env reaches a private server
 rm -f "$REVIEW_DUMP"/opencode.*
 out="$(REVIEW_STUB_MODE=ok REVIEW_STUB_VERSION="opencode v2.1.4" bash "$rv" "$wt" 4 1 gpt opencode openai/v2 "uso real" 2 3 2>&1)" \

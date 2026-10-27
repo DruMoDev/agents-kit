@@ -13,7 +13,7 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
 
 ## Pasos
 
-1. **Marcador.** `git rev-parse --show-toplevel` da la raíz. Si no existe `<raíz>/.agents-kit.json`, di `kit no activado: ejecuta kit-on` y para.
+1. **Marcador.** `git rev-parse --show-toplevel` da la raíz. Si no existe `<raíz>/.agents-kit.json`, di `kit no activado: ejecuta kit-on` y para. Si `jq -r .flujo <raíz>/.agents-kit.json` da `false`, el flujo de issues y PR del kit está desactivado en este repo (sigue el suyo): díselo a Dru, recuérdale que la revisión del cambio local es `kit-revisar`, y para.
 2. **Buscar.** Lee `AGENTS.md` y recorre el código. Busca:
    - Bugs con un escenario concreto que falla.
    - Tests que faltan en caminos importantes o de error.

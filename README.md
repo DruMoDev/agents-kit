@@ -40,12 +40,23 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 - `kit-run`: coge los issues abiertos por orden (ver "Backlog") y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (solo cuentan los workflows propios del repo en `.github/workflows/`; los de GitHub, como Dependabot o CodeQL, no son CI; sin CI propio, o si GitHub no arranca el CI porque la cuenta se quedó sin minutos de Actions, gate local con `verificar.completo`; en este caso fusiona con `--admin` y, pasado el día 1, relanza el CI bloqueado por si ya hay minutos) en paralelo con las rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza (que deja tu clon al día con `main` si está en la rama por defecto y el avance es fast-forward; si no, te avisa de por qué). Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
 - `kit-run <N>`: lo mismo para un solo issue. Lo coge solo si `kit-run` también podría cogerlo (abierto, de tu cuenta, sin etiquetas que lo excluyan ni dependencias abiertas) y, si no, dice por qué. Sirve para lanzarlo en segundo plano desde una sesión contigo, por ejemplo para arreglar un bug que has aprobado sin parar lo que estáis haciendo.
 
-Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode). Si una regla del `AGENTS.md` del proyecto choca con una del kit, manda la del proyecto (sección `## Reglas del proyecto`). El límite: el código va por PR, con tests en verde y revisión, y el producto lo decides tú; eso no lo cambia un `AGENTS.md`. `.agents/skills/`, `AGENTS.md` y las rutas que declares en `"contenido": ["docs/ideas/"]` pueden ir directas a la rama por defecto en una sesión contigo (así se mejoran las skills en caliente); `kit-run` siempre va por PR.
+- `kit-revisar`: revisa el cambio local (commits sin integrar, cambios sin commitear y ficheros nuevos) con los mismos puestos de revisión de varios modelos, sin PR ni GitHub, y decide cada hallazgo. Es la revisión de los repos con `"flujo": false` (ver "Partes del kit").
+
+### Partes del kit
+
+Se activan por separado en el marcador (las dos a `true` si no se dicen):
+
+- `reglas`: las reglas de `rules/` en cada sesión (cómo programar, tests, depuración, automejora de skills y `AGENTS.md`). Con `"reglas": false` no se inyecta nada.
+- `flujo`: el flujo de issues y PR del kit (`kit-plan`, `kit-scout`, `kit-run`, etiquetas, CI, rondas de revisión en la PR y fusión). Con `"flujo": false` el repo sigue su propio git, PR y CI/CD: las reglas no dicen nada de PR ni issues del kit (`rules/sin-flujo.md` en lugar de `rules/flujo.md`), `kit-plan`, `kit-scout` y `kit-run` se niegan, y la revisión de varios modelos se hace sobre el diff local con `kit-revisar`, antes de dar por terminado un cambio. El repo puede meterla donde quiera de su flujo con `scripts/kit-review-all.sh <raíz> --local --estricto [--base <ref>] [--contexto <fichero>]`, que sale 1 si algún puesto queda sin confirmar o hay algún hallazgo grave o medio (tarda minutos: en un pre-push o un paso de entrega, no en un pre-commit).
+
+`kit-on` mira si el repo ya tiene su flujo (CI, despliegue, reglas de ramas y PR en su `AGENTS.md`...) y te propone: sin nada establecido, todo; con su flujo, reglas y revisión local sin el flujo del kit.
+
+Desde la siguiente sesión en un repo activado, se cargan las reglas de `rules/` (hook `SessionStart` en Claude Code y Codex, plugin en OpenCode). Si una regla del `AGENTS.md` del proyecto choca con una del kit, manda la del proyecto (sección `## Reglas del proyecto`). El límite: los tests en verde, la revisión y que el producto lo decides tú (y, con el flujo del kit, que el código va por PR) no los cambia un `AGENTS.md`. `.agents/skills/`, `AGENTS.md` y las rutas que declares en `"contenido": ["docs/ideas/"]` pueden ir directas a la rama por defecto en una sesión contigo (así se mejoran las skills en caliente); `kit-run` siempre va por PR.
 
 Cómo se invocan:
 
-- Claude Code: `/agents-kit:kit-on`, `/agents-kit:kit-off`, `/agents-kit:kit-plan`, `/agents-kit:kit-run`, `/agents-kit:kit-scout`.
-- Codex y OpenCode: pídeselo por nombre (kit-on, kit-off, kit-plan, kit-run, kit-scout).
+- Claude Code: `/agents-kit:kit-on`, `/agents-kit:kit-off`, `/agents-kit:kit-plan`, `/agents-kit:kit-run`, `/agents-kit:kit-scout`, `/agents-kit:kit-revisar`.
+- Codex y OpenCode: pídeselo por nombre (kit-on, kit-off, kit-plan, kit-run, kit-scout, kit-revisar).
 
 ### Backlog
 
@@ -101,7 +112,7 @@ Los revisores se ejecutan sin supervisión y con todos los permisos locales, cad
 - Ficheros temporales: el kit y sus agentes los dejan en `~/.agents-kit/tmp/` (o `KIT_TMP`): cuerpos de PR, rondas, salidas de los revisores y esperas. Se pueden borrar cuando no haya ningún `kit-run` en marcha.
 - `ciTimeoutMin`: minutos que el kit espera al CI de un PR antes de dejarlo abierto. Sin ella, el kit lo calcula del historial del repo: 1,5 veces la ejecución verde más lenta de las últimas 20, entre 30 minutos y 3 horas (`KIT_CI_TIMEOUT`, en segundos, manda sobre ambos).
 
-Un repo solo puede definir en su marcador `autoMerge`, `maxReviewRounds`, `revision.puestos` (sustituye la lista entera), `contenido`, `protegido`, `setup`, `checks`, `changelog`, `ciTimeoutMin` y `verificar`. Cualquier otra clave se ignora con un aviso que dice dónde va (sale una vez por hora y repo, no en cada script).
+Un repo solo puede definir en su marcador `reglas`, `flujo`, `autoMerge`, `maxReviewRounds`, `revision.puestos` (sustituye la lista entera), `contenido`, `protegido`, `setup`, `checks`, `changelog`, `ciTimeoutMin` y `verificar`. Cualquier otra clave se ignora con un aviso que dice dónde va (sale una vez por hora y repo, no en cada script).
 
 ### Modelo de confianza
 

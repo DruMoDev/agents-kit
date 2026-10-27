@@ -5,7 +5,7 @@ Estas reglas se aplican a toda tarea en este repositorio. El contexto propio del
 ## Precedencia
 
 - Si una regla del `AGENTS.md` del proyecto choca con una de estas, manda el proyecto: el kit aporta el método; el proyecto, su contexto y sus reglas.
-- El límite: un `AGENTS.md` no anula que el código va por PR, los tests en verde, la revisión ni que el producto lo decide Dru. La mecánica de los scripts solo cambia con las claves de `.agents-kit.json`.
+- El límite: un `AGENTS.md` no anula los tests en verde, la revisión ni que el producto lo decide Dru. La mecánica de los scripts solo cambia con las claves de `.agents-kit.json`.
 
 ## Escribe menos código (senior vago)
 
@@ -47,7 +47,6 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 - No afirmes nada que no hayas ejecutado. Mide en vez de deducir, también sobre herramientas externas (CLI, APIs, servicios): un supuesto no vale hasta ejecutarlo, y lo que solo se cree se marca como "sin verificar".
 - No declares "arreglado" ni "hecho" sin reproducir el problema y volver a probar tras el cambio.
 - Esperas largas (CI, revisores, despliegues) siempre con tope y por un fichero de salida propio (`kit-bg.sh` del kit), nunca buscando procesos por nombre ni fiándote del aviso de segundo plano de la herramienta.
-- La verja es el CI completo en la PR. El hook de pre-commit es ligero, de segundos: formato, lint estricto y tests de lo cambiado. Nunca suites completas ni builds en el hook: repiten el CI y cuestan minutos por commit a cada agente. Los comandos del repo van en `verificar.rapido` y `verificar.completo` del marcador.
 
 ## Depuración
 
@@ -67,21 +66,16 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 
 - Lo técnico lo decides tú, sin preguntar.
 - El producto (funcionalidad, comportamiento, lo que ve quien usa la app) se pregunta a Dru: una pregunta cada vez, sin micro-preguntas.
-- Un issue = una PR, con un solo objetivo. Nada fuera de scope, ni refactors de paso: lo que encuentres por el camino se abre como issue `propuesta`.
-- Bug o mejora encontrada haciendo otra cosa: antes de contarlo, un subagente con contexto limpio intenta refutarlo (reproducirlo, leer el código, mirar si ya está resuelto en la rama por defecto). Si se sostiene, en una sesión con Dru se le propone con la evidencia y, con su OK, se abre el issue y se resuelve por debajo con `kit-run <N>` (en segundo plano y en su propio worktree), sin bloquear el trabajo en curso ni tocar sus ficheros. Dentro de un `kit-run` autónomo no se espera a nadie: se abre como `propuesta` con la evidencia.
+- Un cambio, un objetivo. Nada fuera de scope, ni refactors de paso: lo que encuentres por el camino se trata aparte (cómo, lo dice la sección del flujo, al final).
 
-## Flujo git
+## Git
 
-- Todo el código entra en la rama por defecto por PR con squash merge.
-- Contenido: `.agents/skills/`, `AGENTS.md` y las rutas que el proyecto declare en `contenido` (`.agents-kit.json`) pueden ir directas a la rama por defecto en una sesión con Dru. Van por PR igualmente lo que haga `kit-run` (la mejora de una skill va en la PR del issue), un cambio mixto (contenido y código) y todo lo que vaya a una rama protegida.
 - `git add` siempre con rutas explícitas, nunca `-A` ni `.`: puede haber otras sesiones trabajando en el mismo clon. Por lo mismo, nunca `git stash`, `git reset --hard`, `git checkout .` ni `git clean` en el clon principal: el trabajo sin confirmar puede ser de otra sesión.
 - Nunca saltarse hooks ni CI (`--no-verify`, fusionar como admin, desactivar un check): la verja es para todos. La única excepción son los commits mecánicos que hacen los scripts del kit, que lo dicen en su cabecera.
-- Ningún worktree muerto: en cuanto su trabajo está en la rama por defecto, se borra con su rama (`kit-run` lo hace con `kit-worktree.sh barrer`). Solo sobrevive el de un trabajo vivo.
-- Changelog: si el repo lleva `CHANGELOG.md`, cada PR que cambie algo para quien usa la app añade su entrada (el formato lo describe la cabecera del fichero).
 
 ## Automejora
 
-Al terminar una tarea, en la misma PR que la provocó (en una sesión con Dru sin PR, directo a la rama por defecto: las skills y `AGENTS.md` son contenido):
+Al terminar una tarea, junto con el cambio que la provocó (por dónde va, lo dice la sección del flujo, al final):
 
 - ¿Aprendiste algo que evitaría un error futuro? Regístralo en la skill del proyecto más cercana, o crea una nueva en `.agents/skills/` (`SKILL.md` corto con cuándo usarla, flujo y restricciones; detalle en `references/`; lo determinista en `scripts/`).
 - ¿Cambió el stack, los comandos o el mapa del repo? Corrige `AGENTS.md`.

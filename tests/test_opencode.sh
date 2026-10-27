@@ -68,7 +68,7 @@ out="$(run2 "$plugin" "$v2repo")" || fail "v2 harness failed: $out"
 printf '%s' "$out" | jq -e '.exports == ["id","server","setup"] and .hooks == ["session.context"]' >/dev/null \
   || fail "v2 export (no permission hook: an ask in V2 is always the user's rule): $out"
 # kit skills added from disk without frontmatter; a user skill with the same id wins
-printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '([.skills[].id] | sort) == ["kit-off","kit-on","kit-plan","kit-run","kit-scout"]
+printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '([.skills[].id] | sort) == ["kit-off","kit-on","kit-plan","kit-revisar","kit-run","kit-scout"]
   and (.skills[] | select(.id == "kit-on") | .path == "/user/kit-on/SKILL.md")
   and (.skills[] | select(.id == "kit-run") | .path == ($s + "/kit-run/SKILL.md") and (.description | startswith("Lleva"))
        and (.start | startswith("---") | not))' >/dev/null || fail "v2 skills: $out"

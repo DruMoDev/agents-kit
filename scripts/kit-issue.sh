@@ -36,6 +36,8 @@
 #   (plus what is missing) when a kit v3 label is missing in the repo or the marker still has v2 keys; FIN: v3 otherwise.
 #   Its first line is "kit: <version>", the plugin version on disk: a session that loaded an older SKILL.md notices.
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
+# With "flujo": false in the marker, siguiente, reparto, aparcar, reclamar, comprobar, crear and tomar-eje exit 1
+# (kit_require_flow); leer and the subcommands that release an issue still work.
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,6 +59,8 @@ case "$sub" in siguiente|leer|reparto|aparcar|reclamar|soltar|decision|bloquear|
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 root="$(cd "$1" && pwd)"; shift
 kit_require_marker "$root" || exit $?
+# with "flujo": false nothing new enters the flow; releasing what is already in it (soltar, decision...) still works
+case "$sub" in siguiente|reparto|aparcar|reclamar|comprobar|crear|tomar-eje) kit_require_flow "$root" || exit $? ;; esac
 
 case "$sub" in
   reparto|comprobar) [ $# -eq 0 ] || usage ;;

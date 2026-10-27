@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-review-all.sh <wt> <pr> <ronda> <N> [--implementador <familia>] [--completa]
+#        scripts/kit-review-all.sh <dir> --local [--base <ref>] [--contexto <fichero>] [--estricto] [--implementador <familia>]
 # Runs every review seat of revision.puestos in parallel with kit-review.sh and waits for all. Each seat tries its
 # candidates (lib/review-seats.sh: CLI in the PATH, other family first) in order: a login, model or quota failure
 # (motivo acceso) moves on to the next candidate; any other failure, or no candidate left, leaves the seat
@@ -16,6 +17,13 @@
 # that the previous round's fixes solve its findings without breaking anything (verificar); with "completas", in
 # round 1, or with --completa (the first round of a resumed issue: its new code is not a fix of the last round), every
 # seat reviews the whole diff. A "modo: ..." line says which seat is the independent one.
+# --local (repos with "flujo": false, or any local change; kit-revisar runs it): the same seats, from the marker of the
+# working tree, review the working tree of <dir> (commits plus uncommitted and untracked files, as one snapshot commit
+# that is never checked out) against --base (default: the merge-base with origin/<default branch> as already fetched;
+# no fetch, no GitHub), in one full round with --contexto's text (what the change is for) in place of the issue.
+# Nothing is posted. The last line is "FIN: <n> puestos, <m> sin confirmar, <h> hallazgos (<g> graves, <d> medios)";
+# with --estricto (for the repo's own hooks or pipelines) it exits 1 when a seat is unconfirmed or a finding is grave
+# or medio. Exit 1 also when there is nothing to review (the snapshot equals the base).
 # Exit: 0 all seats ran (read each state), 1 usage, unknown family or no seats, 2 unknown implementer, broken config or
 # git (default branch or fetch).
 set -u
@@ -26,29 +34,79 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/default-branch.sh"
 review="${KIT_REVIEW_BIN:-$here/kit-review.sh}"
 
-usage() { echo "uso: $0 <wt> <pr> <ronda> <N> [--implementador <familia>] [--completa]" >&2; exit 1; }
-[ $# -ge 4 ] && [ -n "$1" ] || usage
-wt_arg="$1" p="$2" round="$3" n="$4"; shift 4
-impl_arg="" force_full=false
+usage() {
+  echo "uso: $0 <wt> <pr> <ronda> <N> [--implementador <familia>] [--completa]" \
+    "| <dir> --local [--base <ref>] [--contexto <fichero>] [--estricto] [--implementador <familia>]" >&2
+  exit 1
+}
+[ $# -ge 2 ] && [ -n "$1" ] || usage
+wt_arg="$1"; shift
+local_mode=false
+if [ "$1" = --local ]; then
+  local_mode=true; p=local round=1 n=-; shift
+else
+  [ $# -ge 3 ] || usage
+  p="$1" round="$2" n="$3"; shift 3
+  for x in "$p" "$round" "$n"; do [[ $x =~ ^[1-9][0-9]*$ ]] || usage; done
+fi
+impl_arg="" force_full=false base_arg="" ctx_file="" strict=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --implementador) [ $# -ge 2 ] && [ -n "$2" ] || usage; impl_arg="$2"; shift 2 ;;
-    --completa) force_full=true; shift ;;
+    --completa) [ "$local_mode" = false ] || usage; force_full=true; shift ;;
+    --base) [ "$local_mode" = true ] && [ $# -ge 2 ] && [ -n "$2" ] || usage; base_arg="$2"; shift 2 ;;
+    --contexto) [ "$local_mode" = true ] && [ $# -ge 2 ] || usage
+      [ -r "$2" ] || { echo "error: no se puede leer el contexto: $2" >&2; exit 1; }
+      ctx_file="$2"; shift 2 ;;
+    --estricto) [ "$local_mode" = true ] || usage; strict=true; shift ;;
     *) usage ;;
   esac
 done
-for x in "$p" "$round" "$n"; do [[ $x =~ ^[1-9][0-9]*$ ]] || usage; done
 [ -d "$wt_arg" ] || { echo "error: '$wt_arg' no es un directorio" >&2; exit 2; }
-wt="$(cd "$wt_arg" && pwd)"
+if [ "$local_mode" = true ]; then
+  wt="$(git -C "$wt_arg" rev-parse --show-toplevel 2>/dev/null)" || { echo "error: '$wt_arg' no es un repo git" >&2; exit 2; }
+else
+  wt="$(cd "$wt_arg" && pwd)"
+fi
 kit_require_marker "$wt" || exit $?
 impl="$(kit_implementer_family "$impl_arg")" || exit 2
-b="$(cd "$wt" && kit_default_branch)"
-[ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
-(cd "$wt" && kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b") || { echo "error: git fetch falló" >&2; exit 2; }
-KIT_REVIEW_BASE="$(git -C "$wt" rev-parse --verify -q "refs/remotes/origin/$b^{commit}")" \
-  || { echo "error: no se pudo leer origin/$b" >&2; exit 2; }
-export KIT_REVIEW_BASE
-cands="$(kit_seat_candidates "$wt" "$impl" "origin/$b")" || exit $?
+if [ "$local_mode" = true ]; then
+  # the working tree as one commit (a private index: the real one is never touched), unless it is HEAD's tree
+  head="$(git -C "$wt" rev-parse --verify -q 'HEAD^{commit}')" || { echo "error: el repo no tiene commits" >&2; exit 2; }
+  idx="$(mktemp)" || exit 2
+  tree="$(export GIT_INDEX_FILE="$idx"; git -C "$wt" read-tree HEAD && git -C "$wt" add -A && git -C "$wt" write-tree)" \
+    || { rm -f "$idx"; echo "error: no se pudo leer el árbol de trabajo" >&2; exit 2; }
+  rm -f "$idx"
+  KIT_REVIEW_HEAD="$head"
+  if [ "$tree" != "$(git -C "$wt" rev-parse "HEAD^{tree}")" ]; then
+    KIT_REVIEW_HEAD="$(git -C "$wt" commit-tree "$tree" -p "$head" -m "kit-revisar: árbol de trabajo sin commitear")" \
+      || { echo "error: no se pudo crear la instantánea del árbol de trabajo" >&2; exit 2; }
+  fi
+  if [ -n "$base_arg" ]; then
+    KIT_REVIEW_BASE="$(git -C "$wt" rev-parse --verify -q "$base_arg^{commit}")" \
+      || { echo "error: --base no es un commit de este repo: $base_arg" >&2; exit 1; }
+  else
+    b="$(cd "$wt" && kit_default_branch)"
+    KIT_REVIEW_BASE="$( [ -n "$b" ] && git -C "$wt" rev-parse --verify -q "refs/remotes/origin/$b^{commit}")" \
+      || { echo "error: no hay origin/<rama por defecto> en este clon: indica la base con --base <ref>" >&2; exit 1; }
+  fi
+  if [ "$(git -C "$wt" rev-parse "$KIT_REVIEW_HEAD^{tree}")" = "$(git -C "$wt" rev-parse "$KIT_REVIEW_BASE^{tree}")" ]; then
+    echo "nada que revisar: el árbol de trabajo es igual que la base" >&2
+    exit 1
+  fi
+  KIT_REVIEW_CONTEXTO=""
+  [ -z "$ctx_file" ] || KIT_REVIEW_CONTEXTO="$(cat "$ctx_file")"
+  export KIT_REVIEW_BASE KIT_REVIEW_HEAD KIT_REVIEW_CONTEXTO
+  cands="$(kit_seat_candidates "$wt" "$impl")" || exit $?
+else
+  b="$(cd "$wt" && kit_default_branch)"
+  [ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }
+  (cd "$wt" && kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b") || { echo "error: git fetch falló" >&2; exit 2; }
+  KIT_REVIEW_BASE="$(git -C "$wt" rev-parse --verify -q "refs/remotes/origin/$b^{commit}")" \
+    || { echo "error: no se pudo leer origin/$b" >&2; exit 2; }
+  export KIT_REVIEW_BASE
+  cands="$(kit_seat_candidates "$wt" "$impl" "origin/$b")" || exit $?
+fi
 if [ -z "$cands" ]; then
   echo "sin puestos de revisión configurados (revision.puestos)" >&2
   exit 1
@@ -142,6 +200,21 @@ done
 for i in $seats; do cat "$d/puesto-$i.avisos"; done | awk '!seen[$0]++'
 # unconfirmed seats are said on the PR (best effort: fusionar asks for a confirmed review per seat in any case)
 unconf="$(awk -F'\t' '$6 == "sin-confirmar"' "$d/puestos.tsv")"
+if [ "$local_mode" = true ]; then
+  u="$(printf '%s' "$unconf" | grep -c .)"
+  h=0 g=0 md=0 x=""
+  for i in $seats; do
+    [ "$(cut -f6 "$d/puesto-$i.tsv")" = ok ] || continue
+    x="$(sed -n 's/^HALLAZGOS: \([0-9][0-9]*\)$/\1/p' "$d/rev-$i.out" | sed -n '$p')"
+    h=$((h + ${x:-0}))
+    g=$((g + $(grep -c '^[0-9][0-9]*\. \*\*\[grave\]\*\*' "$d/rev-$i.out")))
+    md=$((md + $(grep -c '^[0-9][0-9]*\. \*\*\[medio\]\*\*' "$d/rev-$i.out")))
+  done
+  echo "salidas: $d"
+  echo "FIN: $k puestos, $u sin confirmar, $h hallazgos ($g graves, $md medios)"
+  [ "$strict" = true ] && [ $((u + g + md)) -gt 0 ] && exit 1
+  exit 0
+fi
 if [ -n "$unconf" ]; then
   slug="$(cd "$wt" && kit_origin_slug)"
   while IFS=$'\t' read -r i fam cli model focus _ detalle; do

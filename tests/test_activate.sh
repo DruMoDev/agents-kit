@@ -242,6 +242,15 @@ for bad in "--contenido" "--contenido /etc" "--protegido ../x" "--protegido"; do
   bash "$S" "$r" $bad >/dev/null 2>&1; [ $? -eq 1 ] || fail "'$bad' debe salir 1"
 done
 
+# --reglas/--flujo: written as booleans, idempotent, a bad value is a usage error
+fl="$(mk_repo)"; dirs+=("$fl")
+out="$(bash "$S" "$fl" --changelog false --reglas true --flujo false 2>/dev/null)" || fail "flujo false: exit $?"
+[ "$(jq -c '{reglas, flujo}' "$fl/.agents-kit.json")" = '{"reglas":true,"flujo":false}' ] || fail "flujo false: $(cat "$fl/.agents-kit.json")"
+out="$(bash "$S" "$fl" --flujo false 2>/dev/null)"
+[ "$(last_line "$out")" = "FIN: 0" ] || fail "flujo false rerun: $(last_line "$out")"
+out="$(bash "$S" "$fl" --flujo true 2>/dev/null)" && [ "$(jq .flujo "$fl/.agents-kit.json")" = true ] || fail "flujo true"
+bash "$S" "$fl" --reglas si >/dev/null 2>&1; [ $? -eq 1 ] || fail "--reglas si should exit 1"
+
 bash "$S" "/nonexistent-dir-xyz" >/dev/null 2>&1; [ $? -eq 2 ] || fail "missing dir should exit 2"
 nd="$(mktemp -d)"; dirs+=("$nd")
 bash "$S" "$nd" >/dev/null 2>&1; [ $? -eq 2 ] || fail "non-git dir should exit 2"

@@ -21,8 +21,12 @@ for f in ${STUB_FAIL:-}; do
     exit 2
   fi
 done
+echo "head: ${KIT_REVIEW_HEAD:-}"
+echo "contexto: ${KIT_REVIEW_CONTEXTO:-}"
 echo "Informe del puesto $3"
-echo "FIN: 0 hallazgos"
+# STUB_GRAVE: seats that report one grave finding
+case " ${STUB_GRAVE:-} " in *" $3 "*) echo "1. **[grave]** \`a.txt:1\` falla (confianza alta)"; echo "HALLAZGOS: 1"; echo "FIN: 1 hallazgos" ;;
+  *) echo "HALLAZGOS: 0"; echo "FIN: 0 hallazgos" ;; esac
 EOF
 chmod +x "$stub"
 export KIT_REVIEW_BIN="$stub" STUB_CALLS="$(mktemp)"
@@ -217,6 +221,51 @@ for _ in $(seq 1 100); do [ "$(ls "$pd" | wc -l | tr -d ' ')" = 3 ] && break; sl
 kill -TERM "$lp"; wait "$lp" 2>/dev/null
 sleep 0.5
 for f in "$pd"/*.pid; do kill -0 "$(cat "$f")" 2>/dev/null && fail "señales: el puesto $(basename "$f" .pid) sigue vivo"; done
+
+# --local: the working tree (uncommitted and untracked included) as one snapshot commit against origin/main, every seat
+# complete, the marker of the working tree, nothing posted; the real index is never touched
+mk '{}'
+mkdir -p "$r/src"; echo cambio > "$r/a.txt"; echo nuevo > "$r/nuevo.txt"; git -C "$r" add a.txt
+idx0="$(git -C "$r" diff --cached --name-only)"
+echo 'para qué es el cambio' > "$fake.ctx"
+: > "$STUB_CALLS"; n0="$(ncom)"
+out="$(CLAUDECODE=1 bash "$all" "$r/src" --local --contexto "$fake.ctx" 2>&1)"; rc=$?
+[ $rc -eq 0 ] || fail "local: exit $rc ($out)"
+has "FIN: 3 puestos, 0 sin confirmar, 0 hallazgos (0 graves, 0 medios)" local
+summary="$out"; out="$(cat "$(sed -n 's/^salidas: //p' <<<"$summary")"/rev-*.out)"
+grep -q "^args: $(cd "$r" && pwd -P) local 3 claude claude sonnet .* 1 -$" <<<"$out" || fail "local: argumentos del puesto: $out"
+[ "$(grep -c '^modo: completa$' <<<"$out")" = 3 ] || fail "local: todos completos: $out"
+has "base: $(git -C "$r" rev-parse origin/main)" local
+has "contexto: para qué es el cambio" local
+snap="$(sed -n 's/^head: //p' <<<"$out" | sed -n 1p)"
+[ "$(git -C "$r" show "$snap:nuevo.txt")" = nuevo ] && [ "$(git -C "$r" show "$snap:a.txt")" = cambio ] \
+  || fail "local: la instantánea no tiene el árbol de trabajo"
+[ "$(git -C "$r" rev-parse "$snap^")" = "$(git -C "$r" rev-parse HEAD)" ] || fail "local: la instantánea no cuelga de HEAD"
+[ "$(git -C "$r" diff --cached --name-only)" = "$idx0" ] && [ -f "$r/nuevo.txt" ] || fail "local: tocó el índice o el árbol"
+[ "$(ncom)" = "$n0" ] || fail "local: publicó en la PR"
+revs() { cat "$(sed -n 's/^salidas: //p' <<<"$out")"/rev-*.out; }
+# seats from the working tree's marker (not origin's) and --estricto: an unconfirmed seat or a grave finding = exit 1
+printf '{"revision": {"puestos": [{"foco": "f", "nivel": "rapido", "familia": "misma"}]}}\n' > "$r/.agents-kit.json"
+out="$(CLAUDECODE=1 STUB_GRAVE=1 bash "$all" "$r" --local 2>&1)"; rc=$?
+[ $rc -eq 0 ] || fail "local sin estricto: exit $rc ($out)"
+has "FIN: 1 puestos, 0 sin confirmar, 1 hallazgos (1 graves, 0 medios)" "local hallazgos"
+out="$(CLAUDECODE=1 STUB_GRAVE=1 bash "$all" "$r" --local --estricto 2>&1)"; rc=$?
+[ $rc -eq 1 ] || fail "estricto con un grave: exit $rc ($out)"
+out="$(CLAUDECODE=1 STUB_FAIL="claude/sonnet=tiempo" bash "$all" "$r" --local --estricto 2>&1)"; rc=$?
+[ $rc -eq 1 ] && grep -q "1 sin confirmar" <<<"$out" || fail "estricto con un puesto sin confirmar: exit $rc ($out)"
+out="$(CLAUDECODE=1 bash "$all" "$r" --local --estricto 2>&1)"; rc=$?
+[ $rc -eq 0 ] || fail "estricto limpio: exit $rc ($out)"
+# --base; nothing to review; a clone without origin/<default> needs --base
+out="$(CLAUDECODE=1 bash "$all" "$r" --local --base HEAD 2>&1)"; rc=$?
+[ $rc -eq 0 ] && grep -qx "base: $(git -C "$r" rev-parse HEAD)" <<<"$(revs)" || fail "--base: exit $rc ($out)"
+git -C "$r" reset -q; rm -f "$r/a.txt" "$r/nuevo.txt"; git -C "$r" checkout -q -- .agents-kit.json
+out="$(CLAUDECODE=1 bash "$all" "$r" --local 2>&1)"; rc=$?
+[ $rc -eq 1 ] && grep -q "nada que revisar" <<<"$out" || fail "sin cambios: exit $rc ($out)"
+sinorigen="$(mk_repo)"; echo '{}' > "$sinorigen/.agents-kit.json"
+out="$(CLAUDECODE=1 bash "$all" "$sinorigen" --local 2>&1)"; rc=$?
+[ $rc -eq 1 ] && grep -q -- "--base" <<<"$out" || fail "sin origin: exit $rc ($out)"
+out="$(CLAUDECODE=1 bash "$all" "$sinorigen" --local --base HEAD --completa 2>&1)"; rc=$?
+[ $rc -eq 1 ] || fail "--completa no vale en local: exit $rc"
 
 # no seats
 mk '{"revision": {"puestos": []}}'
