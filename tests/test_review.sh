@@ -150,6 +150,15 @@ body="$(jq -r '.prs[0].comments[2].body' "$GH_STATE/state.json")"
 case "$body" in *$'\x1b'*|*"> build"*|*"Voy a revisar"*) fail "opencode comentario con ruido: $body";; esac
 [ "$(wts)" = 2 ] || fail "opencode dejó el worktree desechable"
 
+# opencode 2.x: no --pure; --standalone so the config env reaches a private server
+rm -f "$REVIEW_DUMP"/opencode.*
+out="$(REVIEW_STUB_MODE=ok REVIEW_STUB_VERSION="opencode v2.1.4" bash "$rv" "$wt" 4 1 gpt opencode openai/v2 "uso real" 2 3 2>&1)" \
+  || fail "opencode 2: $out"
+[ "$(last_line "$out")" = "FIN: 2 hallazgos" ] || fail "opencode 2 FIN: $out"
+a="$(args opencode)"
+[ "$(printf '%s\n' "$a" | sed -n 1,6p | tr '\n' ' ')" = "run --standalone --format json -m openai/v2 " ] || fail "opencode 2 argv: $a"
+[ "$(wc -l < "$REVIEW_DUMP/opencode.calls" | tr -d ' ')" = 1 ] || fail "opencode 2: --version contó como llamada"
+
 # ok with codex: --output-schema, last message file, sandbox without network
 rm -f "$REVIEW_DUMP"/codex.*
 out="$(REVIEW_STUB_MODE=ok bash "$rv" "$wt" 4 3 gpt codex gpt-6.1-sol "scope" 2 3 2>&1)" || fail "codex: $out"

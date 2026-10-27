@@ -1,6 +1,6 @@
-// agents-kit plugin for OpenCode (V1, `opencode` 1.x).
+// agents-kit plugin for OpenCode, V1 (`opencode` 1.x, `server`) and V2 (2.x, `setup`).
 // Registers the plugin skills and, only in repos with .agents-kit.json, injects
-// the same context as hooks/session-start into the first user message.
+// the same context as hooks/session-start (V1: first user message; V2: system).
 
 import { execFileSync } from 'child_process';
 import fs from 'fs';
@@ -112,4 +112,34 @@ export const AgentsKitPlugin = async ({ directory }) => ({
   },
 });
 
-export default { id: 'agents-kit', server: AgentsKitPlugin };
+// V2 (`opencode` 2.x): same behavior through setup(ctx). V2 allows external
+// directories by default, so an `ask` there is always the user's rule: no permission hook.
+const frontmatter = (text) => {
+  const m = text.match(/^---\n([\s\S]*?)\n---\n?/);
+  const field = (k) => (m && (m[1].match(new RegExp(`^${k}:\\s*(.*)$`, 'm')) || [])[1]) || '';
+  return { name: field('name'), description: field('description'), body: m ? text.slice(m[0].length) : text };
+};
+const kitSkills = () => {
+  const dir = path.join(PLUGIN_ROOT, 'skills');
+  return fs.readdirSync(dir).filter((id) => fs.existsSync(path.join(dir, id, 'SKILL.md'))).map((id) => {
+    const file = path.join(dir, id, 'SKILL.md');
+    const fm = frontmatter(fs.readFileSync(file, 'utf8'));
+    return { id, name: fm.name || id, description: fm.description, path: file, content: fm.body };
+  });
+};
+
+const setup = async (ctx) => {
+  const directory = ctx.location.directory;
+  const skills = kitSkills();
+  await ctx.skill.transform((editor) => {
+    for (const s of skills) if (!editor.get(s.id)) editor.add(s);
+  });
+
+  // System parts are rebuilt for every model call and never persisted: no guard needed.
+  await ctx.session.hook('context', (event) => {
+    const ctxText = kitContext(directory);
+    if (ctxText) event.system.push({ type: 'text', text: ctxText });
+  });
+};
+
+export default { id: 'agents-kit', setup, server: AgentsKitPlugin };

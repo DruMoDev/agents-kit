@@ -61,4 +61,24 @@ out="$(run "$link" "$repo")" || fail "harness failed via symlink: $out"
 printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '.skills == [$s] and (.texts | length) == 2' >/dev/null \
   || fail "symlinked plugin must resolve the real plugin root: $out"
 
+# V2 (opencode 2.x): default export with id, setup and the V1 server
+run2() { "$NODE" --no-warnings "$TESTS_DIR/opencode_v2_harness.mjs" "$@"; }
+v2repo="$(mk_repo)"
+out="$(run2 "$plugin" "$v2repo")" || fail "v2 harness failed: $out"
+printf '%s' "$out" | jq -e '.exports == ["id","server","setup"] and .hooks == ["session.context"]' >/dev/null \
+  || fail "v2 export (no permission hook: an ask in V2 is always the user's rule): $out"
+# kit skills added from disk without frontmatter; a user skill with the same id wins
+printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '([.skills[].id] | sort) == ["kit-off","kit-on","kit-plan","kit-run","kit-scout"]
+  and (.skills[] | select(.id == "kit-on") | .path == "/user/kit-on/SKILL.md")
+  and (.skills[] | select(.id == "kit-run") | .path == ($s + "/kit-run/SKILL.md") and (.description | startswith("Lleva"))
+       and (.start | startswith("---") | not))' >/dev/null || fail "v2 skills: $out"
+printf '%s' "$out" | jq -e '.system == ["base"]' >/dev/null || fail "v2 unmarked repo must not inject: $out"
+# marked, from a subdir and through a symlink: rules on every model call, after the base system
+echo '{}' > "$v2repo/.agents-kit.json"
+mkdir -p "$v2repo/src"
+out="$(run2 "$link" "$v2repo/src")" || fail "v2 harness failed: $out"
+printf '%s' "$out" | jq -e --arg r "$REPO_ROOT/rules/testing.md" '(.system | length) == 2 and .system[0] == "base"
+  and (.system[1] | contains("agents-kit está activo") and contains($r)) and .systemAgain == .system' >/dev/null \
+  || fail "v2 marked repo must add the rules to every model call: $out"
+
 echo ok
