@@ -9,7 +9,7 @@ Activa el kit en el repo donde estás. Los scripts hacen lo mecánico; tú pregu
 
 Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa variable está vacía, la raíz del plugin está dos directorios por encima del directorio base de esta skill.
 
-Versión de esta skill: 3.5.2. Al empezar, `jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"` da la de los scripts en disco. Si no coincide, tu sesión cargó un SKILL.md viejo: relee `skills/kit-on/SKILL.md` de la raíz del plugin y sigue esa versión.
+Versión de esta skill: 3.5.3. Al empezar, `jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"` da la de los scripts en disco. Si no coincide, tu sesión cargó un SKILL.md viejo: relee `skills/kit-on/SKILL.md` de la raíz del plugin y sigue esa versión.
 
 Lee siempre la salida completa de cada script y su código de salida; nunca la recortes con `head` ni `tail`. Ante cada código distinto de 0, dile a Dru en español qué pasó y qué tiene que hacer, y para, salvo donde un paso diga otra cosa (`kit-changelog.sh validar` en el paso 4, `kit-skills-check.sh` en el paso 9).
 

@@ -27,7 +27,7 @@ mkdir -p ~/.config/opencode/plugins
 ln -s ~/Documents/programacion/agents-kit/.opencode/plugins/agents-kit.js ~/.config/opencode/plugins/agents-kit.js
 ```
 
-Es un enlace, así que OpenCode usa el código del repo: no hay caché ni aprobación de hooks. El plugin registra todas las skills del kit en todos los repos (solo actúan si las pides). Solo en repos activados añade las reglas al primer mensaje de cada sesión y deja leer y ejecutar sin preguntar `scripts/`, `skills/`, `rules/` y `templates/` del plugin; en los demás, OpenCode pide permiso la primera vez que `kit-on` usa un script. OpenCode ya lee por su cuenta `AGENTS.md` y las skills de `.agents/skills/`.
+Es un enlace, así que OpenCode usa el código del repo: no hay caché ni aprobación de hooks. Sirve para OpenCode 1.x y 2.x. El plugin registra todas las skills del kit en todos los repos (solo actúan si las pides). Solo en repos activados añade las reglas a cada sesión y deja leer y ejecutar sin preguntar `scripts/`, `skills/`, `rules/` y `templates/` del plugin; en los demás, OpenCode 1.x pide permiso la primera vez que `kit-on` usa un script (2.x no pregunta por directorios externos salvo que lo configures). En macOS, si OpenCode 2.x falla con errores 500 en repos de `~/Documents`, su servicio de fondo no tiene permiso para esa carpeta: dáselo en Ajustes > Privacidad y seguridad, o usa `opencode --standalone`. OpenCode ya lee por su cuenta `AGENTS.md` y las skills de `.agents/skills/`.
 
 ## Uso
 

@@ -289,11 +289,15 @@ case "$tool" in
         | {text: $text, sid: ([$ev[] | .sessionID // empty] | last // ""),
            err: ([$ev[] | select(.type == "error") | tojson] | first // "")}'
     }
+    # opencode 2.x dropped --pure and runs on a shared background server that would not see OPENCODE_CONFIG_CONTENT:
+    # --standalone starts a private one (user plugins load there; the kit's stays inert without a marker)
+    oc_iso=--pure
+    [[ "$(opencode --version 2>/dev/null)" =~ ([0-9]+)\.[0-9]+ ]] && [ "${BASH_REMATCH[1]}" -ge 2 ] && oc_iso=--standalone
     attempt=1
     msg="$prompt"
     sid=""
     while :; do
-      launch env OPENCODE_CONFIG_CONTENT="$oc_cfg" opencode run --pure --format json -m "$model" ${sid:+-s "$sid"} "$msg"
+      launch env OPENCODE_CONFIG_CONTENT="$oc_cfg" opencode run "$oc_iso" --format json -m "$model" ${sid:+-s "$sid"} "$msg"
       after_run
       ev="$(oc_read)" || ev='{}'
       err="$(printf '%s' "$ev" | jq -r '.err // ""')"

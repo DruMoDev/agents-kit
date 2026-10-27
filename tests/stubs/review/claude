@@ -13,7 +13,10 @@
 #                     login (auth error, exit 1), evento (opencode error event, exit 0), falla (exit 3),
 #                     lento (sleeps), hijo (background child writing its PID to $REVIEW_DUMP/hijo.pid, then waits),
 #                     toca (touches $REVIEW_STUB_TOUCH, then ok)
+#   REVIEW_STUB_VERSION  what --version prints (opencode 2.x: "opencode v2.1.4")
 tool="$(basename "$0")"
+# --version is not a review call: REVIEW_STUB_VERSION (default 1.19.0) and nothing dumped
+[ "${1:-}" = --version ] && { echo "${REVIEW_STUB_VERSION:-1.19.0}"; exit 0; }
 if [ -n "${REVIEW_DUMP:-}" ]; then
   echo x >> "$REVIEW_DUMP/$tool.calls"
   k="$(wc -l < "$REVIEW_DUMP/$tool.calls" | tr -d ' ')"
