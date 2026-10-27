@@ -58,6 +58,23 @@ out="$(run_hook "$hook" "$repo/src" "not json{")"
 [ "$(rc)" -eq 0 ] || fail "malformed stdin rc=$(rc)"
 check_json "$out" "malformed stdin"
 
+# flags of the marker: the kit flow section by default, the repo's own with "flujo": false, nothing with "reglas": false
+ctx() { run_hook "$hook" "$repo" "{\"cwd\":\"$repo\"}" | jq -r '.hookSpecificOutput.additionalContext'; }
+c="$(ctx)"
+case "$c" in *"## Flujo del kit: issues y PR"*) ;; *) fail "default marker must carry the kit flow";; esac
+case "$c" in *"## Flujo del repo"*) fail "default marker must not carry sin-flujo";; esac
+echo '{"flujo": false}' > "$repo/.agents-kit.json"
+c="$(ctx)"
+case "$c" in *"## Escribe menos código"*"## Flujo del repo (el del kit está desactivado)"*"kit-revisar"*) ;;
+  *) fail "flujo false must carry the core rules and sin-flujo: $c";; esac
+case "$c" in *"por PR con squash merge"*) fail "flujo false must not say code goes through the kit's PRs";; esac
+echo '{"reglas": false}' > "$repo/.agents-kit.json"
+out="$(run_hook "$hook" "$repo" "{\"cwd\":\"$repo\"}")"
+[ "$(rc)" -eq 0 ] && [ -z "$out" ] || fail "reglas false must be silent (rc=$(rc) out=$out)"
+echo 'no es json' > "$repo/.agents-kit.json"
+case "$(ctx)" in *"## Flujo del kit: issues y PR"*) ;; *) fail "an unreadable marker counts as the defaults";; esac
+echo '{}' > "$repo/.agents-kit.json"
+
 # core.md with quotes, backslashes and tabs (temporary plugin copy)
 tmp="$(mktemp -d)"
 mkdir "$tmp/hooks" "$tmp/rules"

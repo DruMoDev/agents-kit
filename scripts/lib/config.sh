@@ -6,7 +6,7 @@
 _KIT_TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/templates/config.json"
 
 # Keys a repo marker may set (plus revision.puestos, which replaces the whole list).
-_KIT_REPO_KEYS='["autoMerge","maxReviewRounds","contenido","protegido","setup","checks","changelog","ciTimeoutMin","verificar"]'
+_KIT_REPO_KEYS='["reglas","flujo","autoMerge","maxReviewRounds","contenido","protegido","setup","checks","changelog","ciTimeoutMin","verificar"]'
 
 # kit_global_path: print the global config path.
 kit_global_path() {
@@ -17,6 +17,17 @@ kit_global_path() {
 kit_require_marker() {
   if [ ! -f "$1/.agents-kit.json" ]; then
     echo "kit no activado: ejecuta kit-on" >&2
+    return 1
+  fi
+}
+
+# kit_require_flow <root>: return 1 (with the reason on stderr) when the marker sets "flujo": false: the kit's issue
+# and PR flow is off there and the repo keeps its own. 2 if the marker is not valid JSON.
+kit_require_flow() {
+  local f
+  f="$(jq -r '.flujo' "$1/.agents-kit.json" 2>/dev/null)" || { echo "error: .agents-kit.json no es JSON válido" >&2; return 2; }
+  if [ "$f" = false ]; then
+    echo "el flujo de issues y PR del kit está desactivado en este repo (\"flujo\": false en .agents-kit.json): el repo sigue su propio flujo; para revisar el diff local, kit-revisar" >&2
     return 1
   fi
 }

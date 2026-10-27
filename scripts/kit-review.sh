@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-review.sh <wt> <pr> <puesto> <familia> <cli> <modelo> <foco> <ronda> <N>
+#        scripts/kit-review.sh <wt> local <puesto> <familia> <cli> <modelo> <foco> 1 -
 # Runs one review seat with one reviewer CLI (adapter: claude, opencode, codex) headless in a throwaway independent
 # clone of the PR head, with gh and git push blocked, no GitHub credentials and none of the launching session's
 # harness variables. The reviewer answers JSON with the schema of skills/kit-run/references/revision-schema.json
@@ -11,6 +12,9 @@
 #   fetched by kit-review-all.sh: no fetch here); KIT_REVIEW_MODO: completa (default: the whole diff, revisor.md) or
 #   verificar (only that the previous round's fixes solve its findings without breaking anything, revisor-verificar.md,
 #   on the diff since the head the previous round reviewed: each report records it as <!-- kit-revisado: <sha> -->).
+# local (kit-review-all.sh --local, for repos with "flujo": false or any local diff): no PR, issue nor GitHub; reviews
+#   git diff $KIT_REVIEW_BASE...$KIT_REVIEW_HEAD (both commits of <wt>, required) in full mode, with KIT_REVIEW_CONTEXTO
+#   (optional text: what the change is for) in place of the issue, and only prints the report (nothing is posted).
 # Exit: 0 ok (last line "FIN: <n> hallazgos"), 1 usage or rejected, 2 the seat stays unconfirmed: the last stderr
 # line is "sin confirmar (<motivo>): <detalle>", motivo = acceso (CLI missing, login, model, quota or crash: another
 # candidate may answer), tiempo, salida (empty or off-schema answer), bloqueado (the reviewer could not review),
@@ -25,7 +29,7 @@ mode="${KIT_REVIEW_MODO:-completa}"
 schema="$here/../skills/kit-run/references/revision-schema.json"
 
 usage() {
-  echo "uso: $0 <wt> <pr> <puesto> <familia> <cli> <modelo> <foco> <ronda> <N>" >&2
+  echo "uso: $0 <wt> <pr> <puesto> <familia> <cli> <modelo> <foco> <ronda> <N> | <wt> local <puesto> <familia> <cli> <modelo> <foco> 1 -" >&2
   exit 1
 }
 [ $# -eq 9 ] && [ -n "$1" ] || usage
@@ -34,7 +38,15 @@ wt="$(cd "$1" && pwd)"
 p="$2" seat="$3" fam="$4" tool="$5" model="$6" focus="$7" round="$8" n="$9"
 kit_require_marker "$wt" || exit $?
 num() { [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "$1 inválido: $2" >&2; exit 1; }; }
-num "número de PR" "$p"; num "número de puesto" "$seat"; num "número de ronda" "$round"; num "número de issue" "$n"
+local_mode=false
+if [ "$p" = local ]; then
+  local_mode=true
+  [ "$round" = 1 ] && [ "$n" = - ] || usage
+  [ "${KIT_REVIEW_MODO:-completa}" = completa ] || { echo "la revisión local siempre es completa" >&2; exit 1; }
+else
+  num "número de PR" "$p"; num "número de issue" "$n"
+fi
+num "número de puesto" "$seat"; num "número de ronda" "$round"
 [[ $fam =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "familia inválida: '$fam'" >&2; exit 1; }
 [[ $model =~ ^[^[:space:]]+$ ]] || { echo "modelo inválido: '$model'" >&2; exit 1; }
 [ -n "$focus" ] || { echo "falta el foco" >&2; exit 1; }
@@ -60,31 +72,34 @@ strip() { sed $'s/\x1b\\[[0-9;?]*[A-Za-z]//g; s/\r$//' "$1"; }
 
 case "$tool" in claude|opencode|codex) ;; *) unconfirmed acceso "revisor no disponible: $tool (adaptadores: claude, opencode, codex)" ;; esac
 command -v "$tool" >/dev/null 2>&1 || unconfirmed acceso "revisor no disponible: $tool no está en el PATH"
-for c in gh git jq perl; do
+needs="git jq perl"; [ "$local_mode" = true ] || needs="gh $needs"
+for c in $needs; do
   command -v "$c" >/dev/null 2>&1 || envfail "falta '$c' en el PATH"
 done
 [ -r "$template" ] || envfail "no se encuentra la plantilla del revisor: $template"
 jq -e 'type == "object"' "$schema" >/dev/null 2>&1 || envfail "no se encuentra el esquema de la revisión: $schema"
 schema="$(cd "$(dirname "$schema")" && pwd)/$(basename "$schema")"
 cd "$wt" || exit 2
-slug="$(kit_origin_slug)"
-[ -n "$slug" ] || envfail "el remoto 'origin' no es de GitHub"
+if [ "$local_mode" = false ]; then
+  slug="$(kit_origin_slug)"
+  [ -n "$slug" ] || envfail "el remoto 'origin' no es de GitHub"
 
-# idempotent per marker: a stored report for this seat/family/model/round is replayed, never rerun or reposted.
-# Only reports posted by this gh user count.
-me="$(gh api user --jq .login)" && [ -n "$me" ] || envfail "no se pudo leer el usuario de gh (gh api user)"
-marker="<!-- kit-revision: puesto $seat $fam/$model ronda $round -->"
-cj="$(gh pr view "$p" --repo "$slug" --json comments)" || envfail "no se pudieron leer los comentarios de la PR #$p"
-prev="$(printf '%s' "$cj" | jq -r --arg m "$marker" --arg me "$me" \
-  '[.comments[]? | select(.author.login == $me) | select((.body // "") | sub("^\\s+"; "") | startswith($m))][0].body // empty')" \
-  || envfail "respuesta de gh ilegible"
-if [ -n "$prev" ]; then
-  rep="$(printf '%s\n' "$prev" | awk -v m="$marker" 'BEGIN{d=0} !d && index($0, m) { d=1; next } /^<!-- kit-revisado: / { next } { print }')"
-  ptotal="$(printf '%s\n' "$rep" | sed -n 's/^[[:space:]]*[`*]*HALLAZGOS: \([0-9][0-9]*\)[`*]*[[:space:]]*$/\1/p' | sed -n '$p')"
-  if [ -n "$ptotal" ]; then
-    printf '%s\n' "$rep"
-    echo "FIN: $ptotal hallazgos"
-    exit 0
+  # idempotent per marker: a stored report for this seat/family/model/round is replayed, never rerun or reposted.
+  # Only reports posted by this gh user count.
+  me="$(gh api user --jq .login)" && [ -n "$me" ] || envfail "no se pudo leer el usuario de gh (gh api user)"
+  marker="<!-- kit-revision: puesto $seat $fam/$model ronda $round -->"
+  cj="$(gh pr view "$p" --repo "$slug" --json comments)" || envfail "no se pudieron leer los comentarios de la PR #$p"
+  prev="$(printf '%s' "$cj" | jq -r --arg m "$marker" --arg me "$me" \
+    '[.comments[]? | select(.author.login == $me) | select((.body // "") | sub("^\\s+"; "") | startswith($m))][0].body // empty')" \
+    || envfail "respuesta de gh ilegible"
+  if [ -n "$prev" ]; then
+    rep="$(printf '%s\n' "$prev" | awk -v m="$marker" 'BEGIN{d=0} !d && index($0, m) { d=1; next } /^<!-- kit-revisado: / { next } { print }')"
+    ptotal="$(printf '%s\n' "$rep" | sed -n 's/^[[:space:]]*[`*]*HALLAZGOS: \([0-9][0-9]*\)[`*]*[[:space:]]*$/\1/p' | sed -n '$p')"
+    if [ -n "$ptotal" ]; then
+      printf '%s\n' "$rep"
+      echo "FIN: $ptotal hallazgos"
+      exit 0
+    fi
   fi
 fi
 
@@ -103,36 +118,51 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
 # prompt inputs (the PR body goes in as claims to verify)
-issue="$(gh issue view "$n" --repo "$slug" --json title,body | jq -r '"# \(.title)\n\n\(.body // "")"')" \
-  || envfail "no se pudo leer el issue #$n"
-pj="$(gh pr view "$p" --repo "$slug" --json headRefOid,body)" || envfail "no se pudo leer la PR #$p"
-oid="$(printf '%s' "$pj" | jq -r '.headRefOid // ""')" || envfail "respuesta de gh ilegible"
-prbody="$(printf '%s' "$pj" | jq -r '.body // "" | if . == "" then "(sin descripción)" else . end')"
-[[ $oid =~ ^[0-9a-f]{40}$ ]] || envfail "la PR #$p no tiene un head legible"
-git cat-file -e "$oid^{commit}" 2>/dev/null || envfail "el head de la PR ($oid) no está en el worktree: haz fetch o push"
-if [ -n "${KIT_REVIEW_BASE:-}" ]; then
-  # kit-review-all.sh already fetched the default branch once for every seat: seats in parallel never fetch (they
-  # would race on refs/remotes/origin/<b> and fail with "cannot lock ref")
-  [[ $KIT_REVIEW_BASE =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$KIT_REVIEW_BASE^{commit}" 2>/dev/null \
-    || envfail "KIT_REVIEW_BASE no es un commit de este repo: $KIT_REVIEW_BASE"
-  base="$(git merge-base "$KIT_REVIEW_BASE" "$oid")" || envfail "no hay merge-base entre la rama por defecto y la PR"
-else
-  b="$(kit_default_branch)"
-  [ -n "$b" ] || envfail "no pude saber la rama por defecto de origin"
-  kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b" || envfail "git fetch falló"
-  base="$(git merge-base "origin/$b" "$oid")" || envfail "no hay merge-base entre origin/$b y la PR"
-fi
-hist="$(bash "$here/kit-pr.sh" historial "$wt" "$p")" || envfail "no se pudo leer el historial de la PR #$p"
-hist="$(printf '%s\n' "$hist" | sed '${/^FIN: /d;}')"
-# verificar: the diff since the head the previous round reviewed (any own report of that round records it); without
-# one (reports from before 3.4) the whole diff, and the prompt says so
-since="$base"
-if [ "$mode" = verificar ]; then
-  for s in $(printf '%s' "$cj" | jq -r --arg me "$me" --arg r "$((round - 1))" '.comments[]? | select(.author.login == $me)
-      | (.body // "") | select(test("^\\s*<!-- kit-revision: puesto [0-9]+ \\S+ ronda \($r) -->"))
-      | capture("<!-- kit-revisado: (?<s>[0-9a-f]{40}) -->").s'); do
-    if git cat-file -e "$s^{commit}" 2>/dev/null && git merge-base --is-ancestor "$s" "$oid"; then since="$s"; break; fi
+if [ "$local_mode" = true ]; then
+  for v in KIT_REVIEW_BASE KIT_REVIEW_HEAD; do
+    [[ ${!v:-} =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "${!v}^{commit}" 2>/dev/null \
+      || envfail "$v no es un commit de este repo: ${!v:-}"
   done
+  oid="$KIT_REVIEW_HEAD"
+  base="$(git merge-base "$KIT_REVIEW_BASE" "$oid")" || envfail "no hay merge-base entre la base y el cambio"
+  issue="(revisión local: no hay issue)
+
+${KIT_REVIEW_CONTEXTO:-El objetivo del cambio sale del diff y de sus mensajes de commit.}"
+  prbody="(revisión local: no hay PR)"
+  hist="(revisión local: no hay rondas anteriores)"
+  since="$base"
+else
+  issue="$(gh issue view "$n" --repo "$slug" --json title,body | jq -r '"# \(.title)\n\n\(.body // "")"')" \
+    || envfail "no se pudo leer el issue #$n"
+  pj="$(gh pr view "$p" --repo "$slug" --json headRefOid,body)" || envfail "no se pudo leer la PR #$p"
+  oid="$(printf '%s' "$pj" | jq -r '.headRefOid // ""')" || envfail "respuesta de gh ilegible"
+  prbody="$(printf '%s' "$pj" | jq -r '.body // "" | if . == "" then "(sin descripción)" else . end')"
+  [[ $oid =~ ^[0-9a-f]{40}$ ]] || envfail "la PR #$p no tiene un head legible"
+  git cat-file -e "$oid^{commit}" 2>/dev/null || envfail "el head de la PR ($oid) no está en el worktree: haz fetch o push"
+  if [ -n "${KIT_REVIEW_BASE:-}" ]; then
+    # kit-review-all.sh already fetched the default branch once for every seat: seats in parallel never fetch (they
+    # would race on refs/remotes/origin/<b> and fail with "cannot lock ref")
+    [[ $KIT_REVIEW_BASE =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$KIT_REVIEW_BASE^{commit}" 2>/dev/null \
+      || envfail "KIT_REVIEW_BASE no es un commit de este repo: $KIT_REVIEW_BASE"
+    base="$(git merge-base "$KIT_REVIEW_BASE" "$oid")" || envfail "no hay merge-base entre la rama por defecto y la PR"
+  else
+    b="$(kit_default_branch)"
+    [ -n "$b" ] || envfail "no pude saber la rama por defecto de origin"
+    kit_fetch origin "+refs/heads/$b:refs/remotes/origin/$b" || envfail "git fetch falló"
+    base="$(git merge-base "origin/$b" "$oid")" || envfail "no hay merge-base entre origin/$b y la PR"
+  fi
+  hist="$(bash "$here/kit-pr.sh" historial "$wt" "$p")" || envfail "no se pudo leer el historial de la PR #$p"
+  hist="$(printf '%s\n' "$hist" | sed '${/^FIN: /d;}')"
+  # verificar: the diff since the head the previous round reviewed (any own report of that round records it); without
+  # one (reports from before 3.4) the whole diff, and the prompt says so
+  since="$base"
+  if [ "$mode" = verificar ]; then
+    for s in $(printf '%s' "$cj" | jq -r --arg me "$me" --arg r "$((round - 1))" '.comments[]? | select(.author.login == $me)
+        | (.body // "") | select(test("^\\s*<!-- kit-revision: puesto [0-9]+ \\S+ ronda \($r) -->"))
+        | capture("<!-- kit-revisado: (?<s>[0-9a-f]{40}) -->").s'); do
+      if git cat-file -e "$s^{commit}" 2>/dev/null && git merge-base --is-ancestor "$s" "$oid"; then since="$s"; break; fi
+    done
+  fi
 fi
 # single pass, so text inside the substituted values is never re-expanded
 prompt="$(jq -Rrs --arg FOCO "$focus" --arg RONDA "$round" --arg ISSUE "$issue" --arg BASE "$base" --arg HISTORIAL "$hist" \
@@ -357,11 +387,13 @@ jq -r --arg seat "$seat" --arg who "$fam/$model" --arg r "$round" --arg foco "$f
   "HALLAZGOS: \(.hallazgos | length)"' "$tmpd/json" > "$tmpd/report" || envfail "no se pudo componer el informe"
 total="$(jq '.hallazgos | length' "$tmpd/json")"
 
-{
-  echo "$marker"
-  echo "<!-- kit-revisado: $oid -->"
-  cat "$tmpd/report"
-} > "$tmpd/body"
-gh pr comment "$p" --repo "$slug" --body-file "$tmpd/body" >/dev/null || envfail "no se pudo comentar en la PR #$p"
+if [ "$local_mode" = false ]; then
+  {
+    echo "$marker"
+    echo "<!-- kit-revisado: $oid -->"
+    cat "$tmpd/report"
+  } > "$tmpd/body"
+  gh pr comment "$p" --repo "$slug" --body-file "$tmpd/body" >/dev/null || envfail "no se pudo comentar en la PR #$p"
+fi
 cat "$tmpd/report"
 echo "FIN: $total hallazgos"

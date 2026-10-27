@@ -411,6 +411,22 @@ GH_FAIL_ON="api user" bash "$issue" leer "$r" 7 >/dev/null 2>&1; [ $? -eq 2 ] ||
 bash "$issue" leer "$r" >/dev/null 2>&1; [ $? -eq 1 ] || fail "leer sin número debe salir 1"
 bash "$issue" leer "$r" 0 >/dev/null 2>&1; [ $? -eq 1 ] || fail "leer número inválido debe salir 1"
 
+# --- "flujo": false: nothing new enters the kit flow (no gh call); leer still works
+fr="$(mk_repo)"; git -C "$fr" remote add origin https://github.com/dru/demo.git
+echo '{"flujo": false}' > "$fr/.agents-kit.json"
+use_flow_gh
+for args in "siguiente" "reparto" "aparcar 7" "reclamar 7 kit-a" "comprobar" "crear x $qfile --prio alta --entorno nube" \
+            "tomar-eje 7 kit-a db"; do
+  set -- $args
+  sub="$1"; shift
+  err="$(bash "$issue" "$sub" "$fr" "$@" 2>&1 >/dev/null)"; rc=$?
+  [ $rc -eq 1 ] || fail "flujo false ($sub): exit $rc"
+  case "$err" in *"flujo de issues y PR del kit está desactivado"*kit-revisar*) ;; *) fail "flujo false ($sub): '$err'";; esac
+done
+[ -s "$GH_LOG" ] && fail "flujo false: se llamó a gh"
+flow_add_issue 7 "Foo" en-curso
+bash "$issue" leer "$fr" 7 >/dev/null 2>&1 || fail "flujo false: leer debe seguir funcionando"
+
 # --- no marker: every subcommand refuses
 nr="$(mk_repo)"; git -C "$nr" remote add origin https://github.com/dru/demo.git
 use_flow_gh
