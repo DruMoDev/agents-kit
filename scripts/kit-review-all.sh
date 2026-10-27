@@ -17,8 +17,8 @@
 # that the previous round's fixes solve its findings without breaking anything (verificar); with "completas", in
 # round 1, or with --completa (the first round of a resumed issue: its new code is not a fix of the last round), every
 # seat reviews the whole diff. A "modo: ..." line says which seat is the independent one.
-# --local (repos with "flujo": false, or any local change; kit-revisar runs it): the same seats, from the marker of the
-# working tree, review the working tree of <dir> (commits plus uncommitted and untracked files, as one snapshot commit
+# --local (repos with "flujo": false, or any local change; kit-revisar runs it): the same seats, from the marker at the
+# base (a change cannot weaken its own reviewers), review the working tree of <dir> (commits plus uncommitted and untracked files, as one snapshot commit
 # that is never checked out) against --base (default: the merge-base with origin/<default branch> as already fetched;
 # no fetch, no GitHub), in one full round with --contexto's text (what the change is for) in place of the issue.
 # Nothing is posted. The last line is "FIN: <n> puestos, <m> sin confirmar, <h> hallazgos (<g> graves, <d> medios)";
@@ -97,7 +97,8 @@ if [ "$local_mode" = true ]; then
   KIT_REVIEW_CONTEXTO=""
   [ -z "$ctx_file" ] || KIT_REVIEW_CONTEXTO="$(cat "$ctx_file")"
   export KIT_REVIEW_BASE KIT_REVIEW_HEAD KIT_REVIEW_CONTEXTO
-  cands="$(kit_seat_candidates "$wt" "$impl")" || exit $?
+  # seats from the base's marker, never the change's: a change cannot drop or weaken its own reviewers (--estricto)
+  cands="$(kit_seat_candidates "$wt" "$impl" "$KIT_REVIEW_BASE")" || exit $?
 else
   b="$(cd "$wt" && kit_default_branch)"
   [ -n "$b" ] || { echo "error: no pude saber la rama por defecto de origin" >&2; exit 2; }

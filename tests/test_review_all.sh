@@ -244,8 +244,13 @@ snap="$(sed -n 's/^head: //p' <<<"$out" | sed -n 1p)"
 [ "$(git -C "$r" diff --cached --name-only)" = "$idx0" ] && [ -f "$r/nuevo.txt" ] || fail "local: tocó el índice o el árbol"
 [ "$(ncom)" = "$n0" ] || fail "local: publicó en la PR"
 revs() { cat "$(sed -n 's/^salidas: //p' <<<"$out")"/rev-*.out; }
-# seats from the working tree's marker (not origin's) and --estricto: an unconfirmed seat or a grave finding = exit 1
-printf '{"revision": {"puestos": [{"foco": "f", "nivel": "rapido", "familia": "misma"}]}}\n' > "$r/.agents-kit.json"
+# seats from the base's marker, never the change's: emptying them in the working tree changes nothing
+printf '{"revision": {"puestos": []}}\n' > "$r/.agents-kit.json"
+out="$(CLAUDECODE=1 bash "$all" "$r" --local 2>&1)"; rc=$?
+[ $rc -eq 0 ] && grep -q "^FIN: 3 puestos" <<<"$out" || fail "local: los puestos deben salir de la base: exit $rc ($out)"
+# --estricto: an unconfirmed seat or a grave finding = exit 1 (one seat set on the base)
+git -C "$r" reset -q; mk '{"revision": {"puestos": [{"foco": "f", "nivel": "rapido", "familia": "misma"}]}}'
+echo cambio > "$r/a.txt"
 out="$(CLAUDECODE=1 STUB_GRAVE=1 bash "$all" "$r" --local 2>&1)"; rc=$?
 [ $rc -eq 0 ] || fail "local sin estricto: exit $rc ($out)"
 has "FIN: 1 puestos, 0 sin confirmar, 1 hallazgos (1 graves, 0 medios)" "local hallazgos"
@@ -258,7 +263,7 @@ out="$(CLAUDECODE=1 bash "$all" "$r" --local --estricto 2>&1)"; rc=$?
 # --base; nothing to review; a clone without origin/<default> needs --base
 out="$(CLAUDECODE=1 bash "$all" "$r" --local --base HEAD 2>&1)"; rc=$?
 [ $rc -eq 0 ] && grep -qx "base: $(git -C "$r" rev-parse HEAD)" <<<"$(revs)" || fail "--base: exit $rc ($out)"
-git -C "$r" reset -q; rm -f "$r/a.txt" "$r/nuevo.txt"; git -C "$r" checkout -q -- .agents-kit.json
+rm -f "$r/a.txt" "$r/nuevo.txt"
 out="$(CLAUDECODE=1 bash "$all" "$r" --local 2>&1)"; rc=$?
 [ $rc -eq 1 ] && grep -q "nada que revisar" <<<"$out" || fail "sin cambios: exit $rc ($out)"
 sinorigen="$(mk_repo)"; echo '{}' > "$sinorigen/.agents-kit.json"

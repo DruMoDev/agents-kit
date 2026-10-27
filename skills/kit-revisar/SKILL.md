@@ -5,7 +5,7 @@ description: Revisa con los revisores de varios modelos el cambio local, sin PR 
 
 # kit-revisar
 
-Revisión de varios modelos sobre el diff local, para repos que siguen su propio flujo de git, PR y CI/CD (`"flujo": false` en `.agents-kit.json`) o para cualquier cambio que aún no está en una PR del kit. Los mismos puestos que `kit-run` (`revision.puestos`, con su foco, nivel, familia y fallback) revisan el árbol de trabajo contra la base; nada se publica en GitHub. Tú decides cada hallazgo y aplicas los que se sostienen; integrar el cambio (commit, push, PR) es cosa del flujo del repo, no de esta skill.
+Revisión de varios modelos sobre el diff local, para repos que siguen su propio flujo de git, PR y CI/CD (`"flujo": false` en `.agents-kit.json`) o para cualquier cambio que aún no está en una PR del kit. Los mismos puestos que `kit-run` (`revision.puestos` del marcador de la base, nunca del cambio, con su foco, nivel, familia y fallback) revisan el árbol de trabajo contra la base; nada se publica en GitHub. Tú decides cada hallazgo y aplicas los que se sostienen; integrar el cambio (commit, push, PR) es cosa del flujo del repo, no de esta skill.
 
 Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa variable está vacía, la raíz del plugin está dos directorios por encima del directorio base de esta skill. Abajo, `$PLUGIN` es esa raíz.
 
