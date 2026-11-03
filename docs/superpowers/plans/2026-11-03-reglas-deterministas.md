@@ -348,7 +348,7 @@
 **Ficheros:**
 - Modificar:
   - `AGENTS.md`: mapa del repo (`kit-reglas.sh`, `hooks/` nuevos, `templates/reglas/`, la skill) y tiempos medidos;
-  - manifiestos (por `scripts/release.sh 3.7.0`).
+  - manifiestos (por `scripts/release.sh 3.8.0`).
 - Borrar: `docs/superpowers/specs/2026-11-03-reglas-deterministas-design.md` y este plan (andamiaje; lo no obvio va a `AGENTS.md` o a la skill).
 
 - [ ] **Paso 1:** en `/Users/drumorera/Documents/tiktok/tiktok-editor` (lo eligió Dru), seguir `kit-reglas` en un worktree temporal fuera de su árbol de trabajo, sin publicar nada ni tocar su clon, y anotar los tiempos:
@@ -357,5 +357,5 @@
 
   Si `post-edit` con caché pasa de 2 s, aplicar la alternativa de la skill y volver a medir.
 - [ ] **Paso 2:** `tests/e2e/github.sh DruMoDev/agents-kit-sandbox` lanzado con `scripts/kit-bg.sh`. Esperado: termina en verde. Añade al e2e el caso de una PR con un fichero blindado: se rechaza sin aprobación y se fusiona tras `kit-regla`, una respuesta en el issue y `aprobar-regla`.
-- [ ] **Paso 3:** `scripts/release.sh 3.7.0`, `tests/run.sh` y `claude plugin validate .`. Esperado: todo PASS.
+- [ ] **Paso 3:** `scripts/release.sh 3.8.0`, `tests/run.sh` y `claude plugin validate .`. Esperado: todo PASS.
 - [ ] **Paso 4:** borrar el spec y el plan, actualizar `AGENTS.md` y hacer commit. La PR sigue el flujo del repo del kit.
