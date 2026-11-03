@@ -20,18 +20,22 @@
 #     file adds a key or raises a count against the merge base ("la deuda crece: <ruta> <regla>|tipos"). FIN: ok.
 #   blindado: one line per changed shielded file and per package.json change that counts. The globs of .blindado come
 #     from the marker of <ref>, never of the tree, and match the whole path as bash patterns ([[ == ]]: * crosses /,
-#     so *tsconfig*.json also matches config/tsconfig.base.json); an entry ending in / is a prefix. A name without a
-#     leading dot goes as the pair x and */x (eslint.config.*, */eslint.config.*), never *x, which would also match
-#     any name ending in it (src/myknip.ts for *knip.*); with a leading dot, *.x is safe (*.eslintrc*). A change that only
+#     so *tsconfig*.json also matches config/tsconfig.base.json); an entry ending in / is a prefix. A file that may live
+#     in any directory goes as the pair x and */x (eslint.config.*, */eslint.config.*; .npmrc, */.npmrc), never *x,
+#     which would also match any name ending in it (src/myknip.ts for *knip.*, foo.eslintignore for *.eslintignore).
+#     A change that only
 #     shrinks eslint-suppressions.json or .agents-kit/tsc-base.json does not count. Lint dependencies are those whose
 #     name contains eslint, typescript, knip or dependency-cruiser. package.json lines:
-#       "package.json (scripts.<x>)": a lint*/typecheck* script changed, or a script one of them calls (one level:
-#         npm run <x>, pnpm [run] <x>, yarn [run] <x>, bun run <x>, in the base or the tree), or the npm lifecycle
-#         pre<x>/post<x> of any of those;
+#       "package.json (scripts.<x>)": a script of the shielded set changed. The set is the transitive closure, in the
+#         base and in the tree (then joined), of the lint*/typecheck* scripts: each name brings its npm lifecycle
+#         hooks pre<x>/post<x>, and every npm run <x>, pnpm [run] <x>, yarn [run] <x> or bun run <x> in the body of
+#         any script of the set (hooks included) adds <x>, until nothing changes (cycles end there);
 #       "package.json (quitada <dep>)" / "package.json (cambiada <dep>)": a lint dependency removed or with another
 #         value (dependencies, devDependencies, peerDependencies, optionalDependencies);
-#       "package.json (overrides <clave>)": overrides, resolutions or pnpm.overrides changed for a key (nested keys
-#         joined with >) that names a lint dependency.
+#       "package.json (overrides <clave>)": overrides or resolutions changed for a key (nested keys joined with >)
+#         that names a lint dependency;
+#       "package.json (<clave>)": any change in eslintConfig, knip, pnpm (the whole object: overrides,
+#         patchedDependencies, packageExtensions...) or the top-level patchedDependencies.
 #     Then "hash: <sha256>" of the diff of those files (fixed options, without the user's git config) plus the
 #     normalized package.json fragment, and FIN: <n>; FIN: 0 without hash if none.
 #   abrir/cerrar: create (with <session_id>) or delete <git-common-dir>/agents-kit/reglas-abiertas, which lets the
@@ -193,30 +197,35 @@ case "$sub" in
       frag="$(jq -cnS --argjson b "$pb" --argjson h "$ph" --arg re "$LINT_DEP" '
         def diffmap($x; $y): [($x + $y) | keys[] | select($x[.] != $y[.]) | {key: ., value: {antes: $x[.], ahora: $y[.]}}]
           | from_entries;
-        def lkeys: (.scripts // {}) | objects | keys[] | select(test("^(lint|typecheck)"));
-        def calls: (.scripts // {}) as $s | lkeys | $s[.] | strings |
-          scan("(?:^|[\\s;&|(])(?:npm\\s+run(?:-script)?|pnpm(?:\\s+run)?|yarn(?:\\s+run)?|bun\\s+run)\\s+(?:-\\S+\\s+)*([^\\s;&|()]+)")[0];
+        def sobj: .scripts | if type == "object" then . else {} end;
+        def hooks: map(., "pre" + ., "post" + .) | unique;
+        # Names (without their hooks) reached from the lint*/typecheck* scripts; it only grows with names found in
+        # script bodies, a finite set, so it always ends (also with cycles).
+        def reach($s): (hooks | map($s[.] | strings | scan("(?:^|[\\s;&|(])(?:npm\\s+run(?:-script)?|pnpm(?:\\s+run)?|yarn(?:\\s+run)?|bun\\s+run)\\s+(?:-\\S+\\s+)*([^\\s;&|()]+)")[0])) as $c
+          | ((. + $c) | unique) as $n | if $n == . then . else ($n | reach($s)) end;
+        def closure: sobj as $s | [$s | keys[] | select(test("^(lint|typecheck)"))] | reach($s) | hooks;
         def deps: [.dependencies, .devDependencies, .peerDependencies, .optionalDependencies | objects | to_entries[]]
           | group_by(.key) | map({key: .[0].key, value: map(.value)}) | from_entries
           | with_entries(select(.key | test($re)));
-        def ovr: [{s: "overrides", v: .overrides}, {s: "resolutions", v: .resolutions}, {s: "pnpm.overrides", v: .pnpm.overrides?}]
+        def ovr: [{s: "overrides", v: .overrides}, {s: "resolutions", v: .resolutions}]
           | map(.s as $s | .v | objects | paths(scalars) as $p | {key: ($p | map(tostring) | join(">")), value: {($s): getpath($p)}})
           | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries
           | with_entries(select(.key | test($re)));
-        ([$b, $h] | map(lkeys, calls) | map(., "pre" + ., "post" + .) | unique) as $ks |
-        def sobj: .scripts | if type == "object" then . else {} end;
+        (($b | closure) + ($h | closure) | unique) as $ks |
         ($b | sobj) as $sb | ($h | sobj) as $sh |
         ($b | deps) as $db | ($h | deps) as $dh |
         {scripts: diffmap($sb | with_entries(select(.key | IN($ks[]))); $sh | with_entries(select(.key | IN($ks[])))),
          quitadas: [$db | keys[] | select($dh[.] == null)],
          cambiadas: diffmap($db | with_entries(select(.key | IN($dh | keys[]))); $dh | with_entries(select(.key | IN($db | keys[])))),
-         overrides: diffmap($b | ovr; $h | ovr)}
-        | if (.scripts | length) + (.quitadas | length) + (.cambiadas | length) + (.overrides | length) == 0 then empty else . end')" \
+         overrides: diffmap($b | ovr; $h | ovr),
+         claves: diffmap($b | {eslintConfig, knip, pnpm, patchedDependencies}; $h | {eslintConfig, knip, pnpm, patchedDependencies})}
+        | if [.[] | length] | add == 0 then empty else . end')" \
         || { echo "error: no pude comparar package.json" >&2; exit 2; }
       if [ -n "$frag" ]; then
         jq -r '(.scripts | keys[] | "package.json (scripts.\(.))"), (.quitadas[] | "package.json (quitada \(.))"),
-          (.cambiadas | keys[] | "package.json (cambiada \(.))"), (.overrides | keys[] | "package.json (overrides \(.))")' <<<"$frag"
-        total=$((total + $(jq '(.scripts | length) + (.quitadas | length) + (.cambiadas | length) + (.overrides | length)' <<<"$frag")))
+          (.cambiadas | keys[] | "package.json (cambiada \(.))"), (.overrides | keys[] | "package.json (overrides \(.))"),
+          (.claves | keys[] | "package.json (\(.))")' <<<"$frag"
+        total=$((total + $(jq '[.[] | length] | add' <<<"$frag")))
       fi
     fi
     if [ $total -gt 0 ]; then

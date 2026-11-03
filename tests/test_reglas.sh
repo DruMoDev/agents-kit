@@ -195,13 +195,49 @@ run blindado "$r" origin/main; [ "$(last_line "$out")" = "FIN: 0" ] || fail "mov
 limpia
 pj '.overrides = {"foo": {"eslint": "8"}, "react": "19"} | .resolutions = {"**/typescript": "5"} | .pnpm.overrides = {"knip@<5": "5"}'
 run blindado "$r" origin/main
-for x in "package.json (overrides foo>eslint)" "package.json (overrides **/typescript)" "package.json (overrides knip@<5)"; do
+# pnpm.overrides is covered by the whole pnpm object: one line, no duplicate
+for x in "package.json (overrides foo>eslint)" "package.json (overrides **/typescript)" "package.json (pnpm)"; do
   grep -qxF "$x" <<<"$out" || fail "overrides sin '$x': $out"
 done
 [ "$(last_line "$out")" = "FIN: 3" ] || fail "overrides de react no cuenta: $out"
 h1="$(sed -n 's/^hash: //p' <<<"$out")"
 pj '.overrides.foo.eslint = "9"'
 run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" != "$h1" ] || fail "los overrides deben entrar en el hash"
+limpia
+# claves de configuración de package.json, enteras
+pj '.eslintConfig = {"rules": {}} | .knip = {"entry": []} | .patchedDependencies = {"x@1": "patches/x.patch"}
+  | .pnpm.patchedDependencies = {"y@1": "patches/y.patch"} | .pnpm.packageExtensions = {"z": {}}'
+run blindado "$r" origin/main
+for x in "package.json (eslintConfig)" "package.json (knip)" "package.json (patchedDependencies)" "package.json (pnpm)"; do
+  grep -qxF "$x" <<<"$out" || fail "claves de package.json sin '$x': $out"
+done
+[ "$(last_line "$out")" = "FIN: 4" ] || fail "pnpm debe salir una vez: $out"
+h1="$(sed -n 's/^hash: //p' <<<"$out")"
+pj '.pnpm.packageExtensions.z = {"a": 1}'
+run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" != "$h1" ] || fail "las claves deben entrar en el hash"
+limpia
+# cierre transitivo de los scripts: cadena, hooks que llaman a otros y ciclos
+pj '.scripts.check = "pnpm run a" | .scripts.a = "bun run b" | .scripts.b = "x" | .scripts.prelint = "npm run c" | .scripts.c = "y"
+  | .scripts.fmt = "npm run d" | .scripts.d = "npm run e" | .scripts.e = "yarn d" | .scripts.otro = "q"'
+push_main cierre
+pj '.scripts.b = "x2"'
+run blindado "$r" origin/main; grep -qxF "package.json (scripts.b)" <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] || fail "cadena lint>check>a>b: $out"
+limpia
+pj '.scripts.c = "y2" | .scripts.postc = "nuevo"'
+run blindado "$r" origin/main
+grep -qxF "package.json (scripts.c)" <<<"$out" && grep -qxF "package.json (scripts.postc)" <<<"$out" && [ "$(last_line "$out")" = "FIN: 2" ] \
+  || fail "prelint llama a c: $out"
+limpia
+pj '.scripts.e = "yarn d && echo"'
+run blindado "$r" origin/main; grep -qxF "package.json (scripts.e)" <<<"$out" || fail "ciclo d>e>d: $out"
+limpia
+pj '.scripts.otro = "q2"'
+run blindado "$r" origin/main; [ "$(last_line "$out")" = "FIN: 0" ] || fail "script ajeno no cuenta: $out"
+limpia
+# un script del árbol que entra en el cierre también cuenta (la unión de base y árbol)
+pj '.scripts.b = "npm run nuevo" | .scripts.nuevo = "z"'
+run blindado "$r" origin/main
+grep -qxF "package.json (scripts.b)" <<<"$out" && grep -qxF "package.json (scripts.nuevo)" <<<"$out" || fail "cierre del árbol: $out"
 limpia
 
 # --- globs: * cruza /, prefijos y rutas con espacios
@@ -223,6 +259,15 @@ echo 'registry=x' > "$r/.npmrc"; echo x > "$r/src/myknip.ts"; echo x > "$r/src/n
 run blindado "$r" origin/main
 for x in "packages/web/eslint.config.mjs" "packages/a/knip.json" ".npmrc"; do grep -qxF "$x" <<<"$out" || fail "glob sin '$x': $out"; done
 [ "$(last_line "$out")" = "FIN: 3" ] || fail "myknip.ts y noteslint.config.js no son blindados: $out"
+limpia
+mkdir -p "$r/packages/a" "$r/patches" "$r/.yarn/plugins" "$r/src"
+echo x > "$r/packages/a/.eslintignore"; echo x > "$r/src/foo.eslintignore"; echo x > "$r/packages/a/.npmrc"
+echo x > "$r/patches/x.patch"; echo x > "$r/.yarn/plugins/p.cjs"; echo '{}' > "$r/.knip.jsonc"; echo x > "$r/.pnpmfile.cjs"
+run blindado "$r" origin/main
+for x in "packages/a/.eslintignore" "packages/a/.npmrc" "patches/x.patch" ".yarn/plugins/p.cjs" ".knip.jsonc" ".pnpmfile.cjs"; do
+  grep -qxF "$x" <<<"$out" || fail "glob sin '$x': $out"
+done
+[ "$(last_line "$out")" = "FIN: 6" ] || fail "foo.eslintignore no es blindado: $out"
 limpia
 
 # --- abrir y cerrar
