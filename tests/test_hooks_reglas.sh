@@ -598,13 +598,16 @@ malos=('git commit --no-verify -m x' 'git push --no-verify origin main' 'HUSKY=0
   'git status && git commit -n' 'git commit --no-ve -m x' 'git push --no-v' 'git commit --no-verif'
   'git -c Core.HooksPath=/x commit -m x' 'git config core.hooksPath /dev/null' 'git config --unset core.hooksPath' 'git config set core.hooksPath /x'
   'git config --get core.hooksPath && git -c core.hooksPath=/x commit -m x'
+  'git -c "core.hooksPath"=x commit' 'git --config-env=core.hooksPath=V commit' 'git config core.hooksPath --get x'
+  'git config --get core.hooksPath /x' 'echo core.hooksPath'
   "GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/x'\" git commit -m x"
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hookspath GIT_CONFIG_VALUE_0=/x git commit -m x'
   'HUSKY_SKIP_HOOKS=1 git commit -m x')
 buenos=('git commit -m x' 'git push origin main' 'NOSKIP=1 make' 'echo HUSKY=1' 'ls -la'
   'git commit -m "no verify del todo"' 'ls -n' 'git log -n 3' 'git commit --amend -m x' 'git commit --no-edit'
   'git merge --no-ff topic' 'git config --get core.hooksPath' 'git config --local --get-all core.hooksPath'
-  'git config get core.hooksPath' 'git config --list | grep -i core.hookspath')
+  'git config get core.hooksPath' 'git config --local --get core.hooksPath' 'git config --file .gitconfig --get core.hooksPath'
+  'git config --global --get-all core.hooksPath')
 for m in "" '{"reglas": false}' '{}' '{"lint": "no es objeto"}'; do
   if [ -z "$m" ]; then rm -f "$r/.agents-kit.json"; else marker "$m"; fi
   for k in "${malos[@]}"; do
