@@ -6,7 +6,25 @@
 #   historial  <wt> <pr>
 #   ronda      <wt> <pr> <n> <fichero>
 #   fusionar   <wt> <pr> <N>
+#   regla      <wt> <pr> <fichero>
+#   aprobar-regla <wt> <pr> <id-comentario> | --chat <fichero>
 # PR lifecycle of an issue branch; <wt> is the issue worktree. Review state lives in HTML-comment markers on the PR.
+# Rule changes (kit-reglas.sh blindado against origin/<base>: lint, types and structure config) need Dru's approval,
+# given by answering, never by a label:
+#   regla: posts <fichero> on the PR after "<!-- kit-regla: <hash> -->" (<hash> = the blindado hash); exit 1 if the
+#     PR changes no shielded file, or if the tree is dirty or HEAD is not the PR head (Dru approves on GitHub exactly
+#     the diff that will merge). FIN: <url of the comment>.
+#   aprobar-regla: with <id> (REST id of Dru's answer), checks it is a valid answer and posts
+#     "<!-- kit-regla-aprobada: <hash> <id> -->"; with --chat, first posts on the PR the answer Dru gave in the chat,
+#     quoted, as a normal comment (no marker), and uses its id. Exit 1 if the last own kit-regla is not for the current
+#     hash or the answer is not valid. FIN: aprobada.
+#   A valid answer: a comment of the gh account without any <!-- kit- marker (every comment the kit posts carries
+#   one), in the PR or in the issue it closes ("Cierra #N"; fusionar: <N>), created (REST created_at) after the last
+#   own kit-regla. fusionar requires an own kit-regla-aprobada with the current hash and a valid answer: when the
+#   shielded diff changes, another proposal and another answer. Same gh account for agent and Dru: a known limit.
+# fusionar also runs kit-reglas.sh trinquete when the marker of origin/<base> declares lint: debt in a touched file
+# always blocks; debt that grows blocks unless the PR has a valid kit-regla-aprobada and its debt file
+# (eslint-suppressions.json or .agents-kit/tsc-base.json) is among the approved shielded files.
 # Env: KIT_CI_TIMEOUT (s; default: ciTimeoutMin of the config, else from the repo history, lib/ci.sh), KIT_CI_POLL (s, default 15),
 #   KIT_CI_GRACE (s, default 300: with workflows but no check run for the SHA after it, esperar-ci reports sin-ci).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
@@ -18,24 +36,26 @@ source "$here/lib/default-branch.sh"
 source "$here/lib/repo-hook.sh"
 source "$here/lib/ci.sh"
 source "$here/lib/locks.sh"
+source "$here/lib/comments.sh"
 
 usage() {
   echo "uso: $0 abrir <wt> <N> <titulo> <fichero-cuerpo> | esperar-ci <wt> <pr> |" \
     "gate-local <wt> <pr> <fichero-salida> | historial <wt> <pr> | ronda <wt> <pr> <n> <fichero> |" \
-    "fusionar <wt> <pr> <N>" >&2
+    "fusionar <wt> <pr> <N> | regla <wt> <pr> <fichero> | aprobar-regla <wt> <pr> <id-comentario>|--chat <fichero>" >&2
   exit 1
 }
 
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-case "$sub" in abrir|esperar-ci|gate-local|historial|ronda|fusionar) ;; *) usage ;; esac
+case "$sub" in abrir|esperar-ci|gate-local|historial|ronda|fusionar|regla|aprobar-regla) ;; *) usage ;; esac
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 wt="$(cd "$1" && pwd)"; shift
 kit_require_marker "$wt" || exit $?
 
 case "$sub" in
   esperar-ci|historial) [ $# -eq 1 ] || usage ;;
-  gate-local|fusionar) [ $# -eq 2 ] || usage ;;
+  gate-local|fusionar|regla) [ $# -eq 2 ] || usage ;;
+  aprobar-regla) { [ $# -eq 2 ] && [ "$2" != --chat ]; } || { [ $# -eq 3 ] && [ "$2" = --chat ]; } || usage ;;
   ronda) [ $# -eq 3 ] || usage ;;
   abrir) [ $# -eq 3 ] || usage ;;
 esac
@@ -44,6 +64,7 @@ if [ "$sub" = abrir ]; then n="$1"; num "número de issue" "$n"; else p="$1"; nu
 case "$sub" in
   ronda) num "número de ronda" "$2" ;;
   fusionar) num "número de issue" "$2" ;;
+  aprobar-regla) [ "$2" = --chat ] || [[ $2 =~ ^[1-9][0-9]*$ ]] || { echo "id de comentario inválido: $2 (el número del final de su enlace, #issuecomment-<id>)" >&2; exit 1; } ;;
 esac
 
 for c in gh git jq; do
@@ -84,9 +105,51 @@ base_branch() { # print origin's default branch after fetching it; exit 2 if unk
 pr_json() { # <fields>: gh pr view of $p, exit 2 if unreadable
   gh pr view "$p" --repo "$slug" --json "$1" || { echo "error: no se pudo leer la PR #$p" >&2; exit 2; }
 }
-comment() { # <body-file>
-  gh pr comment "$p" --repo "$slug" --body-file "$1" >/dev/null \
+comment() { # <body-file>: the comment URL (gh prints it) goes to $posted
+  posted="$(gh pr comment "$p" --repo "$slug" --body-file "$1")" \
     || { echo "error: no se pudo comentar en la PR #$p" >&2; exit 2; }
+  posted="$(printf '%s\n' "$posted" | sed -n '$p')"
+}
+
+# comments_file <N> <file>: kit_rest_comments of issue or PR <N> into <file>; exit 2 if unreadable.
+comments_file() {
+  kit_rest_comments "$slug" "$1" > "$2" || { echo "error: no se pudo leer los comentarios de #$1" >&2; exit 2; }
+}
+# shielded <base>: run kit-reglas.sh blindado against origin/<base>; sets $sh_n (count), $sh_hash and $sh_list
+# (comma-separated). Exit 2 on any failure of the check: the gate never passes on an error.
+shielded() {
+  local out rc
+  out="$("$here/kit-reglas.sh" blindado "$wt" "origin/$1" 2>"$tmpd/bl.err")"; rc=$?
+  [ $rc -eq 0 ] || { echo "error: kit-reglas.sh blindado falló (exit $rc): $(cat "$tmpd/bl.err")" >&2; exit 2; }
+  sh_n="$(printf '%s\n' "$out" | sed -n '$s/^FIN: \([0-9][0-9]*\)$/\1/p')"
+  [ -n "$sh_n" ] || { echo "error: kit-reglas.sh blindado no terminó en FIN: <n>" >&2; exit 2; }
+  sh_hash="$(printf '%s\n' "$out" | sed -n 's/^hash: \([0-9a-f]\{64\}\)$/\1/p')"
+  [ "$sh_n" -eq 0 ] || [ -n "$sh_hash" ] || { echo "error: kit-reglas.sh blindado no dio el hash" >&2; exit 2; }
+  sh_list="$(printf '%s\n' "$out" | grep -v -e '^hash: ' -e '^FIN: ' | paste -sd, - | sed 's/,/, /g')"
+}
+# rule_check <pr-file> <issue-file> <hash> [<id>|-]: "" if approved, else the reason. With <id>: whether that comment
+# is a valid answer to the last own kit-regla; with -: only whether that kit-regla is for <hash>; without: whether an
+# own kit-regla-aprobada of <hash> points to a valid answer.
+RULE_JQ='($pr[0]) as $pc | ($pc + $iss[0]) as $all
+  | ([$pc[] | select(.login == $me and (.body | test("^\\s*<!-- kit-regla: [0-9a-f]{64} -->")))] | last) as $r
+  | def why($i): ([$all[] | select((.id | tostring) == $i)] | first) as $c
+      | if $c == null then "el comentario \($i) no está en la PR ni en su issue"
+        elif ($c | kit_answer($me) | not) then
+          if $c.login != $me then "el comentario \($i) es de otra cuenta (\($c.login)): solo vale una respuesta de \($me)"
+          else "el comentario \($i) lleva un marcador del kit: no es una respuesta de Dru" end
+        elif $c.created_at <= $r.created_at then "el comentario \($i) es anterior a la última propuesta kit-regla"
+        else "" end;
+  if $r == null then "no hay ninguna propuesta kit-regla en la PR: publícala con kit-pr.sh regla"
+  elif ($r.body | capture("^\\s*<!-- kit-regla: (?<h>[0-9a-f]{64}) -->").h) != $h
+  then "la última propuesta kit-regla es de otro diff de reglas: vuelve a proponerla con kit-pr.sh regla"
+  elif $id == "-" then ""
+  elif $id != "" then why($id)
+  elif any($pc[] | select(.login == $me) | .body | capture("^\\s*<!-- kit-regla-aprobada: (?<h>[0-9a-f]{64}) (?<i>[0-9]+) -->")?;
+      .h == $h and why(.i) == "") then ""
+  else "sin aprobar" end'
+rule_check() {
+  jq -nr --slurpfile pr "$1" --slurpfile iss "$2" --arg me "$me" --arg h "$3" --arg id "${4:-}" "$KIT_ANSWER_JQ$RULE_JQ" \
+    || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
 }
 
 ci_unreadable() { echo "error: no se pudo leer el estado del CI" >&2; exit 2; }
@@ -127,7 +190,7 @@ after_merge() {
   ist="$(gh issue view "$n" --repo "$slug" --json state --jq .state)" \
     || { echo "error: PR fusionada pero no se pudo leer el issue #$n" >&2; exit 2; }
   if [ "$ist" = OPEN ]; then
-    gh issue close "$n" --repo "$slug" --comment "Resuelto en #$p." >/dev/null \
+    gh issue close "$n" --repo "$slug" --comment "<!-- kit-resuelto: $p --> Resuelto en #$p." >/dev/null \
       || { echo "error: PR fusionada pero no se pudo cerrar el issue #$n" >&2; exit 2; }
   fi
   # the axis locks of the issue (lib/locks.sh) go before en-curso, as in kit-issue.sh release; a failure only warns, naming the command that frees it
@@ -308,6 +371,56 @@ ${out: -38000}"
     echo "FIN: ronda $r"
     ;;
 
+  regla)
+    text="$(read_file "$2")" || exit 1
+    is_clean || { echo "el árbol tiene cambios sin confirmar: confírmalos y empuja antes de proponer la regla" >&2; exit 1; }
+    sha="$(head_sha)" || exit 2
+    oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
+    [ "$oid" = "$sha" ] || { echo "la PR apunta a ${oid:0:8} y aquí estás en ${sha:0:8}: empuja antes de proponer la regla" >&2; exit 1; }
+    base="$(base_branch)" || exit 2
+    shielded "$base"
+    [ "$sh_n" -gt 0 ] || { echo "la PR no cambia ningún fichero de reglas: no hay nada que aprobar" >&2; exit 1; }
+    printf '<!-- kit-regla: %s -->\n%s\n' "$sh_hash" "$text" > "$tmpd/body"
+    comment "$tmpd/body"
+    echo "ficheros de reglas: $sh_list"
+    echo "FIN: $posted"
+    ;;
+
+  aprobar-regla)
+    own_login
+    base="$(base_branch)" || exit 2
+    shielded "$base"
+    [ "$sh_n" -gt 0 ] || { echo "la PR no cambia ningún fichero de reglas: no hay nada que aprobar" >&2; exit 1; }
+    comments_file "$p" "$tmpd/pr.json"
+    # the issues the PR closes (kit-pr.sh abrir writes "Cierra #N" in its body): Dru may answer there
+    body="$(pr_json body | jq -r '.body // ""')" || exit 2
+    echo '[]' > "$tmpd/iss.json"
+    for x in $(printf '%s\n' "$body" | grep -Eo 'Cierra #[0-9]+' | sed 's/.*#//' | sort -u); do
+      comments_file "$x" "$tmpd/c.json"
+      jq -s add "$tmpd/iss.json" "$tmpd/c.json" > "$tmpd/acc.json" && mv "$tmpd/acc.json" "$tmpd/iss.json" || exit 2
+    done
+    # the proposal must be for the current shielded diff before anything is posted
+    why="$(rule_check "$tmpd/pr.json" "$tmpd/iss.json" "$sh_hash" -)" || exit 2
+    [ -z "$why" ] || { echo "$why" >&2; exit 1; }
+    if [ "$2" = --chat ]; then
+      quote="$(read_file "$3")" || exit 1
+      printf '%s' "$quote" | grep -q '[^[:space:]]' || { echo "el fichero de la respuesta está vacío: $3" >&2; exit 1; }
+      case "$quote" in *"<!-- kit-"*) echo "la respuesta de Dru lleva un marcador del kit (<!-- kit-): no la publico" >&2; exit 1 ;; esac
+      { echo "Respuesta de Dru en el chat, citada por el agente:"; echo; printf '%s\n' "$quote" | sed 's/^/> /'; } > "$tmpd/body"
+      comment "$tmpd/body"
+      id="$(printf '%s' "$posted" | sed -n 's/.*#issuecomment-\([0-9][0-9]*\)$/\1/p')"
+      [ -n "$id" ] || { echo "error: gh no devolvió el enlace del comentario publicado: $posted" >&2; exit 2; }
+    else
+      id="$2"
+      why="$(rule_check "$tmpd/pr.json" "$tmpd/iss.json" "$sh_hash" "$id")" || exit 2
+      [ -z "$why" ] || { echo "$why" >&2; exit 1; }
+    fi
+    printf '<!-- kit-regla-aprobada: %s %s -->\n' "$sh_hash" "$id" > "$tmpd/body"
+    comment "$tmpd/body"
+    echo "aprobado con el comentario $id: $sh_list"
+    echo "FIN: aprobada"
+    ;;
+
   fusionar)
     n="$2"
     reasons=()
@@ -417,6 +530,39 @@ ${out: -38000}"
         1) reasons+=("CHANGELOG.md mal formado:
 $cl_err") ;;
         *) echo "error: kit-changelog.sh falló: $cl_err" >&2; exit 2 ;;
+      esac
+    fi
+
+    # Rules (kit-reglas.sh, over the tree against origin/$base; any error of the checks is exit 2, never a pass):
+    # Dru's approval for shielded changes, and debt that only shrinks when the base marker declares lint.
+    approved=false
+    shielded "$base"
+    if [ "$sh_n" -gt 0 ]; then
+      comments_file "$p" "$tmpd/pr.json"
+      comments_file "$n" "$tmpd/iss.json"
+      why="$(rule_check "$tmpd/pr.json" "$tmpd/iss.json" "$sh_hash")" || exit 2
+      if [ -z "$why" ]; then approved=true
+      else reasons+=("la PR cambia ficheros de reglas ($sh_list) sin la aprobación de Dru: kit-pr.sh regla y espera su respuesta"); fi
+    fi
+    lint="$(kit_config_base "$wt" '.lint' "origin/$base")" || exit 2
+    if [ "$lint" != null ]; then
+      tq="$("$here/kit-reglas.sh" trinquete "$wt" "origin/$base" 2>&1 >/dev/null)"; tq_rc=$?
+      case $tq_rc in
+        0) ;;
+        # debt that grows merges with a valid approval only when its debt file (eslint-suppressions.json for lint,
+        # .agents-kit/tsc-base.json for types) is among the approved shielded files, so the growth is in the approved
+        # hash (a repo may take them out of blindado). Debt in a touched file always blocks.
+        1) while IFS= read -r line; do
+             [ -n "$line" ] || continue
+             if [ "$approved" = true ]; then
+               case "$line" in
+                 "la deuda crece: "*" tipos") case ", $sh_list, " in *", .agents-kit/tsc-base.json, "*) continue ;; esac ;;
+                 "la deuda crece: "*) case ", $sh_list, " in *", eslint-suppressions.json, "*) continue ;; esac ;;
+               esac
+             fi
+             reasons+=("$line")
+           done <<< "$tq" ;;
+        *) echo "error: kit-reglas.sh trinquete falló (exit $tq_rc): $tq" >&2; exit 2 ;;
       esac
     fi
 

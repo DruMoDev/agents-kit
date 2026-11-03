@@ -4,8 +4,11 @@
 # State: $GH_STATE/state.json, shaped like gh's --json output:
 #   {"issues": [{"number": 1, "title": "...", "body": "...", "state": "OPEN",
 #                "labels": [{"name": "en-curso"}], "assignees": [{"login": "dru"}],
-#                "comments": [{"id": "IC_1_0", "body": "...", "author": {"login": "dru"}, "url": "..."}]}],
+#                "comments": [{"id": "IC_1_0", "body": "...", "author": {"login": "dru"}, "url": "...",
+#                              "dbid": 100001, "created_at": "2026-01-01T00:00:01Z"}]}],
 #                # comments in creation order; issue view fills a missing author (GH_USER) and url
+#    "clock": n   # every new comment (issue or PR) ticks it: its REST id (dbid) is 100000 + n and its created_at
+#                 # 2026-01-01T00:00:00Z + n s, as `api repos/<slug>/issues/<n>/comments` returns them
 #    "prs": []}
 # Env:
 #   GH_STATE    directory holding state.json (required)
@@ -31,7 +34,7 @@
 #                  (delete it to restart the sequence).
 #   GH_RACE_OID    `pr merge` sees this as the live head (simulates a push landing just before the merge)
 # Supported: issue list/view/create/comment/edit/close, pr list/create/view/comment/merge, label list,
-# api (user, workflows, check-runs; no --repo, the slug goes in the path). Add one case per subcommand as tests need it.
+# api (user, workflows, check-runs, issues/<n>/comments of an issue or a PR; no --repo, the slug goes in the path). Add one case per subcommand as tests need it.
 set -u
 [ -n "${GH_LOG:-}" ] && printf '%s\n' "$*" >> "$GH_LOG"
 state="${GH_STATE:?GH_STATE no definido}/state.json"
@@ -70,11 +73,13 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$repo" ] || [ "$cmd" = api ] || { echo "stub: falta --repo" >&2; exit 1; }
 
-# save <jq-filter> [jq args...]: update state.json in place
+# save <jq-filter> [jq args...]: update state.json in place; the filter can use tick (a new comment's dbid and
+# created_at in $c after `tick | .clock as $c`) and stamp($c)
 save() {
   local f="$1" tmp; shift
   tmp="$(mktemp)"
-  jq "$@" "$f" "$state" > "$tmp" && mv "$tmp" "$state"
+  jq "$@" 'def tick: .clock = ((.clock // 0) + 1); def stamp($c): {dbid: (100000 + $c), created_at: (1767225600 + $c | todate)};
+    '"$f" "$state" > "$tmp" && mv "$tmp" "$state"
 }
 # emit: select --json fields from stdin and apply --jq
 emit() {
@@ -125,8 +130,8 @@ case "$cmd" in
     echo "https://github.com/$repo/issues/$n" ;;
   "issue comment")
     issue_exists "${pos[0]}"
-    save '(.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_\($n)_\(length)", body: $b,
-        author: {login: $u}, url: "https://github.com/\($r)/issues/\($n)#issuecomment-IC_\($n)_\(length)"}]' \
+    save 'tick | .clock as $c | (.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_\($n)_\(length)", body: $b,
+        author: {login: $u}, url: "https://github.com/\($r)/issues/\($n)#issuecomment-IC_\($n)_\(length)"} + stamp($c)]' \
       --argjson n "${pos[0]}" --arg b "$body" --arg u "${GH_USER:-dru}" --arg r "$repo" || exit 1
     jq -r --argjson n "${pos[0]}" '.issues[] | select(.number == $n) | .comments[-1].url' "$state" ;;
   "issue edit")
@@ -145,8 +150,8 @@ case "$cmd" in
         | select($st == "all" or (.state | ascii_downcase) == $st)] | sort_by(-.number)' "$state" | emit ;;
   "issue close")
     issue_exists "${pos[0]}"
-    save '(.issues[] | select(.number == $n)) |= (.state = "CLOSED"
-        | if $c != "" then .comments += [{id: "IC_\($n)_\(.comments | length)", body: $c}] else . end)' \
+    save 'tick | .clock as $k | (.issues[] | select(.number == $n)) |= (.state = "CLOSED"
+        | if $c != "" then .comments += [{id: "IC_\($n)_\(.comments | length)", body: $c} + stamp($k)] else . end)' \
       --argjson n "${pos[0]}" --arg c "$comment" || exit 1 ;;
   "pr create")
     n="$(jq '[.issues[].number, .prs[].number, 0] | max + 1' "$state")"
@@ -161,10 +166,10 @@ case "$cmd" in
     pr_json "${pos[0]}" | emit ;;
   "pr comment")
     pr_exists "${pos[0]}"
-    save '([.prs[].comments[]?.id | numbers] | max // 0) as $id
-        | (.prs[] | select(.number == $n) | .comments) |= . + [{id: ($id + 1), body: $b, author: {login: $u}}]' \
+    save 'tick | .clock as $c | ([.prs[].comments[]?.id | numbers] | max // 0) as $id
+        | (.prs[] | select(.number == $n) | .comments) |= . + [{id: ($id + 1), body: $b, author: {login: $u}} + stamp($c)]' \
       --argjson n "${pos[0]}" --arg b "$body" --arg u "${GH_USER:-dru}" || exit 1
-    echo "https://github.com/$repo/pull/${pos[0]}#issuecomment-1" ;;
+    echo "https://github.com/$repo/pull/${pos[0]}#issuecomment-$(jq '100000 + .clock' "$state")" ;;
   "pr merge")
     pr_exists "${pos[0]}"
     live="${GH_RACE_OID:-$(pr_json "${pos[0]}" | jq -r .headRefOid)}"
@@ -205,6 +210,13 @@ case "$cmd" in
         fi
         # a check run without check_suite belongs to suite 1 (the own workflows' runs)
         printf '%s' "$runs" | jq '{total_count: length, check_runs: map(.check_suite //= {id: 1})}' | emit ;;
+      repos/*/*/issues/*/comments*)
+        # REST comments of an issue or a PR (one page): dbid as id; a seeded one without it keeps its own id and an
+        # old created_at; a missing author is GH_USER
+        num="${apipath#repos/*/*/issues/}"; num="${num%%/*}"
+        jq --argjson n "$num" --arg u "${GH_USER:-dru}" '[(.issues[], .prs[]) | select(.number == $n) | .comments[]?
+            | {id: (.dbid // .id), user: {login: (.author.login // $u)}, body, created_at: (.created_at // "2000-01-01T00:00:00Z")}]' \
+          "$state" | emit ;;
       repos/*/*/check-runs/*/annotations)
         id="${apipath%/annotations}"; id="${id##*/}"
         jq --arg id "$id" '.annotations[$id] // []' "$state" | emit ;;

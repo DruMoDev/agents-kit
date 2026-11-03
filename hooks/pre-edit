@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# PreToolUse hook (Edit|Write|MultiEdit|NotebookEdit, and Codex's apply_patch: every file of the patch, see kr_input in
+# hooks/lib-reglas.sh; an unreadable patch blocks when a path it names, or the cwd, is in a repo with rules).
+# It only reads JSON, so it applies the rules of any marked repo (no trust check). Exit 2 with the remedy on stderr
+# when the edit
+#   - raises the number of eslint-disable, @ts-ignore, @ts-nocheck or `as any` (KR_PROHIBIDO) in a code file
+#     (extension, without case, in the keys of .lint.fichero or KR_CODIGO): the whole file before and after the edit
+#     (kr_sube_prohibido, over every field present), so inherited occurrences kept as they are do not count; an edit
+#     whose old_string is not in the file, or a NotebookEdit cell, blocks with any match in its new text, and a check
+#     that cannot run (jq error, unreadable file) blocks too; or
+#   - touches a shielded file (.blindado) without <git-common-dir>/agents-kit/reglas-abiertas holding this session_id
+#     (kit-reglas.sh abrir; the message gives that command with the session_id of the input, so any tool can copy
+#     it). package.json is not checked here: kit-pr.sh fusionar does it.
+# Each path is normalized ('.' and '..') and checked against the rules of ITS repo (kr_item), which may not be the
+# cwd's; a path inside a marked repo that cannot be resolved blocks. Paths and globs are compared without case on
+# macOS; a symlink is checked by its target, and a target outside its repo does nothing. Inert (exit 0, no output)
+# as described in hooks/lib-reglas.sh, and for paths outside any repo with .agents-kit.json. An allowed edit in a
+# repo that does not contain the cwd is noted for stop-check (kr_apunta), and every allowed file is noted for this
+# session (kr_anota).
+source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
+kr_input && { [ ${#KR_ITEMS[@]} -gt 0 ] || [ -n "$KR_PARCHE" ]; } || exit 0
+ilegible_msg="No se pudo leer el parche (apply_patch) para comprobar las reglas; se bloquea por si acaso."
+if [ ${#KR_ITEMS[@]} -eq 0 ]; then
+  kr_root && kr_config || exit 0
+  echo "$ilegible_msg" >&2
+  exit 2
+fi
+ilegible=""
+source "$KR_PLUGIN/scripts/lib/blindado.sh"
+nocase=""
+case "$OSTYPE" in darwin*) nocase=1 ;; esac
+i=0
+while [ $i -lt ${#KR_ITEMS[@]} ]; do
+  ruta="${KR_ITEMS[$i]}"; KR_JSON="${KR_ITEMS[$((i + 1))]}"; i=$((i + 2))
+  kr_item "$ruta"; rc=$?
+  if [ "$KR_JSON" = '"ilegible"' ]; then
+    ilegible=1
+    [ $rc -eq 1 ] || ! kr_config || { echo "$ilegible_msg" >&2; exit 2; }
+    continue
+  fi
+  [ $rc -ne 1 ] || continue
+  en=""
+  [ -z "$KR_PARCHE" ] || en="$ruta: "
+  if [ $rc -ne 0 ]; then
+    kr_config || continue
+    echo "${en}No se pudo resolver la ruta dentro del repo; se bloquea por si acaso." >&2
+    exit 2
+  fi
+  [ -z "$KR_PARCHE" ] || en="$KR_REL: "
+  kr_ext
+  kr_config "$KR_EXT" || continue
+  if kr_codigo "$KR_EXT"; then
+    case "$(kr_sube_prohibido)" in
+      no) ;;
+      sube) echo "${en}No desactives reglas ni tipos: arregla la causa. Si la regla está mal, propón el cambio (kit-reglas)." >&2
+        exit 2 ;;
+      *) echo "${en}No se pudo comprobar si la edición desactiva reglas o tipos (¿el fichero se puede leer?); se bloquea por si acaso." >&2
+        exit 2 ;;
+    esac
+  fi
+  if kit_blindado_match "$KR_REL" "$KR_GLOBS" $nocase; then
+    abierta=""
+    [ ! -f "$KR_COMMON/agents-kit/reglas-abiertas" ] || IFS= read -r abierta < "$KR_COMMON/agents-kit/reglas-abiertas"
+    if [ -z "$KR_SID" ] || [ "$abierta" != "$KR_SID" ]; then
+      echo "${en}Fichero de reglas: solo se cambia con la aprobación de Dru (skill kit-reglas, o en kit-run un commit propio y kit-pr.sh regla)." >&2
+      if [ -n "$KR_SID" ]; then
+        printf 'Con el OK de Dru, ábrelo para esta sesión con: %q/scripts/kit-reglas.sh abrir %q %q\n' \
+          "$KR_PLUGIN" "$KR_ROOT" "$KR_SID" >&2
+      else
+        echo "Esta herramienta llega sin id de sesión: no se puede abrir con kit-reglas.sh abrir." >&2
+      fi
+      exit 2
+    fi
+  fi
+  ! kr_confianza || kr_anota
+  kr_apunta
+done
+if [ -n "$ilegible" ] && kr_root && kr_config; then echo "$ilegible_msg" >&2; exit 2; fi
+exit 0

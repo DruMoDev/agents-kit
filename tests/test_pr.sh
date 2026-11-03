@@ -444,7 +444,7 @@ grep -q "commits/$sha/check-runs" "$GH_LOG" || fail "fusionar no consulta el SHA
 case "$out" in *"PR fusionado: $url"*) ;; *) fail "fusionar msg: $out";; esac
 [ "$(pr_q .state)" = MERGED ] || fail "no fusionó"
 [ "$(flow_issue 3 .state)" = CLOSED ] || fail "no cerró el issue"
-[ "$(flow_issue 3 '.comments[-2].body')" = "Resuelto en #$p." ] || fail "comentario de cierre"
+[ "$(flow_issue 3 '.comments[-2].body')" = "<!-- kit-resuelto: $p --> Resuelto en #$p." ] || fail "comentario de cierre"
 case "$(flow_issue 3 '.comments[-1].body')" in "<!-- kit-soltado: fusionar -->"*"#$p"*) ;; *) fail "kit-soltado tras fusionar";; esac
 [ "$(flow_issue 3 '[.labels[].name] | sort | join(",")')" = otra,serializa:mig ] || fail "no quitó en-curso: $(flow_issue 3 '.labels')"
 grep -q -- "issue edit 3 --repo dru/demo --remove-label en-curso$" "$GH_LOG" || fail "issue edit sin las etiquetas"
@@ -562,6 +562,10 @@ st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- cli/ nada\n\n## Otra\nlib
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"rutas protegidas (lib/)"*) ;; *) fail "prefijo fuera de la sección: $err";; esac
 st '.prs[0].body = "Cuerpo\n\n## Zonas protegidas\n\n- lib/: motivo\n\nCierra #3"'
+# the branch also edits .agents-kit.json (a shielded file): it merges once Dru approves that by answering
+bash "$pr" regla "$wt" $p "$tmp/body" >/dev/null 2>&1 || fail "regla del marcador"
+flow_add_comment 3 "Vale, sin puestos en esta rama."
+bash "$pr" aprobar-regla "$wt" $p "$(flow_issue 3 '.comments[-1].dbid')" >/dev/null 2>&1 || fail "aprobar el cambio del marcador"
 okf="$(mktemp)"
 out="$(KIT_PM_OK="$okf" bash "$pr" fusionar "$wt" $p 3 2>&1)" || fail "fusionar con ganchos cumplidos: $out"
 [ "$(pr_q .state)" = MERGED ] || fail "ganchos cumplidos: no fusionó"
@@ -653,4 +657,202 @@ echo '{}' > "$r/.agents-kit.json"
 st ".prs[0].headRefOid = \"$(git -C "$wt" rev-parse HEAD)\""
 err="$(bash "$pr" fusionar "$wt" $p 3 2>&1 >/dev/null)"
 case "$err" in *"CHANGELOG.md mal formado"*) ;; *) fail "changelog false en la PR: $err";; esac
+# --- reglas: a PR that changes shielded files (kit-reglas.sh blindado) merges only with Dru's approval, given by
+# answering after a kit-regla proposal: kit-regla <hash> + own unmarked comment after it + kit-regla-aprobada <hash> <id>
+use_flow_gh
+unset KIT_CONFIG
+rr="$(mk_repo)"; ro="$(mktemp -d)"
+git init -q --bare "$ro"
+echo '{"revision":{"puestos":[]}}' > "$rr/.agents-kit.json"
+(cd "$rr" && git add .agents-kit.json && git commit -q -m marker \
+  && git remote add origin https://github.com/dru/demo.git \
+  && git config "url.$ro.insteadOf" "https://github.com/dru/demo.git" \
+  && git push -q -u origin main) >/dev/null 2>&1 || fail "reglas: setup remoto"
+git -C "$ro" symbolic-ref HEAD refs/heads/main
+w2="$(mktemp -d)/wt"
+git -C "$rr" worktree add -q -b issue-7-reglas --no-track "$w2" origin/main || fail "reglas: setup worktree"
+flow_add_issue 7 "Reglas" en-curso
+(cd "$w2" && echo a > a.txt && git add a.txt && git commit -q -m a) || fail "reglas: commit a"
+printf 'Cuerpo\n' > "$tmp/rbody"
+out="$(bash "$pr" abrir "$w2" 7 "Reglas" "$tmp/rbody" 2>&1)" || fail "reglas: abrir: $out"
+p2="$(printf '%s\n' "$out" | sed -n 1p)"
+printf 'Añade la regla X porque Y.\n' > "$tmp/regla"
+printf 'Ronda 1: 0 hallazgos.\n' > "$tmp/rr1"
+bash "$pr" ronda "$w2" "$p2" 1 "$tmp/rr1" >/dev/null 2>&1 || fail "reglas: ronda"
+dbid_last() { jq -r --argjson n "$1" '[(.issues[], .prs[]) | select(.number == $n) | .comments[-1].dbid] | first' "$GH_STATE/state.json"; }
+pr2_last() { jq -r --argjson n "$p2" '.prs[] | select(.number == $n) | .comments[-1].body' "$GH_STATE/state.json"; }
+# regla without shielded changes: nothing to approve
+err="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "regla sin ficheros blindados: exit $rc ($err)"
+case "$(pr2_last)" in "<!-- kit-regla"*) fail "regla sin ficheros blindados publicó";; esac
+# an environment error of blindado inside fusionar is exit 2, never a pass (no lint in the base: trinquete never runs)
+echo '{' > "$w2/eslint-suppressions.json"
+bash "$pr" fusionar "$w2" "$p2" 7 >/dev/null 2>"$tmp/e"; rc=$?
+[ $rc -eq 2 ] && grep -q "kit-reglas.sh blindado falló" "$tmp/e" || fail "blindado con error de entorno: exit $rc $(cat "$tmp/e")"
+rm "$w2/eslint-suppressions.json"
+# an own answer posted before the proposal
+gh pr comment "$p2" --repo dru/demo --body "sí, adelante" >/dev/null || fail "reglas: respuesta temprana"
+early="$(dbid_last "$p2")"
+(cd "$w2" && echo 'export default [];' > eslint.config.mjs && git add eslint.config.mjs && git commit -q -m regla \
+  && git push -q origin HEAD) >/dev/null 2>&1 || fail "reglas: commit eslint"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local"
+msg_regla="la PR cambia ficheros de reglas (eslint.config.mjs) sin la aprobación de Dru: kit-pr.sh regla y espera su respuesta"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "reglas sin kit-regla: exit $rc ($err)"
+case "$err" in *"$msg_regla"*) ;; *) fail "reglas sin kit-regla: $err";; esac
+[ "$(pr_q '.state')" = OPEN ] || fail "fusionó cambios de reglas sin aprobar"
+# regla: the proposal carries the hash of kit-reglas.sh blindado against origin/main
+h="$(bash "$REPO_ROOT/scripts/kit-reglas.sh" blindado "$w2" origin/main | sed -n 's/^hash: //p')"
+[ ${#h} -eq 64 ] || fail "reglas: hash de blindado '$h'"
+# regla needs a clean tree and HEAD = the PR head: Dru approves exactly the diff that merges
+echo x > "$w2/sucio.txt"
+err="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "regla con árbol sucio: exit $rc"
+case "$err" in *"cambios sin confirmar"*) ;; *) fail "regla con árbol sucio: $err";; esac
+rm "$w2/sucio.txt"
+(cd "$w2" && echo l > local.txt && git add local.txt && git commit -q -m local) || fail "reglas: commit local"
+err="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "regla sin empujar: exit $rc"
+case "$err" in *"empuja antes de proponer la regla"*) ;; *) fail "regla sin empujar: $err";; esac
+git -C "$w2" reset -q --hard HEAD~1 || fail "reglas: deshacer commit local"
+case "$(pr2_last)" in "<!-- kit-regla"*) fail "regla rechazada publicó";; esac
+out="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1)" || fail "regla: $out"
+case "$(last_line "$out")" in "FIN: https://github.com/dru/demo/pull/$p2#issuecomment-"*) ;; *) fail "regla FIN: $out";; esac
+[ "$(pr2_last)" = "<!-- kit-regla: $h -->
+Añade la regla X porque Y." ] || fail "regla cuerpo: $(pr2_last)"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"
+case "$err" in *"$msg_regla"*) ;; *) fail "reglas con kit-regla sin respuesta: $err";; esac
+# aprobar-regla refuses: an answer older than the proposal, a comment with a kit marker, another account's comment
+err="$(bash "$pr" aprobar-regla "$w2" "$p2" "$early" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "aprobar-regla con respuesta anterior: exit $rc ($err)"
+case "$err" in *"anterior a la última propuesta kit-regla"*) ;; *) fail "aprobar-regla anterior: $err";; esac
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 2"
+marked="$(dbid_last "$p2")"
+err="$(bash "$pr" aprobar-regla "$w2" "$p2" "$marked" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "aprobar-regla con marcador: exit $rc ($err)"
+case "$err" in *"marcador del kit"*) ;; *) fail "aprobar-regla con marcador: $err";; esac
+GH_USER=otro gh pr comment "$p2" --repo dru/demo --body "apruebo" >/dev/null || fail "reglas: respuesta ajena"
+foreign="$(dbid_last "$p2")"
+err="$(bash "$pr" aprobar-regla "$w2" "$p2" "$foreign" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "aprobar-regla ajena: exit $rc ($err)"
+case "$err" in *"otra cuenta"*) ;; *) fail "aprobar-regla ajena: $err";; esac
+bash "$pr" aprobar-regla "$w2" "$p2" 999999 >/dev/null 2>&1; [ $? -eq 1 ] || fail "aprobar-regla con id inexistente debe dar 1"
+bash "$pr" aprobar-regla "$w2" "$p2" abc >/dev/null 2>&1; [ $? -eq 1 ] || fail "aprobar-regla con id no numérico debe dar 1"
+jq -e --argjson n "$p2" '.prs[] | select(.number == $n) | any(.comments[]; .body | contains("kit-regla-aprobada")) | not' \
+  "$GH_STATE/state.json" >/dev/null || fail "aprobar-regla rechazado publicó el marcador"
+# a forged approval marker pointing at an invalid answer does not count either
+gh pr comment "$p2" --repo dru/demo --body "<!-- kit-regla-aprobada: $h $early -->" >/dev/null || fail "reglas: marcador falso"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"
+case "$err" in *"$msg_regla"*) ;; *) fail "kit-regla-aprobada con respuesta anterior aceptado: $err";; esac
+# Dru answers in the issue: approved, and the rule gate passes
+flow_add_comment 7 "Sí, apruebo la regla"
+ans="$(dbid_last 7)"
+# a kit-regla-aprobada posted by another account never counts, even pointing at a valid answer
+GH_USER=otro gh pr comment "$p2" --repo dru/demo --body "<!-- kit-regla-aprobada: $h $ans -->" >/dev/null || fail "reglas: aprobada ajena"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"
+case "$err" in *"$msg_regla"*) ;; *) fail "kit-regla-aprobada de otra cuenta aceptado: $err";; esac
+# an own unmarked comment of another issue is not an answer for this PR
+flow_add_issue 9 "Otro issue"
+flow_add_comment 9 "Sí, apruebo"
+err="$(bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 9)" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "aprobar-regla con comentario de otro issue: exit $rc ($err)"
+case "$err" in *"no está en la PR ni en su issue"*) ;; *) fail "aprobar-regla con comentario de otro issue: $err";; esac
+out="$(bash "$pr" aprobar-regla "$w2" "$p2" "$ans" 2>&1)" || fail "aprobar-regla: $out"
+[ "$(last_line "$out")" = "FIN: aprobada" ] || fail "aprobar-regla FIN: $out"
+[ "$(pr2_last)" = "<!-- kit-regla-aprobada: $h $ans -->" ] || fail "aprobar-regla marcador: $(pr2_last)"
+echo x > "$w2/sucio.txt" # (a dirty tree, so nothing merges yet)
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "regla aprobada con árbol sucio: exit $rc"
+case "$err" in *"ficheros de reglas"*) fail "regla aprobada rechazada: $err";; esac
+rm "$w2/sucio.txt"
+# the shielded diff changes after the approval: another proposal and another answer are needed
+echo '// otra' >> "$w2/eslint.config.mjs"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "diff blindado cambiado: exit $rc"
+case "$err" in *"$msg_regla"*) ;; *) fail "diff blindado cambiado tras aprobar: $err";; esac
+(cd "$w2" && git commit -q -am "regla 2" && git push -q origin HEAD) >/dev/null 2>&1 || fail "reglas: commit 2"
+err="$(bash "$pr" aprobar-regla "$w2" "$p2" "$ans" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "aprobar-regla con propuesta vieja: exit $rc ($err)"
+case "$err" in *"kit-pr.sh regla"*) ;; *) fail "aprobar-regla con propuesta vieja: $err";; esac
+bash "$pr" regla "$w2" "$p2" "$tmp/regla" >/dev/null 2>&1 || fail "regla 2"
+bash "$pr" aprobar-regla "$w2" "$p2" "$ans" >/dev/null 2>&1; [ $? -eq 1 ] || fail "aprobar-regla con respuesta a la propuesta vieja debe dar 1"
+# in a chat session: the quoted answer goes to the PR as a normal comment, then the marker with its id
+printf '<!-- kit-x -->\n' > "$tmp/chat-mal"
+bash "$pr" aprobar-regla "$w2" "$p2" --chat "$tmp/chat-mal" >/dev/null 2>&1; [ $? -eq 1 ] || fail "aprobar-regla --chat con marcador debe dar 1"
+printf 'Sí, mete la regla.\nY la otra también.\n' > "$tmp/chat"
+out="$(bash "$pr" aprobar-regla "$w2" "$p2" --chat "$tmp/chat" 2>&1)" || fail "aprobar-regla --chat: $out"
+[ "$(last_line "$out")" = "FIN: aprobada" ] || fail "aprobar-regla --chat FIN: $out"
+h2="$(bash "$REPO_ROOT/scripts/kit-reglas.sh" blindado "$w2" origin/main | sed -n 's/^hash: //p')"
+quote="$(jq -r --argjson n "$p2" '.prs[] | select(.number == $n) | .comments[-2] | "\(.dbid)\t\(.body)"' "$GH_STATE/state.json")"
+case "${quote#*$'\t'}" in *"<!-- kit-"*) fail "la cita del chat lleva marcador";; *"> Sí, mete la regla."*"> Y la otra también."*) ;; *) fail "cita del chat: $quote";; esac
+[ "$(pr2_last)" = "<!-- kit-regla-aprobada: $h2 ${quote%%$'\t'*} -->" ] || fail "aprobar-regla --chat marcador: $(pr2_last)"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 3"
+out="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1)" || fail "fusionar con la regla aprobada: $out"
+[ "$(pr_q '.state')" = MERGED ] || fail "regla aprobada: no fusionó"
+# trinquete (only when the base marker declares lint): a PR that touches a file with lint debt is refused
+mkdir -p "$rr/src" && echo 'const a = 1;' > "$rr/src/a.ts"
+printf '{"src/a.ts":{"no-unused-vars":{"count":1}}}\n' > "$rr/eslint-suppressions.json"
+echo '{"revision":{"puestos":[]},"lint":{"fichero":{"ts":"true"}}}' > "$rr/.agents-kit.json"
+(cd "$rr" && git pull -q origin main && git add -A && git commit -q -m "base con lint" && git push -q origin main) >/dev/null 2>&1 \
+  || fail "reglas: base con lint"
+# (the PR also drops lint from its own marker: trinquete still runs, it reads the marker of origin/main)
+(cd "$w2" && git fetch -q origin && git reset -q --hard origin/main && echo 'const a = 2;' > src/a.ts \
+  && echo '{"revision":{"puestos":[]}}' > .agents-kit.json \
+  && git commit -q -am "toca a.ts y quita lint" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 || fail "reglas: toca a.ts"
+st "(.prs[] | select(.number == $p2)) |= (.state = \"OPEN\" | del(.headRefOid))"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 4"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "trinquete: exit $rc ($err)"
+case "$err" in *"  - deuda en fichero tocado: src/a.ts (lint)"*) ;; *) fail "trinquete: $err";; esac
+case "$err" in *"ficheros de reglas (.agents-kit.json)"*) ;; *) fail "trinquete: quitar lint del marcador no pide aprobación: $err";; esac
+# an environment error of the rule checks is exit 2, never a pass
+echo '{' > "$w2/eslint-suppressions.json"
+bash "$pr" fusionar "$w2" "$p2" 7 >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] || fail "trinquete con error de entorno: exit $rc"
+git -C "$w2" checkout -q -- eslint-suppressions.json
+[ "$(pr_q '.state')" = OPEN ] || fail "trinquete: fusionó"
+# debt that grows (a new rule with its suppressions, on files the PR does not touch) goes through Dru, it is not forbidden
+(cd "$w2" && git reset -q --hard origin/main && echo 'export default [{rules: {}}];' > eslint.config.mjs \
+  && printf '{"src/a.ts":{"no-unused-vars":{"count":2}}}\n' > eslint-suppressions.json && git add -A \
+  && git commit -q -m "regla nueva con su deuda" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 \
+  || fail "reglas: deuda que crece"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 5"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "deuda que crece sin aprobación: exit $rc ($err)"
+case "$err" in *"  - la deuda crece: src/a.ts no-unused-vars"*) ;; *) fail "deuda que crece sin aprobación: $err";; esac
+case "$err" in *"ficheros de reglas (eslint-suppressions.json, eslint.config.mjs) sin la aprobación de Dru"*) ;;
+  *) fail "deuda que crece sin aprobación: $err";; esac
+bash "$pr" regla "$w2" "$p2" "$tmp/regla" >/dev/null 2>&1 || fail "regla de la deuda"
+flow_add_comment 7 "Vale, esa deuda entra."
+bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 7)" >/dev/null 2>&1 || fail "aprobar la deuda"
+# debt in a touched file still blocks, approval or not (the shielded diff, and so the approval, is unchanged)
+(cd "$w2" && echo 'const a = 3;' > src/a.ts && git commit -q -am "toca a.ts" && git push -q origin HEAD:issue-7-reglas) >/dev/null 2>&1 \
+  || fail "reglas: toca a.ts con aprobación"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 6"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "deuda en fichero tocado con aprobación: exit $rc ($err)"
+case "$err" in *"  - deuda en fichero tocado: src/a.ts (lint)"*) ;; *) fail "deuda en fichero tocado con aprobación: $err";; esac
+case "$err" in *"la deuda crece"*|*"ficheros de reglas"*) fail "con aprobación válida: $err";; esac
+(cd "$w2" && git reset -q --hard HEAD~1 && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 || fail "reglas: deshacer a.ts"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 7"
+out="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1)" || fail "deuda que crece con aprobación: $out"
+[ "$(pr_q '.state')" = MERGED ] || fail "deuda que crece con aprobación: no fusionó"
+# a base whose blindado leaves eslint-suppressions.json out: approving eslint.config.mjs never lets its growth through
+echo '{"revision":{"puestos":[]},"lint":{"fichero":{"ts":"true"}},"blindado":["eslint.config.*"]}' > "$rr/.agents-kit.json"
+(cd "$rr" && git add -A && git commit -q -m "blindado sin la deuda" && git push -q origin main) >/dev/null 2>&1 || fail "reglas: blindado sin la deuda"
+(cd "$w2" && git fetch -q origin && git reset -q --hard origin/main && echo 'export default [{rules: {x: 1}}];' > eslint.config.mjs \
+  && printf '{"src/a.ts":{"no-unused-vars":{"count":2}}}\n' > eslint-suppressions.json && git add -A \
+  && git commit -q -m "regla y deuda fuera del blindado" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 \
+  || fail "reglas: deuda fuera del blindado"
+st "(.prs[] | select(.number == $p2)) |= (.state = \"OPEN\" | del(.headRefOid))"
+bash "$pr" regla "$w2" "$p2" "$tmp/regla" >/dev/null 2>&1 || fail "regla con blindado sin la deuda"
+flow_add_comment 7 "Vale la regla."
+bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 7)" >/dev/null 2>&1 || fail "aprobar con blindado sin la deuda"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 8"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "deuda fuera del blindado: exit $rc ($err)"
+case "$err" in *"  - la deuda crece: src/a.ts no-unused-vars"*) ;; *) fail "deuda fuera del blindado: $err";; esac
+case "$err" in *"ficheros de reglas"*) fail "deuda fuera del blindado: la regla no quedó aprobada: $err";; esac
+[ "$(pr_q '.state')" = OPEN ] || fail "deuda fuera del blindado: fusionó"
+
 echo "OK test_pr"

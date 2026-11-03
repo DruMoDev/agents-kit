@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Sourced helper: scripts that a repo declares in .agents-kit.json (setup, checks.pre-merge).
+# Sourced helper: scripts that a repo declares in .agents-kit.json (setup, checks.pre-merge) and kit_run_timeout, also
+# used by the rule hooks (hooks/lib-reglas.sh).
 # The marker is project-controlled: only relative paths inside the repo are accepted.
 # Env: KIT_HOOK_TIMEOUT (s, default 1800).
 
@@ -32,10 +33,18 @@ kit_hook_path() {
 # kit_hook_run <wt> <script>: run `bash <script>` from <wt> in its own process group with a timeout.
 # Full stdout+stderr in $KIT_HOOK_OUT. Returns the script's code, 142 on timeout.
 kit_hook_run() {
-  local wt="$1" script="$2" t="${KIT_HOOK_TIMEOUT:-1800}"
+  local t="${KIT_HOOK_TIMEOUT:-1800}"
   [[ $t =~ ^[1-9][0-9]*$ ]] || { echo "error: KIT_HOOK_TIMEOUT debe ser un número de segundos" >&2; return 2; }
+  kit_run_timeout "$1" "$t" bash "$2"
+}
+
+# kit_run_timeout <dir> <secs> <cmd> [args...]: run <cmd> from <dir> with stdin closed, in its own process group;
+# after <secs> the whole group gets TERM and, 1 s later, KILL. Full stdout+stderr in $KIT_HOOK_OUT. Returns the
+# command's code (128+n if killed by signal n), 142 on timeout, 127 if it cannot be run.
+kit_run_timeout() {
+  local dir="$1" t="$2"; shift 2
   KIT_HOOK_OUT="$(
-    cd "$wt" || exit 2
+    cd "$dir" || exit 2
     perl -e '
       my ($t, @cmd) = @ARGV;
       my $pid = fork; defined $pid or exit 126;
@@ -45,7 +54,7 @@ kit_hook_run() {
       $SIG{ALRM} = sub { $stop->(); exit 142 };
       alarm $t; waitpid($pid, 0); my $st = $?; alarm 0; kill "KILL", -$pid;
       exit($st & 127 ? 128 + ($st & 127) : $st >> 8);
-    ' "$t" bash "$script" </dev/null 2>&1
+    ' "$t" "$@" </dev/null 2>&1
     echo "rc=$?"
   )"
   local rc="${KIT_HOOK_OUT##*rc=}"

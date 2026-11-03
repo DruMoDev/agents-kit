@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# PreToolUse hook (Bash; Codex's exec_command also arrives as tool_name "Bash", and OpenCode's bash tool through the
+# plugin). Exit 2 with the remedy on stderr when tool_input.command skips git hooks:
+#   - --no-verify, or a prefix of it of 6 characters or more (--no-v, --no-ve...), as a whole option (up to a
+#     separator: --no-verify-ssl passes);
+#   - -n in git commit, git merge or git am, also grouped with other short flags (-an, -nm), in the same command of
+#     a chain (split on ;, &&, &, ||, | and newlines);
+#   - core.hooksPath, without case, in any command of the chain (git -c, --config-env, quotes, GIT_CONFIG_*...), unless
+#     that whole command is exactly a read: git config, optional scopes (--local, --global, --system, --worktree,
+#     --file <x>, x made of [[:alnum:]./_-]), then --get, --get-all, --list/-l or get, and at most the key
+#     ([[:alnum:]._-]), in a command line without $(, backquotes, ${, < or > (the chain is also split on a lone &);
+#   - HUSKY=0, LEFTHOOK=0 (or false, also quoted), HUSKY_SKIP_HOOKS and SKIP=<hooks> (pre-commit).
+# It is a speed bump, not a barrier: it does not parse the shell (quotes, variables, eval, scripts it runs), so a
+# command can hide it and a commit message can trip it; the guarantee is kit-pr.sh fusionar and the CI.
+# Inert (exit 0, no output) like the other rule hooks: without .agents-kit.json in the repo of the cwd (or in the
+# nearest marked repo that contains it), with "reglas": false, without "lint", outside git or when the input is not
+# usable.
+# The kit scripts that commit without hooks (kit-ship-pr.sh) do it inside the script: this hook only sees the
+# command the agent runs, so they are not blocked.
+# Cost: a bash pattern over the raw input, without case, before anything else; only when it matches, one jq and one
+# git. The OpenCode plugin has the same gate (SKIP_HOOKS).
+[ ! -t 0 ] || exit 0
+IFS= read -r -d '' entrada
+shopt -s nocasematch
+case "$entrada" in *no-v*|*husky*|*lefthook*|*skip*|*hookspath*|*commit*|*merge*|*git*am*) ;; *) exit 0 ;; esac
+shopt -u nocasematch
+source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
+cwd=""; cmd=""; ok=""
+{ IFS= read -r -d '' ok; IFS= read -r -d '' cwd; IFS= read -r -d '' cmd; } < <(
+  printf '%s' "$entrada" | jq -j 'def s: if type == "string" then . else "" end;
+    "ok", "\u0000", (.cwd | s), "\u0000", (.tool_input | objects | .command // .cmd | s), "\u0000"' 2>/dev/null)
+[ "$ok" = ok ] && [ -n "$cwd" ] && [ -n "$cmd" ] || exit 0
+salta=""
+re='--no-v(e(r(i(fy?)?)?)?)?([^[:alnum:]_-]|$)|(^|[^[:alnum:]_])(HUSKY|LEFTHOOK)=["'"'"']?(0|false)|HUSKY_SKIP_HOOKS|(^|[^[:alnum:]_])SKIP='
+[[ "$cmd" =~ $re ]] && salta=1
+if [ -z "$salta" ]; then
+  git_re='(^|[^[:alnum:]_.-])git[[:space:]](.*[[:space:]])?(commit|merge|am)([[:space:]]|$)'
+  n_re='[[:space:]]-[[:alpha:]]*n[[:alpha:]]*([[:space:]]|$)'
+  lee_re='^[[:space:]]*git[[:space:]]+config([[:space:]]+(--local|--global|--system|--worktree|--file[[:space:]]+[[:alnum:]./_-]+))*[[:space:]]+(--get|--get-all|--list|-l|get)([[:space:]]+[[:alnum:]._-]+)?[[:space:]]*$'
+  # a read is never trusted when the command expands or redirects anything
+  libra=1
+  case "$cmd" in *'$('*|*'`'*|*'${'*|*'<'*|*'>'*) libra="" ;; esac
+  # redirections (2>&1, >&2, &>, <&) are not chain separators: blank them before splitting on a lone &
+  segs="$(printf '%s' "$cmd" | sed -E 's/[0-9]*>&[0-9-]*/ /g; s/&>/ /g; s/<&/ /g')"
+  segs="${segs//&&/$'\n'}"; segs="${segs//&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//;/$'\n'}"; segs="${segs//|/$'\n'}"
+  while IFS= read -r seg; do
+    [[ "$seg" =~ $git_re ]] && [[ "$seg" =~ $n_re ]] && { salta=1; break; }
+    lc="$(printf '%s' "$seg" | tr 'A-Z' 'a-z')"
+    case "$lc" in *core.hookspath*) ;; *) continue ;; esac
+    [ -n "$libra" ] && [[ "$lc" =~ $lee_re ]] || { salta=1; break; }
+  done <<< "$segs"
+fi
+[ -n "$salta" ] || exit 0
+KR_CWD="$(cd "$cwd" 2>/dev/null && pwd -P)" && [ -n "$KR_CWD" ] || exit 0
+kr_root || exit 0
+[ "$(jq -r '.reglas != false and (.lint | type) == "object"' "$KR_ROOT/.agents-kit.json" 2>/dev/null)" = true ] || exit 0
+echo "No te saltes los hooks de git (--no-verify, -n en commit/merge/am, HUSKY=0, LEFTHOOK=0, SKIP=, core.hooksPath): arregla lo que fallan. Si un hook está mal, propón el cambio (kit-reglas)." >&2
+exit 2

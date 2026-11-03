@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Stop hook. For the repo of the cwd and for every repo noted for this session by pre-edit/post-edit (kr_apunta: edits
+# in a repo that does not contain the cwd, such as a kit-run worktree), when it has .agents-kit.json and .lint.turno:
+# passes its changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as arguments to
+# .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root. In a repo
+# where the session noted the files it edited (kr_anota, lines in hooks/lib-reglas.sh), it passes those that are
+# still changed plus any other changed file that was not there when the session started (an edit by shell): not in
+# the baseline that hooks/session-start writes for the cwd's root, or with another hash since; in a root without a
+# baseline, newer than the session's start. Files another live session noted are left out, so the half-done files
+# of other sessions in the same clone do not block this one. A repo with no noted file gets all its changed files.
+# Exit 2 with the output on stderr when any fails; 0 with nothing changed, when a lock is busy, when the tool is
+# missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks again with stop_hook_active, up to
+# KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in kr_sesion_fichero turno-bloqueos, one file per
+# session, removed after a clean check or at the cap): then it lets the turn end with a warning. Codex has no cap of
+# its own (it looped with no end on 0.165.0), and Claude Code's (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP) is not verified.
+# Only repos of the cwd's clone run (kr_confianza): a noted root of another clone is ignored, and with the cwd outside
+# git nothing runs. Without a reliable session directory (kr_sesion_dir) it neither reads noted roots nor counts
+# blocks (no cap). Inert as in hooks/lib-reglas.sh.
+source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
+kr_input || exit 0
+roots=(); commons=()
+add_root() {
+  local r
+  for r in "${roots[@]}"; do [ "$r" != "$KR_ROOT" ] || return 0; done
+  kr_config && [ -n "$KR_TURNO" ] || return 0
+  roots+=("$KR_ROOT"); commons+=("$KR_COMMON")
+}
+kr_cwd_common || exit 0
+! kr_root || add_root
+ses=""
+[ -z "$KR_SID" ] || ses="$(kr_sesion_fichero sesion)" || ses=""
+propio=$'\n'; ajeno=$'\n'
+if [ -n "$ses" ] && [ -f "$ses" ]; then
+  while IFS= read -r l; do
+    r="${l%%$'\t'*}"
+    case "$r" in /*) ;; *) continue ;; esac
+    [ "$r" = "$l" ] || propio="$propio$l"$'\n'
+    [ -d "$r" ] && _kr_git "$r" && [ "$KR_ROOT" = "$r" ] && kr_confianza && add_root
+  done < "$ses"
+  # files that other live sessions noted as theirs ("f" lines of session files touched in the last 24 h)
+  while IFS= read -r o; do
+    [ "$o" != "$ses" ] && [ -f "$o" ] && [ ! -L "$o" ] || continue
+    while IFS= read -r l; do
+      case "$l" in /*$'\t'f$'\t'*) ajeno="$ajeno$l"$'\n' ;; esac
+    done < "$o"
+  done < <(find "${ses%/*}" -maxdepth 1 -type f -name 'sesion-*' -mmin -1440 2>/dev/null)
+fi
+inicio=""
+[ -z "$ses" ] || inicio="$(kr_sesion_fichero inicio)" || inicio=""
+[ -z "$inicio" ] || [ -f "$inicio" ] || inicio=""
+[ ${#roots[@]} -gt 0 ] || exit 0
+cuenta="$(kr_sesion_fichero turno-bloqueos)" || cuenta=""
+n=0; prev=""
+[ -z "$KR_ACTIVO" ] || [ -z "$cuenta" ] || [ ! -f "$cuenta" ] || read -r prev < "$cuenta"
+case "$prev" in ''|*[!0-9]*) ;; *) n=$prev ;; esac
+max="$(kr_tope "${KIT_TURNO_BLOQUEOS:-}" 8)"
+if [ "$n" -ge "$max" ]; then
+  [ -z "$cuenta" ] || rm -f "$cuenta"
+  echo "agents-kit: el lint del turno sigue fallando tras $n intentos seguidos; se deja terminar (lo frenan fusionar y el CI)" >&2
+  exit 0
+fi
+t="$(kr_tope "${KIT_TURNO_TIMEOUT:-}" 120)"
+final=0; j=0
+while [ $j -lt ${#roots[@]} ]; do
+  KR_ROOT="${roots[$j]}"; KR_COMMON="${commons[$j]}"; j=$((j + 1))
+  kr_config && [ -n "$KR_TURNO" ] || continue
+  files=(); kr_sucios
+  # Only a root this session noted files in is filtered (paths without case on macOS, like kr_resolve). A changed
+  # file this session did not note is skipped when it was already there when the session started: in the baseline
+  # with the same hash, or, in a root without a baseline (a worktree created later), older than the session's start;
+  # or when it is not in the baseline and a live session noted it. Anything else (an edit by shell, a baseline file
+  # whose hash changed) goes. A root without notes gets all its changed files.
+  case "$OSTYPE" in darwin*) shopt -s nocasematch ;; esac
+  filtra=""; base=""
+  case "$propio" in *$'\n'"$KR_ROOT"$'\t'f$'\t'*) filtra=1 ;; esac
+  case "$propio" in *$'\n'"$KR_ROOT"$'\t'base$'\n'*) base=1 ;; esac
+  k=0
+  while [ $k -lt ${#KR_SUC[@]} ]; do
+    f="${KR_SUC[$k]}"; h="${KR_HASH[$k]}"; k=$((k + 1))
+    if [ -n "$filtra" ]; then
+      case "$propio" in
+        *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*|*$'\n'"$KR_ROOT"$'\tf\t*\n'*) ;;
+        *) [ -n "$base" ] || [ -z "$inicio" ] || ! [ "$inicio" -nt "$KR_ROOT/$f" ] || continue
+           [ -z "$h" ] || case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'"$h  $f"$'\n'*) continue ;; esac
+           case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'*"  $f"$'\n'*) ;; *)
+             case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac ;;
+           esac ;;
+      esac
+    fi
+    files+=("./$f")
+  done
+  shopt -u nocasematch
+  [ ${#files[@]} -gt 0 ] || continue
+  what="los ficheros cambiados"
+  case "$KR_CWD/" in "$KR_ROOT"/*) ;; *) what="los ficheros cambiados de $KR_ROOT" ;; esac
+  [ -z "${KR_LOCK_OK:-}" ] || { _kr_soltar; KR_LOCK_OK=""; }
+  kr_lint "$t" "$what" "$KR_TURNO" "${files[@]}" || final=2
+done
+if [ -z "$cuenta" ]; then :
+elif [ $final -eq 2 ]; then
+  [ -e "$cuenta" ] || kr_sesion_limpia
+  printf '%s\n' $((n + 1)) > "$cuenta"
+else rm -f "$cuenta"; fi
+exit $final

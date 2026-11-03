@@ -1,14 +1,23 @@
 // agents-kit plugin for OpenCode, V1 (`opencode` 1.x, `server`) and V2 (2.x, `setup`).
 // Registers the plugin skills and, only in repos with .agents-kit.json, injects
-// the same context as hooks/session-start (V1: first user message; V2: system).
+// the same context as hooks/session-start (V1: first user message; V2: system)
+// and runs hooks/pre-edit and hooks/post-edit around the edit tools, and hooks/pre-bash before the bash tool
+// (editHook). The hooks find the repo of each
+// edited file themselves and stay inert outside repos with .agents-kit.json; if a hook cannot run (it fails to start,
+// dies or passes its time limit), the edit goes through, as in Claude Code.
 
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fs.realpathSync(fileURLToPath(import.meta.url))), '../..');
 const HOOK = path.join(PLUGIN_ROOT, 'hooks', 'session-start');
+const PRE_EDIT = path.join(PLUGIN_ROOT, 'hooks', 'pre-edit');
+const POST_EDIT = path.join(PLUGIN_ROOT, 'hooks', 'post-edit');
+const PRE_BASH = path.join(PLUGIN_ROOT, 'hooks', 'pre-bash');
+// The cheap gate of hooks/pre-bash (same patterns, without case), checked first so a plain command spawns nothing.
+const SKIP_HOOKS = /no-v|husky|lefthook|skip|hookspath|commit|merge|git.*am/i;
 const MARK = 'agents-kit está activo';
 // What the kit skills read or run outside the project. Never hooks/ or .opencode/.
 const ALLOWED_DIRS = ['scripts', 'skills', 'rules', 'templates'];
@@ -75,6 +84,73 @@ export const kitContext = (directory) => {
   return ctx;
 };
 
+// Rule hooks (hooks/pre-edit, hooks/post-edit, hooks/pre-bash), fed with the same JSON as Claude Code (Codex's for the
+// patch tool). V1 tools take filePath, V2 tools path; the patch tool (V1 `patch`/`apply_patch`, V2 `patch`) takes
+// patchText; bash takes command.
+const hookInput = (directory, sessionID, tool, args) => {
+  const a = args && typeof args === 'object' ? args : {};
+  const file = a.filePath ?? a.path;
+  let name = '';
+  let input;
+  if (tool === 'patch' || tool === 'apply_patch') {
+    name = 'apply_patch';
+    input = { command: a.patchText ?? a.patch ?? a.input };
+  } else if (tool === 'write') {
+    name = 'Write';
+    input = { file_path: file, content: a.content };
+  } else if (tool === 'edit') {
+    name = 'Edit';
+    input = { file_path: file, old_string: a.oldString, new_string: a.newString, replace_all: a.replaceAll === true };
+  } else if (tool === 'multiedit') {
+    name = 'MultiEdit';
+    const edits = (Array.isArray(a.edits) ? a.edits : []).map((e) => ({
+      old_string: e?.oldString, new_string: e?.newString, replace_all: e?.replaceAll === true }));
+    input = { file_path: file, edits };
+  } else if (tool === 'bash') {
+    name = 'Bash';
+    input = { command: a.command };
+  } else return null;
+  return { session_id: sessionID || '', cwd: directory, tool_name: name, tool_input: input };
+};
+
+// Time limit of a hook run: pre-edit 15 s; post-edit KIT_LINT_TIMEOUT (10 s) per file of the edit plus 15 s.
+const hookTimeout = (hook, input) => {
+  if (hook !== POST_EDIT) return 15000;
+  const per = Number(process.env.KIT_LINT_TIMEOUT) > 0 ? Number(process.env.KIT_LINT_TIMEOUT) : 10;
+  const files = input.tool_name === 'apply_patch'
+    ? (String(input.tool_input.command || '').match(/^\s*\*\*\* (Add|Update) File:/gm) || []).length : 1;
+  return (per * Math.max(1, files) + 15) * 1000;
+};
+
+// editHook <hook> <directory> <sessionID> <tool> <args>: resolves to '' when the hook lets it pass (exit 0, an inert
+// repo or a hook that could not run) and to its stderr when it blocks (exit 2). For the bash tool, PRE_EDIT means
+// hooks/pre-bash (only when the command has something it looks for) and POST_EDIT runs nothing.
+export const editHook = (hook, directory, sessionID, tool, args) => new Promise((resolve) => {
+  const input = hookInput(directory, sessionID, tool, args);
+  if (!input) return resolve('');
+  if (input.tool_name === 'Bash') {
+    if (hook !== PRE_EDIT || !SKIP_HOOKS.test(String(input.tool_input.command ?? ''))) return resolve('');
+    hook = PRE_BASH;
+  }
+  let child;
+  try {
+    child = execFile(hook, [], {
+      cwd: directory, encoding: 'utf8', timeout: hookTimeout(hook, input), maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+    }, (err, _stdout, stderr) => {
+      if (!err) return resolve('');
+      if (err.code === 2) return resolve(String(stderr || '').trim() || 'agents-kit: el hook de reglas bloquea la edición');
+      console.error(`[agents-kit] ${path.basename(hook)} no se pudo ejecutar: ${err.message}`);
+      resolve('');
+    });
+  } catch (err) {
+    console.error(`[agents-kit] ${path.basename(hook)} no se pudo ejecutar: ${err.message}`);
+    return resolve('');
+  }
+  child.stdin.on('error', () => {});
+  child.stdin.end(JSON.stringify(input));
+});
+
 export const AgentsKitPlugin = async ({ directory }) => ({
   config: async (config) => {
     if (Array.isArray(config.skills)) return;
@@ -97,6 +173,16 @@ export const AgentsKitPlugin = async ({ directory }) => ({
       const pattern = `${d}/**`;
       if (!(pattern in config.permission.external_directory)) config.permission.external_directory[pattern] = 'allow';
     }
+  },
+
+  // Throwing here blocks the tool; the message reaches the model.
+  'tool.execute.before': async (input, output) => {
+    const msg = await editHook(PRE_EDIT, directory, input.sessionID, input.tool, output.args);
+    if (msg) throw new Error(msg);
+  },
+  'tool.execute.after': async (input, output) => {
+    const msg = await editHook(POST_EDIT, directory, input.sessionID, input.tool, input.args);
+    if (msg) output.output = `${output.output ?? ''}\n\n${msg}`;
   },
 
   // Fires on every agent step with messages reloaded from the DB, so the guard
@@ -135,11 +221,36 @@ const setup = async (ctx) => {
     for (const s of skills) if (!editor.get(s.id)) editor.add(s);
   });
 
-  // System parts are rebuilt for every model call and never persisted: no guard needed.
+  // System parts are rebuilt for every model call and never persisted: no guard needed. Registered before the rule
+  // hooks so a failure there cannot leave the session without the rules.
   await ctx.session.hook('context', (event) => {
     const ctxText = kitContext(directory);
     if (ctxText) event.system.push({ type: 'text', text: ctxText });
   });
+
+  // Same rule hooks as V1: throwing in execute.before blocks the tool (the SDK turns it into the tool's error); after a
+  // completed edit, the lint failure is added to the result the model reads.
+  try {
+    await ctx.tool.hook('execute.before', async (event) => {
+      const msg = await editHook(PRE_EDIT, directory, event.sessionID, event.tool, event.input);
+      if (msg) throw new Error(msg);
+    });
+  } catch (err) {
+    console.error(`[agents-kit] no se pudo registrar tool.execute.before: ${err.message}`);
+  }
+  try {
+    await ctx.tool.hook('execute.after', async (event) => {
+      if (event.status !== 'completed' || !event.result) return;
+      const msg = await editHook(POST_EDIT, directory, event.sessionID, event.tool, event.input);
+      if (!msg) return;
+      const r = event.result;
+      if (Array.isArray(r.content)) r.content.push({ type: 'text', text: msg });
+      else if (typeof r.content === 'string') r.content = `${r.content}\n\n${msg}`;
+      else r.content = [{ type: 'text', text: msg }];
+    });
+  } catch (err) {
+    console.error(`[agents-kit] no se pudo registrar tool.execute.after: ${err.message}`);
+  }
 };
 
 export default { id: 'agents-kit', setup, server: AgentsKitPlugin };

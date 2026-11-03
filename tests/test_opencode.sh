@@ -65,10 +65,11 @@ printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '.skills == [$s] and (.te
 run2() { "$NODE" --no-warnings "$TESTS_DIR/opencode_v2_harness.mjs" "$@"; }
 v2repo="$(mk_repo)"
 out="$(run2 "$plugin" "$v2repo")" || fail "v2 harness failed: $out"
-printf '%s' "$out" | jq -e '.exports == ["id","server","setup"] and .hooks == ["session.context"]' >/dev/null \
+printf '%s' "$out" | jq -e '.exports == ["id","server","setup"]
+  and .hooks == ["session.context","tool.execute.after","tool.execute.before"]' >/dev/null \
   || fail "v2 export (no permission hook: an ask in V2 is always the user's rule): $out"
 # kit skills added from disk without frontmatter; a user skill with the same id wins
-printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '([.skills[].id] | sort) == ["kit-off","kit-on","kit-plan","kit-revisar","kit-run","kit-scout"]
+printf '%s' "$out" | jq -e --arg s "$REPO_ROOT/skills" '([.skills[].id] | sort) == ["kit-off","kit-on","kit-plan","kit-reglas","kit-revisar","kit-run","kit-scout"]
   and (.skills[] | select(.id == "kit-on") | .path == "/user/kit-on/SKILL.md")
   and (.skills[] | select(.id == "kit-run") | .path == ($s + "/kit-run/SKILL.md") and (.description | startswith("Lleva"))
        and (.start | startswith("---") | not))' >/dev/null || fail "v2 skills: $out"
@@ -80,5 +81,58 @@ out="$(run2 "$link" "$v2repo/src")" || fail "v2 harness failed: $out"
 printf '%s' "$out" | jq -e --arg r "$REPO_ROOT/rules/testing.md" '(.system | length) == 2 and .system[0] == "base"
   and (.system[1] | contains("agents-kit está activo") and contains($r)) and .systemAgain == .system' >/dev/null \
   || fail "v2 marked repo must add the rules to every model call: $out"
+# a tool.hook that fails to register does not take the rules down
+out="$(HARNESS_TOOL_HOOK_FALLA=1 run2 "$plugin" "$v2repo" 2>/dev/null)" || fail "v2 harness con tool.hook roto: $out"
+printf '%s' "$out" | jq -e '.hooks == ["session.context"] and (.system | length) == 2' >/dev/null \
+  || fail "v2 con tool.hook roto sigue inyectando las reglas: $out"
+
+# rule hooks around the edit tools (hooks/pre-edit and hooks/post-edit): V1 args use filePath, V2 input path;
+# patch/apply_patch go as Codex's apply_patch
+hrepo="$(mk_repo)"; hbin="$(mktemp -d)"
+cat > "$hbin/lint" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/log"
+grep -q MALO "$@" && { echo "MALO en $*"; exit 1; }
+exit 0
+EOF
+chmod +x "$hbin/lint"
+mkdir -p "$hrepo/src"; echo 'export const a = 1;' > "$hrepo/src/a.ts"
+ev1='[{"tool":"write","args":{"filePath":"src/b.ts","content":"const x = 1 as any"}},
+  {"tool":"edit","args":{"filePath":"src/a.ts","oldString":"1","newString":"2"}},
+  {"tool":"apply_patch","args":{"patchText":"*** Begin Patch\n*** Add File: eslint.config.mjs\n+x\n*** End Patch\n"}},
+  {"tool":"read","args":{"filePath":"src/a.ts"}}]'
+# without the marker: nothing runs
+out="$(run "$plugin" "$hrepo" '{}' - "$ev1")" || fail "harness tools sin marcador: $out"
+printf '%s' "$out" | jq -e '[.tools[] | .before == null and .output == "hecho"] | all' >/dev/null || fail "sin marcador las herramientas no se tocan: $out"
+[ ! -s "$hbin/log" ] || fail "sin marcador no se lanza el lint"
+printf '{"lint": {"fichero": {"ts": "%s"}}}\n' "$hbin/lint" > "$hrepo/.agents-kit.json"
+out="$(run "$plugin" "$hrepo/src/.." '{}' - "$ev1")" || fail "harness tools: $out"
+printf '%s' "$out" | jq -e '(.tools[0].before | contains("No desactives reglas ni tipos"))
+  and .tools[1].before == null and .tools[1].output == "hecho"
+  and (.tools[2].before | contains("eslint.config.mjs: Fichero de reglas"))
+  and .tools[3].before == null and .tools[3].output == "hecho"' >/dev/null || fail "v1 pre-edit por herramienta: $out"
+grep -qx './src/a.ts' "$hbin/log" || fail "v1 post-edit lanza el lint del fichero editado: $(cat "$hbin/log")"
+echo 'export const a = "MALO";' > "$hrepo/src/a.ts"
+out="$(run "$plugin" "$hrepo" '{}' - '[{"tool":"multiedit","args":{"filePath":"src/a.ts","edits":[{"oldString":"1","newString":"2"}]}}]')" \
+  || fail "harness multiedit: $out"
+printf '%s' "$out" | jq -e '.tools[0].before == null and (.tools[0].output | startswith("hecho\n\n") and contains("MALO en ./src/a.ts"))' >/dev/null \
+  || fail "v1 post-edit con el lint roto añade el fallo a la salida: $out"
+out="$(run2 "$plugin" "$hrepo" '[{"tool":"write","input":{"path":"src/b.ts","content":"// @ts-ignore"}},
+  {"tool":"edit","input":{"path":"src/a.ts","oldString":"a","newString":"b"}},
+  {"tool":"patch","input":{"patchText":"*** Begin Patch\n*** Update File: src/a.ts\n@@\n-export const a = \"MALO\";\n+export const a = x as any;\n*** End Patch\n"}}]')" \
+  || fail "v2 harness tools: $out"
+printf '%s' "$out" | jq -e '(.tools[0].before | contains("No desactives reglas"))
+  and .tools[1].before == null and .tools[1].content[0] == "hecho" and (.tools[1].content[1] | contains("MALO en ./src/a.ts"))
+  and (.tools[2].before | contains("src/a.ts: No desactives reglas"))' >/dev/null || fail "v2 pre-edit y post-edit por herramienta: $out"
+# bash tool: hooks/pre-bash blocks skipping git hooks (V1 args and V2 input carry command)
+out="$(run "$plugin" "$hrepo" '{}' - '[{"tool":"bash","args":{"command":"git commit --no-verify -m x"}},
+  {"tool":"bash","args":{"command":"git status"}}]')" || fail "harness bash: $out"
+printf '%s' "$out" | jq -e '(.tools[0].before | contains("No te saltes los hooks de git"))
+  and .tools[1].before == null and .tools[1].output == "hecho"' >/dev/null || fail "v1 pre-bash en la herramienta bash: $out"
+out="$(run2 "$plugin" "$hrepo" '[{"tool":"bash","input":{"command":"HUSKY=0 git push"}},
+  {"tool":"bash","input":{"command":"git commit -an"}}, {"tool":"bash","input":{"command":"git -c CORE.HOOKSPATH=/x commit"}}]')" \
+  || fail "v2 harness bash: $out"
+printf '%s' "$out" | jq -e '[.tools[] | .before | contains("No te saltes los hooks de git")] == [true, true, true]' >/dev/null \
+  || fail "v2 pre-bash en la herramienta bash: $out"
 
 echo ok

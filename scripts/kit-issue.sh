@@ -19,6 +19,10 @@
 # is open, in a cloud session (lib/transport.sh) an issue without entorno:nube, and an issue with a serializa:<eje>
 # label while another open issue with that label has en-curso (in a cloud session, any issue with an axis: the lock
 # cannot be taken there). With <N>: that issue if siguiente could pick it, else exit 1 with the reason.
+# An answered decision is the exception to necesita-respuesta (never to the other labels): the issue is back in the
+# pool once, after its last own <!-- kit-decision --> (REST created_at), there is a comment of the gh account without
+# any <!-- kit- marker (Dru's answer; every comment the kit posts carries one) in the issue or in the comments of its
+# open PR (branch issue-<N>-...). reclamar takes necesita-respuesta off once the claim is won, so Dru never edits labels.
 # --excluir: issues left out of this pick (kit-run passes the ones it failed to claim in this run).
 # Claims (kit-reclamado / kit-soltado markers) count only in comments written by the gh account.
 # reclamar also takes the lock of each serializa:<eje> of the issue (lib/locks.sh) once the claim is won; soltar,
@@ -33,7 +37,10 @@
 # reparto: every issue that siguiente could pick, in its order ("#N<TAB>prio<TAB>title"; kit-on shows it to Dru).
 # aparcar: adds someday to the given issues (out of the pool).
 # comprobar: kit-run's start check (one gh label list): exit 1 "kit en versión anterior: ejecuta kit-on para actualizar"
-#   (plus what is missing) when a kit v3 label is missing in the repo or the marker still has v2 keys; FIN: v3 otherwise.
+#   (plus what is missing) when a kit v3 label is missing in the repo or the marker still has v2 keys, and (with the
+#   other reasons, if any) "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el
+#   clon)" when kit-reglas.sh estado finds ts and says base incompleta, unless the marker says "reglas": false;
+#   FIN: v3 otherwise.
 #   Its first line is "kit: <version>", the plugin version on disk: a session that loaded an older SKILL.md notices.
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # With "flujo": false in the marker, siguiente, reparto, aparcar, reclamar, comprobar, crear and tomar-eje exit 1
@@ -45,6 +52,7 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/transport.sh"
 source "$here/lib/locks.sh"
+source "$here/lib/comments.sh"
 
 usage() {
   echo "uso: $0 siguiente <root> [<N>] [--excluir N[,N...]] | leer <root> <N> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
@@ -239,20 +247,21 @@ require_not_foreign() {
     exit 1
   fi
 }
-# notify <N> <estado> <etiqueta> <fichero>: tell Dru out of GitHub that there is something for Dru to do; never fails. The message
-# carries the issue title, the start of the question or reason and how to unblock it; the link opens the comment.
+# notify <N> <estado> <fichero> <cómo desbloquearlo>: tell Dru out of GitHub that there is something for Dru to do;
+# never fails. The message carries the issue title, the start of the question or reason and how to unblock it; the
+# link opens the comment.
 # Forwards the notifier's lines except its FIN, also when it fails (a "tema ntfy nuevo" line is printed only once
 # and must reach Dru).
 notify() {
   local t out rc line extract msg url
   t="$(gh issue view "$1" --repo "$slug" --json title --jq .title 2>/dev/null)" || t=""
-  extract="$(grep -v '^[[:space:]]*$' "$4" | grep -v '^<!--' | sed -n '1,6p' | cut -c1-200)"
+  extract="$(grep -v '^[[:space:]]*$' "$3" | grep -v '^<!--' | sed -n '1,6p' | cut -c1-200)"
   [ ${#extract} -le 500 ] || extract="${extract:0:497}..."
   msg="#$1${t:+ $t}${extract:+
 
 $extract}
 
-Responde en el issue y quita la etiqueta $3: el siguiente kit-run lo retoma."
+$4"
   case "$comment_url" in "https://github.com/$slug/issues/$1#"*) url="$comment_url" ;; *) url="https://github.com/$slug/issues/$1" ;; esac
   out="$(bash "$here/kit-notify.sh" "$root" accion "${slug#*/}: $2 #$1" "$msg" "$url" 2>"$tmpd/notify.err")"
   rc=$?
@@ -263,6 +272,24 @@ Responde en el issue y quita la etiqueta $3: el siguiente kit-run lo retoma."
     echo "aviso: no se pudo avisar ($(tr '\n' ' ' < "$tmpd/notify.err" | sed 's/ *$//'))" >&2
   fi
   return 0
+}
+# answered <N>: return 0 if, after the last own kit-decision of issue <N>, an own comment without a kit marker (Dru's
+# answer) is in the issue or in its open PR (branch issue-<N>-...), 1 if not; 2 (reason on stderr) if gh fails.
+# The open PRs are read once per run ($open_prs).
+open_prs=""
+answered() {
+  local c d pr
+  c="$(kit_rest_comments "$slug" "$1")" || { echo "error: no se pudo leer los comentarios de #$1" >&2; return 2; }
+  d="$(printf '%s' "$c" | jq -r --arg me "$me" '[.[] | select(.login == $me and (.body | test("^\\s*<!-- kit-decision -->")))] | last | .created_at // ""')"
+  [ -n "$d" ] || return 1
+  if [ -z "$open_prs" ]; then
+    open_prs="$(gh pr list --repo "$slug" --state open --limit 1000 --json number,headRefName)" \
+      || { echo "error: no se pudo listar las PR abiertas" >&2; return 2; }
+  fi
+  for pr in $(printf '%s' "$open_prs" | jq -r --arg b "issue-$1-" '.[] | select(.headRefName | startswith($b)) | .number'); do
+    c="$c$(kit_rest_comments "$slug" "$pr")" || { echo "error: no se pudo leer los comentarios de la PR #$pr" >&2; return 2; }
+  done
+  printf '%s' "$c" | jq -se --arg me "$me" --arg d "$d" "$KIT_ANSWER_JQ"' add | any(.[]; kit_answer($me) and .created_at > $d)' >/dev/null
 }
 read_file() { # <path>: print contents or exit 1
   [ -f "$1" ] && [ -r "$1" ] || { echo "no se puede leer el fichero: $1" >&2; exit 1; }
@@ -275,18 +302,27 @@ case "$sub" in
       || { echo "error: no se pudo listar los issues" >&2; exit 2; }
     # only issues opened by this gh account: anyone can open an issue in a public repo, and kit-run acts on it unattended
     me="$(gh api user --jq .login)" && [ -n "$me" ] || { echo "error: no se pudo leer el usuario de gh (gh api user)" >&2; exit 2; }
+    # own issues in necesita-respuesta whose decision Dru already answered: that label no longer keeps them out
+    answ=()
+    for x in $(printf '%s' "$list" | jq -r --arg me "$me" \
+        '.[] | select(.author.login == $me and ([.labels[].name] | index("necesita-respuesta"))) | .number'); do
+      answered "$x"; rc=$?
+      [ $rc -eq 2 ] && exit 2
+      [ $rc -eq 0 ] && answ+=("$x")
+    done
+    ans="[$(IFS=,; echo "${answ[*]+"${answ[*]}"}")]"
     # every open issue with why it stays out ("" = in the pool), in the order siguiente picks them. why: an excluding
     # label, the changelog issue, another author, an open dependency or, in a cloud session, no entorno:nube.
     # A dependency is "Depende de #N[ (nota)][, #M y #K]" or "Bloqueado por #N" opening a line, list item or sentence of an own
     # body, with the references right after the phrase ("No depende de #N" or "depende de X, como #N" are not).
-    all="$(printf '%s' "$list" | jq -c --arg me "$me" --arg env "$(kit_transport)" --argjson x "$EXCLUDED" '
+    all="$(printf '%s' "$list" | jq -c --arg me "$me" --arg env "$(kit_transport)" --argjson x "$EXCLUDED" --argjson ans "$ans" '
         def rank: if index("prio:alta") then 0 elif index("prio:media") then 1 elif index("prio:baja") then 3 else 2 end;
         def axes: [.labels[].name | select(startswith("serializa:"))];
         map(.number) as $open
         | ([.[] | select([.labels[].name] | index("en-curso")) | .number as $n | axes[] | {key: ., value: $n}]
            | from_entries) as $held
         | map([.labels[].name] as $l | .number as $n
-          | ([$x[] | select(. as $e | $l | index($e))] | first) as $b
+          | ([$x[] | select(. as $e | $l | index($e)) | select(. != "necesita-respuesta" or ($ans | index($n) | not))] | first) as $b
           | ([(.body // "") | scan("(?:^|\\n|[.:;!?]\\s+)\\s*(?:[-*]\\s+)?(?i:depende de|bloqueado por)\\s+((?:#[0-9]+(?:\\s*\\([^)\\n]*\\))?(?:\\s*(?:,|\\by\\b)\\s*)?)+)")
               | .[0] | scan("#([0-9]+)") | .[0]
               | tonumber | select(. != $n and (. as $d | $open | index($d)))] | unique) as $deps
@@ -361,11 +397,24 @@ case "$sub" in
     have="$(gh label list --repo "$slug" --limit 1000 --json name)" || { echo "error: no se pudieron listar las etiquetas" >&2; exit 2; }
     miss="$(printf '%s' "$have" | jq -r --argjson k "$KIT_LABELS" '[.[].name] as $h | [$k[] | select(. as $l | $h | index([$l]) | not)] | join(", ")')" \
       || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
-    if [ -n "$miss" ] || [ -n "$v2" ]; then
+    # the rule base (lint, types, structure) of a TS repo, unless the marker turns the rules off
+    base=""
+    if [ "$(jq -r '.reglas' "$root/.agents-kit.json")" != false ]; then
+      # (its stderr only on failure: kit_config repeats there the warnings about v2 keys that comprobar already reports)
+      est="$(bash "$here/kit-reglas.sh" estado "$root" 2>"$tmpd/estado.err")" \
+        || { echo "error: kit-reglas.sh estado falló: $(cat "$tmpd/estado.err")" >&2; exit 2; }
+      case "$(printf '%s\n' "$est" | sed -n 's/^lenguajes: //p')" in
+        ts|ts,*) [ "$(printf '%s\n' "$est" | sed -n '$p')" != "FIN: base incompleta" ] || base=falta ;;
+      esac
+    fi
+    if [ -n "$miss" ] || [ -n "$v2" ] || [ -n "$base" ]; then
       {
-        echo "kit en versión anterior: ejecuta kit-on para actualizar"
-        [ -z "$miss" ] || echo "faltan etiquetas del kit en el repo: $miss"
-        [ -z "$v2" ] || echo "el marcador .agents-kit.json tiene claves de la v2: $v2"
+        if [ -n "$miss" ] || [ -n "$v2" ]; then
+          echo "kit en versión anterior: ejecuta kit-on para actualizar"
+          [ -z "$miss" ] || echo "faltan etiquetas del kit en el repo: $miss"
+          [ -z "$v2" ] || echo "el marcador .agents-kit.json tiene claves de la v2: $v2"
+        fi
+        [ -z "$base" ] || echo "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)"
       } >&2
       exit 1
     fi
@@ -410,7 +459,8 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
       exit 2
     fi
     if [ "$w" != "$id" ]; then
-      comment "$n" "El agente \`$id\` suelta este issue: lo había cogido antes \`$w\`." \
+      comment "$n" "<!-- kit-perdido: $id -->
+El agente \`$id\` suelta este issue: lo había cogido antes \`$w\`." \
         || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
       echo "#$n ya lo había cogido '$w'" >&2
       exit 1
@@ -439,6 +489,15 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
       echo "#$n: $reason; reclamación deshecha" >&2
       exit $code
     done <<< "$axes"
+    # an answered decision (siguiente brought it back): the question is settled. A failure only warns: en-curso
+    # keeps it out of the pool, and once released siguiente still sees the answer
+    l="$(has_label "$n" necesita-respuesta)" || l=""
+    case "$l" in
+      true) gh issue edit "$n" --repo "$slug" --remove-label necesita-respuesta >/dev/null \
+              || echo "aviso: no se pudo quitar necesita-respuesta de #$n" >&2 ;;
+      false) ;;
+      *) echo "aviso: no se pudo leer las etiquetas de #$n: si lleva necesita-respuesta, quítala" >&2 ;;
+    esac
     echo "FIN: reclamado #$n"
     ;;
 
@@ -453,8 +512,10 @@ Cogido por el agente \`$id\`." || { echo "error: no se pudo comentar en #$n" >&2
     text="$(read_file "$3")" || exit 1
     if [ "$sub" = decision ]; then
       marker="<!-- kit-decision -->"; label=necesita-respuesta; motivo="necesita respuesta de Dru"; aviso="necesita respuesta"
+      desbloqueo="Responde en el issue: el siguiente kit-run lo retoma."
     else
       marker="<!-- kit-bloqueado -->"; label=bloqueado; motivo="bloqueado"; aviso="bloqueado"
+      desbloqueo="Responde en el issue y quita la etiqueta bloqueado: el siguiente kit-run lo retoma."
     fi
     own_login
     require_not_foreign "$n" "$id"
@@ -463,7 +524,7 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     gh issue edit "$n" --repo "$slug" --add-label "$label" --add-assignee @me >/dev/null \
       || { echo "error: no se pudo marcar #$n como $label" >&2; exit 2; }
     release "$n" "$id" "$motivo" || { echo "error: no se pudo soltar #$n" >&2; exit 2; }
-    notify "$n" "$aviso" "$label" "$3"
+    notify "$n" "$aviso" "$3" "$desbloqueo"
     echo "FIN: $label #$n"
     ;;
 

@@ -40,6 +40,7 @@ El kit es inerte en cualquier repo sin `.agents-kit.json` en su raíz.
 - `kit-run`: coge los issues abiertos por orden (ver "Backlog") y los lleva uno a uno hasta `main`: worktree propio, tests, PR, CI (solo cuentan los workflows propios del repo en `.github/workflows/`; los de GitHub, como Dependabot o CodeQL, no son CI; sin CI propio, o si GitHub no arranca el CI porque la cuenta se quedó sin minutos de Actions, gate local con `verificar.completo`; en este caso fusiona con `--admin` y, pasado el día 1, relanza el CI bloqueado por si ya hay minutos) en paralelo con las rondas de revisión hasta 0 hallazgos o `maxReviewRounds`, squash merge y limpieza (que deja tu clon al día con `main` si está en la rama por defecto y el avance es fast-forward; si no, te avisa de por qué). Al acabar resume las PRs fusionadas y lo que espera a tu respuesta.
 - `kit-run <N>`: lo mismo para un solo issue. Lo coge solo si `kit-run` también podría cogerlo (abierto, de tu cuenta, sin etiquetas que lo excluyan ni dependencias abiertas) y, si no, dice por qué. Sirve para lanzarlo en segundo plano desde una sesión contigo, por ejemplo para arreglar un bug que has aprobado sin parar lo que estáis haciendo.
 
+- `kit-reglas`: instala en el repo la base de lint, tipos y estructura (sobre todo TypeScript: `tsconfig` estricto, ESLint con `typescript-eslint`, `knip`; `ruff` en Python, `shellcheck` en bash) y convierte en reglas las convenciones del proyecto, explicándote cada pieza y aplicando solo lo que apruebas. En un repo empezado congela la deuda de hoy, que solo puede bajar. Desde entonces los hooks del kit pasan el lint tras cada edición y al terminar cada turno, y `kit-run` no fusiona un cambio en los ficheros de reglas sin tu respuesta. `kit-run` no trabaja en un repo TS sin esa base.
 - `kit-revisar`: revisa el cambio local (commits sin integrar, cambios sin commitear y ficheros nuevos) con los mismos puestos de revisión de varios modelos, sin PR ni GitHub, y decide cada hallazgo. Es la revisión de los repos con `"flujo": false` (ver "Partes del kit").
 
 ### Partes del kit
@@ -71,7 +72,7 @@ Repos activados con la v2: `listo` ya no significa nada (un issue con `listo` es
 ### Issues que esperan a Dru
 
 - **Aprobar una propuesta:** quítale la etiqueta `propuesta` (`gh issue edit <n> --remove-label propuesta`). Las que no quieras, ciérralas o ponles `someday`.
-- **`necesita-respuesta`:** el agente dejó una pregunta en un comentario (de producto, o el detalle que le falta a un issue sin cuerpo) y la PR, si existía, en borrador. Responde en el issue (o completa el cuerpo) y quita `necesita-respuesta` (`gh issue edit <n> --remove-label necesita-respuesta`); no hace falta poner otra etiqueta. El siguiente `kit-run` lo retoma con tu respuesta. En issues de la v2, quita `necesita-decision`.
+- **`necesita-respuesta`:** el agente dejó una pregunta en un comentario (de producto, o el detalle que le falta a un issue sin cuerpo) y la PR, si existía, en borrador. Responde con un comentario en el issue o en su PR (o completa el cuerpo); no toques ninguna etiqueta. El siguiente `kit-run` lo retoma con tu respuesta y quita `necesita-respuesta`. Si la pregunta es un cambio de reglas (lint, tipos, estructura), la PR no se fusiona hasta que respondas: un sí la fusiona, un no quita la regla. En issues de la v2, quita `necesita-decision`.
 - **`bloqueado`:** el comentario explica qué falta (un check colgado, el límite de rondas...). Arréglalo, responde en el issue y quita `bloqueado`.
 - **PR sin fusionar (`autoMerge` falso):** revísala y fusiónala tú. El issue se cierra solo, pero conserva la etiqueta `en-curso`: quítala a mano (`gh issue edit <n> --remove-label en-curso`). Si el issue tenía un eje, su candado se queda tomado, pero el siguiente `reclamar` de ese eje ve que el issue que lo tenía ya está cerrado y lo recupera solo.
 - **Reclamo colgado:** el resumen de `kit-run` lista los issues con `en-curso` que no reclamó esa ejecución: los del kit con el comando `kit-issue.sh soltar` exacto (suéltalo solo si ningún agente lo está trabajando); los de otro flujo, solo para que lo sepas.
@@ -89,7 +90,7 @@ Te llegan al móvil cuando un issue pasa a `necesita-respuesta` o `bloqueado` y 
 - ✋ **Te necesita** (prioridad alta en ntfy): un issue espera tu respuesta o está bloqueado, o `kit-run` terminó con issues esperándote. El aviso trae el título del issue, el principio de la pregunta o del motivo y cómo desbloquearlo; al tocarlo abre el comentario con la pregunta (o, al terminar `kit-run`, el issue que espera si es solo uno).
 - ✅ **Solo info** (prioridad baja, sin sonido): `kit-run` terminó y todo se fusionó, o el aviso de prueba de `kit-on`. Trae una línea por PR fusionada; al tocarlo abre el resumen del issue "📦 Changelog".
 
-Para desbloquear un issue no hace falta volver a la sesión que lo dejó: responde en el issue y quita la etiqueta; el siguiente `kit-run`, desde cualquier sesión, lo retoma con tu respuesta.
+Para desbloquear un issue no hace falta volver a la sesión que lo dejó: en `necesita-respuesta`, responde con un comentario (en `bloqueado`, responde y quita la etiqueta); el siguiente `kit-run`, desde cualquier sesión, lo retoma con tu respuesta.
 
 Canal en `notify` de la configuración global `~/.agents-kit/config.json` (un repo no puede cambiarlo):
 
@@ -119,7 +120,7 @@ Los revisores se ejecutan sin supervisión y con todos los permisos locales, cad
 - Ficheros temporales: el kit y sus agentes los dejan en `~/.agents-kit/tmp/` (o `KIT_TMP`): cuerpos de PR, rondas, salidas de los revisores y esperas. Se pueden borrar cuando no haya ningún `kit-run` en marcha.
 - `ciTimeoutMin`: minutos que el kit espera al CI de un PR antes de dejarlo abierto. Sin ella, el kit lo calcula del historial del repo: 1,5 veces la ejecución verde más lenta de las últimas 20, entre 30 minutos y 3 horas (`KIT_CI_TIMEOUT`, en segundos, manda sobre ambos).
 
-Un repo solo puede definir en su marcador `reglas`, `flujo`, `autoMerge`, `maxReviewRounds`, `revision.puestos` (sustituye la lista entera), `contenido`, `protegido`, `setup`, `checks`, `changelog`, `ciTimeoutMin` y `verificar`. Cualquier otra clave se ignora con un aviso que dice dónde va (sale una vez por hora y repo, no en cada script).
+Un repo solo puede definir en su marcador `reglas`, `flujo`, `autoMerge`, `maxReviewRounds`, `revision.puestos` (sustituye la lista entera), `contenido`, `protegido`, `setup`, `checks`, `changelog`, `ciTimeoutMin`, `verificar`, `lint` y `blindado`. Cualquier otra clave se ignora con un aviso que dice dónde va (sale una vez por hora y repo, no en cada script).
 
 ### Modelo de confianza
 

@@ -22,6 +22,8 @@ Lee siempre la salida completa de cada script y su código de salida; nunca la r
    - Deuda de las skills del proyecto (`.agents/skills/`): hinchadas, duplicadas, obsoletas o que contradicen el código.
    - `AGENTS.md` desactualizado frente al repo (comandos, stack, mapa).
    - Si el repo no tiene CI (`.github/workflows/` vacío o inexistente), puedes proponer añadirlo.
+   - Convenciones repetidas en `AGENTS.md` o en las skills del proyecto que una herramienta podría comprobar: propónlas como regla. En el cuerpo, además de la plantilla del issue, va la propuesta con la plantilla crítica de `skills/kit-reglas/references/propuesta.md` del plugin, sin su última línea (la regla se aprueba después, respondiendo en la PR que abra `kit-run`, que la añade con la skill `kit-reglas`). Si tu valoración dice que es ruidosa o no compensa, no la propongas.
+   - Deuda congelada de lint o tipos (`eslint-suppressions.json`, `.agents-kit/tsc-base.json`): issues de limpieza acotados, una regla o una carpeta cada uno, con el número de entradas y los ficheros en "Lo verificado". Limpiar encoge esos ficheros y no pide aprobación.
 
    Antes de proponer algo, busca duplicados entre los issues abiertos (`gh issue list --repo <slug> --state open --limit 300 --json number,title,labels`, con `<slug>` = `owner/repo` del remoto `origin`) por dos o tres palabras del problema, no por el título que le ibas a poner. Si ya existe, no lo repitas.
 3. **Elegir.** Como máximo 5 issues por ejecución, los de más valor. Cada uno es un objetivo completo de punta a punta.
