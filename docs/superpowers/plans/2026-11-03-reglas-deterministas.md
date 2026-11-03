@@ -48,7 +48,7 @@
   - `blindado`: lista de rutas o globs, con valor por defecto en `templates/config.json`.
 - **Valor por defecto de `blindado`:**
   ```
-  eslint.config.*  tsconfig*.json  knip.*  .dependency-cruiser.*  sgconfig.yml  eslint-suppressions.json
+  eslint.config.*  *tsconfig*.json  knip.*  .dependency-cruiser.*  sgconfig.yml  eslint-suppressions.json
   .agents-kit/  .agents-kit.json  lefthook.yml  .husky/  .github/workflows/  reglas/
   ```
   Además, en `package.json`, cualquier cambio en `scripts.lint*` y `scripts.typecheck*` y quitar dependencias cuyo nombre contenga `eslint`, `typescript`, `knip` o `dependency-cruiser`.
