@@ -600,6 +600,11 @@ malos=('git commit --no-verify -m x' 'git push --no-verify origin main' 'HUSKY=0
   'git config --get core.hooksPath && git -c core.hooksPath=/x commit -m x'
   'git -c "core.hooksPath"=x commit' 'git --config-env=core.hooksPath=V commit' 'git config core.hooksPath --get x'
   'git config --get core.hooksPath /x' 'echo core.hooksPath'
+  'git config --get core.hooksPath$(touch x)' 'git config --get core.hooksPath`id`' 'git config --get core.hooksPath${X}'
+  'git config --get core.hooksPath > /tmp/x' 'git config --get core.hooksPath < /dev/null'
+  'git config --get "core.hooksPath"' 'git config --file "a b" --get core.hooksPath' 'git config --file ~x --get core.hooksPath'
+  'git config --get core.hooksPath & git -c core.hooksPath=/x commit -m x'
+  'git config --get core.hooksPath & echo core.hooksPath'
   "GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/x'\" git commit -m x"
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hookspath GIT_CONFIG_VALUE_0=/x git commit -m x'
   'HUSKY_SKIP_HOOKS=1 git commit -m x')

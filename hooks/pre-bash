@@ -3,10 +3,11 @@
 # plugin). Exit 2 with the remedy on stderr when tool_input.command skips git hooks:
 #   - --no-verify anywhere, or a prefix of it of 6 characters or more (--no-v, --no-ve...) as a whole option;
 #   - -n in git commit, git merge or git am, also grouped with other short flags (-an, -nm), in the same command of
-#     a chain (split on ;, &&, ||, | and newlines);
+#     a chain (split on ;, &&, &, ||, | and newlines);
 #   - core.hooksPath, without case, in any command of the chain (git -c, --config-env, quotes, GIT_CONFIG_*...), unless
 #     that whole command is exactly a read: git config, optional scopes (--local, --global, --system, --worktree,
-#     --file <x>), then --get, --get-all, --list/-l or get, and at most the key;
+#     --file <x>, x made of [[:alnum:]./_-]), then --get, --get-all, --list/-l or get, and at most the key
+#     ([[:alnum:]._-]), in a command line without $(, backquotes, ${, < or > (the chain is also split on a lone &);
 #   - HUSKY=0, LEFTHOOK=0 (or false, also quoted), HUSKY_SKIP_HOOKS and SKIP=<hooks> (pre-commit).
 # It is a speed bump, not a barrier: it does not parse the shell (quotes, variables, eval, scripts it runs), so a
 # command can hide it and a commit message can trip it; the guarantee is kit-pr.sh fusionar and the CI.
@@ -34,13 +35,16 @@ re='--no-verify|--no-v(e(r(i(f)?)?)?)?([^[:alnum:]_-]|$)|(^|[^[:alnum:]_])(HUSKY
 if [ -z "$salta" ]; then
   git_re='(^|[^[:alnum:]_.-])git[[:space:]](.*[[:space:]])?(commit|merge|am)([[:space:]]|$)'
   n_re='[[:space:]]-[[:alpha:]]*n[[:alpha:]]*([[:space:]]|$)'
-  lee_re='^[[:space:]]*git[[:space:]]+config([[:space:]]+(--local|--global|--system|--worktree|--file[[:space:]]+[^[:space:]]+))*[[:space:]]+(--get|--get-all|--list|-l|get)([[:space:]]+[^[:space:]]+)?[[:space:]]*$'
-  segs="${cmd//&&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//;/$'\n'}"; segs="${segs//|/$'\n'}"
+  lee_re='^[[:space:]]*git[[:space:]]+config([[:space:]]+(--local|--global|--system|--worktree|--file[[:space:]]+[[:alnum:]./_-]+))*[[:space:]]+(--get|--get-all|--list|-l|get)([[:space:]]+[[:alnum:]._-]+)?[[:space:]]*$'
+  # a read is never trusted when the command expands or redirects anything
+  libra=1
+  case "$cmd" in *'$('*|*'`'*|*'${'*|*'<'*|*'>'*) libra="" ;; esac
+  segs="${cmd//&&/$'\n'}"; segs="${segs//&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//;/$'\n'}"; segs="${segs//|/$'\n'}"
   while IFS= read -r seg; do
     [[ "$seg" =~ $git_re ]] && [[ "$seg" =~ $n_re ]] && { salta=1; break; }
     lc="$(printf '%s' "$seg" | tr 'A-Z' 'a-z')"
     case "$lc" in *core.hookspath*) ;; *) continue ;; esac
-    [[ "$lc" =~ $lee_re ]] || { salta=1; break; }
+    [ -n "$libra" ] && [[ "$lc" =~ $lee_re ]] || { salta=1; break; }
   done <<< "$segs"
 fi
 [ -n "$salta" ] || exit 0
