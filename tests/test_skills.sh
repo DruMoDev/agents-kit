@@ -220,6 +220,28 @@ for w in 'kit-regla' 'Qué prohíbe' 'Por qué' 'Ejemplo del error' 'Qué rompe'
   grep -q "$w" "$regref/propuesta.md" || fail "propuesta.md must have '$w'"
 done
 grep -q 'npm view' "$regref/base.md" || fail "base.md must not fix versions from memory (npm view)"
+# deterministic rules wired into kit-on, kit-run, kit-revisar and kit-scout; they point to kit-reglas, never copy it
+on="$REPO_ROOT/skills/kit-on/SKILL.md"; run="$REPO_ROOT/skills/kit-run/SKILL.md"
+rev="$REPO_ROOT/skills/kit-revisar/SKILL.md"; scout="$REPO_ROOT/skills/kit-scout/SKILL.md"
+for sk in "$on" "$run" "$rev" "$scout"; do
+  grep -q 'scripts/kit-reglas.sh\|skill `kit-reglas`' "$sk" || fail "$sk must point to kit-reglas"
+done
+[ "$(grep -c 'kit-reglas.sh" estado <wt>' "$on")" -ge 2 ] || fail "kit-on must run kit-reglas.sh estado <wt> on activate and on update"
+grep -q 'base incompleta' "$on" && grep -q 'skill `kit-reglas`' "$on" || fail "kit-on must follow kit-reglas on base incompleta"
+grep -q '"reglas": false' "$on" || fail "kit-on must skip the rules base with reglas false"
+grep -q 'kit-reglas.sh" blindado <wt> origin/<base>' "$run" || fail "kit-run must check the shielded diff before fusionar"
+grep -q 'kit-pr.sh" regla' "$run" && grep -q 'aprobar-regla' "$run" || fail "kit-run must name kit-pr.sh regla and aprobar-regla"
+grep -q '"Regla nueva"' "$run" || fail "kit-run must follow Regla nueva of kit-reglas"
+grep -q 'lint' "$run" && grep -q 'eslint-suppressions.json' "$run" || fail "kit-run must treat lint green and the debt of touched files"
+grep -q '<!-- kit-cerrado -->' "$run" || fail "kit-run must mark the closing comment of an obsolete issue"
+grep -Eq '(quita|quitar) `necesita-respuesta`' "$run" && fail "kit-run still asks Dru to remove necesita-respuesta"
+grep -q 'no hace falta tocar etiquetas' "$run" || fail "kit-run must tell Dru to answer without touching labels"
+grep -q 'quita `bloqueado`\|quitar `bloqueado`' "$run" || fail "kit-run must still ask to remove bloqueado"
+grep -q 'kit-reglas.sh" trinquete <raíz> HEAD' "$rev" && grep -q 'kit-reglas.sh" blindado <raíz> HEAD' "$rev" \
+  || fail "kit-revisar must run trinquete and blindado over the local diff"
+grep -q 'base incompleta' "$rev" || fail "kit-revisar must warn when the rules base is missing"
+grep -q 'skills/kit-reglas/references/propuesta.md' "$scout" || fail "kit-scout must propose rules with the critical template"
+grep -q 'eslint-suppressions.json' "$scout" && grep -q 'tsc-base.json' "$scout" || fail "kit-scout must propose debt cleanup issues"
 # every suite stops if lib.sh cannot be sourced, never falling back to the real repo
 for t in "$TESTS_DIR"/test_*.sh; do
   grep -qxF 'source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1' "$t" || fail "$(basename "$t") must guard its source of lib.sh"
