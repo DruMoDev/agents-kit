@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for hooks/pre-edit, hooks/post-edit and hooks/stop-check (fed by stdin with JSON, fake lint commands).
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
+export TMPDIR="$(mktemp -d)"
 H="$REPO_ROOT/hooks"
 for h in pre-edit post-edit stop-check; do [ -x "$H/$h" ] || fail "hooks/$h falta o no es ejecutable"; done
 jq -e '(.hooks.PreToolUse[0].matcher == "Edit|Write|MultiEdit|NotebookEdit")
@@ -220,6 +221,33 @@ hook pre-edit "$(pjson "$(patch $'*** Add File: eslint.config.mjs\n+export defau
 bash "$REPO_ROOT/scripts/kit-reglas.sh" cerrar "$r" >/dev/null || fail "cerrar (apply_patch)"
 rm -f "$r/src/p2.ts"
 
+# marcadores reconocidos sobre la línea recortada (como apply_patch); lo que no se entiende hace ilegible el parche
+hook pre-edit "$(pjson $'*** Begin Patch\n*** Add File: README.md\n+hola\n *** Add File: src/x.ts\n+x as any\n*** End Patch')"
+[ $rc -eq 2 ] || fail "un marcador con espacio delante no esconde un Add con as any: $rc $out"
+hook pre-edit "$(pjson $'*** Begin Patch\n*** Delete File: viejo.md\n *** Add File: src/x.ts\n+x as any\n*** End Patch')"
+[ $rc -eq 2 ] || fail "tras un Delete, un Add con espacio delante bloquea: $rc $out"
+hook pre-edit "$(pjson $'*** Begin Patch\n*** Delete File: viejo.md\nx as any\n*** End Patch')"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo leer el parche"* ]] || fail "una línea tras un Delete hace ilegible el parche: $rc $out"
+hook pre-edit "$(pjson $'*** Begin Patch\n*** Add File: src/x.ts\nx as any\n*** End Patch')"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo leer el parche"* ]] || fail "una línea de Add sin + hace ilegible el parche: $rc $out"
+hook pre-edit "$(pjson $'*** Begin Patch\n*** Add File: README.md\n+hola\n*** Raro: src/x.ts\n*** End Patch')"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo leer el parche"* ]] || fail "un *** desconocido hace ilegible el parche: $rc $out"
+hook pre-edit "$(pjson $'*** Begin Patch\n*** Add File:src/x.ts  \n+x as any\n*** End Patch')"
+[ $rc -eq 2 ] && [[ "$out" == *"src/x.ts: No desactives"* ]] || fail "Add File: sin espacio y con espacios al final se reconoce: $rc $out"
+hook pre-edit "$(pjson $'*** Begin Patch\n*** Add File: README.md\n+hola\n*** End Patch\n*** Add File: src/x.ts\n+x as any')"
+[ $rc -eq 2 ] || fail "algo tras *** End Patch bloquea: $rc $out"
+printf 'let a = b as any;\n' > "$r/src/p5.ts"
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/p5.ts\n@@\n-let a = b as any;\n+let a = b;\n*** Add File: src/p6.ts\n+let c = d as any;')")"
+[ $rc -eq 2 ] && [[ "$out" == *"src/p6.ts: "* ]] || fail "quitar as any de un fichero no tapa meterlo en otro: $rc $out"
+rm -f "$r/src/p5.ts"
+# rutas con .. normalizadas como path.resolve, aunque el directorio intermedio no exista
+hook pre-edit "$(pjson "$(patch $'*** Add File: nodir/../src/x.ts\n+x as any')")"
+[ $rc -eq 2 ] || fail "apply_patch con nodir/../src/x.ts y as any bloquea: $rc $out"
+hook pre-edit "$(edit_json nodir/../src/x.ts 'x as any')"
+[ $rc -eq 2 ] || fail "Edit con nodir/../src/x.ts y as any bloquea: $rc $out"
+hook pre-edit "$(edit_json nodir/../eslint.config.mjs 'x')"
+[ $rc -eq 2 ] || fail "Edit con nodir/../ sobre un blindado bloquea: $rc $out"
+
 # --- pre-edit: fuera del repo
 fuera="$(mktemp -d)"
 hook pre-edit "$(edit_json "$fuera/eslint.config.mjs" 'x as any')"
@@ -321,6 +349,30 @@ echo "post-edit: sobrecarga mínima ${best} ms"
 [ $best -lt 300 ] || fail "post-edit tarda ${best} ms (tope 300)"
 marker "$LINT"
 
+# --- la raíz sale de la ruta del fichero: sesión en el clon A (sin marcador) editando el worktree B (con marcador)
+ra="$(mk_repo)"; rb="$(mk_repo)"; rc_="$(mk_repo)"
+printf '%s\n' "$LINT" > "$rb/.agents-kit.json"; mkdir -p "$rb/src" "$rc_/src"
+(cd "$rb" && git add -A && git commit -q -m base) || fail "commit base de B"
+xjson() { inp --arg c "$ra" --arg f "$1" --arg t "$2" --arg e "$3" '{session_id: "cruz", cwd: $c, hook_event_name: $e,
+  tool_name: "Write", tool_input: {file_path: $f, content: $t}}'; }
+hook pre-edit "$(xjson "$rb/src/x.ts" 'x as any' PreToolUse)"
+[ $rc -eq 2 ] || fail "pre-edit desde A aplica las reglas de B: $rc $out"
+hook pre-edit "$(xjson "$rb/eslint.config.mjs" 'x' PreToolUse)"
+[ $rc -eq 2 ] || fail "pre-edit desde A aplica el blindado de B: $rc $out"
+hook pre-edit "$(xjson "$rc_/src/x.ts" 'x as any' PreToolUse)"
+[ $rc -eq 0 ] && [ -z "$out" ] || fail "un repo sin marcador sigue inerte aunque no sea el del cwd: $rc $out"
+echo 'export const y = 1;' > "$rb/src/y.ts"; : > "$LOG"
+hook post-edit "$(xjson "$rb/src/y.ts" 'x' PostToolUse)"
+[ $rc -eq 0 ] && [ "$(cat "$LOG")" = "$(printf -- '--rapido\n./src/y.ts')" ] || fail "post-edit desde A pasa el lint de B: $rc $out / $(cat "$LOG")"
+: > "$LOG"
+FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" '{session_id: "cruz", cwd: $c, stop_hook_active: false}')"
+[ $rc -eq 2 ] && [[ "$out" == *"los ficheros cambiados de "* ]] && [ "$(sed -n 1p "$LOG")" = "--turno" ] \
+  && grep -qx './src/y.ts' "$LOG" || fail "stop-check desde A revisa B: $rc $out / $(cat "$LOG")"
+: > "$LOG"
+FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" '{session_id: "otra-cruz", cwd: $c, stop_hook_active: false}')"
+[ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "otra sesión en A no revisa B: $rc $out"
+rm -f "$rb/src/y.ts"; : > "$LOG"
+
 # --- stop-check
 (cd "$r" && git add -A && git commit -q -m base) || fail "commit base"
 : > "$LOG"
@@ -338,17 +390,21 @@ FAKE_RC=1 hook stop-check "$(inp --arg c "$r" '{cwd: $c, stop_hook_active: true}
 [ $rc -eq 2 ] || fail "stop_hook_active sigue comprobando: $rc"
 # tope propio de bloqueos seguidos (Codex no tiene): con stop_hook_active, a los 8 deja terminar y vuelve a empezar
 sjson() { inp --arg c "$r" --arg s "$1" --argjson a "$2" '{session_id: $s, cwd: $c, stop_hook_active: $a}'; }
+cnt() { local h; h="$(printf '%s' "$1" | shasum -a 256)"; echo "$TMPDIR/agents-kit-turno-bloqueos-${h%% *}"; }
 FAKE_RC=1 hook stop-check "$(sjson t1 false)"; [ $rc -eq 2 ] || fail "primer bloqueo: $rc"
-for k in 2 3 4 5 6 7 8; do FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "bloqueo $k: $rc"; done
+for k in 2 3 4 5 6 7; do FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "bloqueo $k: $rc"; done
 FAKE_RC=1 hook stop-check "$(sjson otra true)"; [ $rc -eq 2 ] || fail "otra sesión no hereda la cuenta: $rc"
-FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "otra sesión entre medias reinicia la cuenta: $rc"
-FAKE_RC=1 hook stop-check "$(sjson t1 false)"; [ $rc -eq 2 ] || fail "sin stop_hook_active empieza de cero: $rc"
-for k in 2 3 4 5 6 7 8; do FAKE_RC=1 hook stop-check "$(sjson t1 true)"; done
+FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "otra sesión entre medias no reinicia la cuenta (8.º): $rc"
+[ "$(cat "$(cnt t1)")" = 8 ] && [ "$(cat "$(cnt otra)")" = 1 ] || fail "cada sesión lleva su cuenta: $(cat "$(cnt t1)") $(cat "$(cnt otra)")"
+FAKE_RC=1 hook stop-check "$(sjson otra true)"; [ $rc -eq 2 ] && [ "$(cat "$(cnt otra)")" = 2 ] || fail "la cuenta de otra sigue: $rc"
 : > "$LOG"; FAKE_RC=1 hook stop-check "$(sjson t1 true)"
 [ $rc -eq 0 ] && [[ "$out" == *"tras 8 intentos seguidos"* ]] && [ ! -s "$LOG" ] || fail "al noveno deja terminar: $rc $out"
+[ ! -f "$(cnt t1)" ] && [ -f "$(cnt otra)" ] || fail "al llegar al tope se borra solo la cuenta de esa sesión"
 FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "tras dejar terminar vuelve a comprobar: $rc"
+FAKE_RC=1 hook stop-check "$(sjson t1 false)"; [ $rc -eq 2 ] && [ "$(cat "$(cnt t1)")" = 1 ] || fail "sin stop_hook_active empieza de cero: $rc"
 FAKE_RC=1 KIT_TURNO_BLOQUEOS=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 0 ] || fail "KIT_TURNO_BLOQUEOS manda: $rc"
-hook stop-check "$(sjson t1 false)"; [ $rc -eq 0 ] && [ ! -f "$common/agents-kit/turno-bloqueos" ] || fail "un turno limpio borra la cuenta: $rc"
+FAKE_RC=1 hook stop-check "$(sjson t1 false)"
+hook stop-check "$(sjson t1 false)"; [ $rc -eq 0 ] && [ ! -f "$(cnt t1)" ] || fail "un turno limpio borra la cuenta: $rc"
 mkdir -p "$lock"; : > "$LOG"
 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "stop-check con candado no lanza nada"
 rmdir "$lock"

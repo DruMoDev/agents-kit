@@ -7,29 +7,46 @@
 # KIT_LINT_TIMEOUT (10 s, per command). Inert as described in hooks/lib-reglas.sh, and for
 # paths outside the repo, files that do not exist or extensions without a command.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
-kr_input && [ ${#KR_ITEMS[@]} -gt 0 ] && kr_root || exit 0
-cmds=(); rels=(); i=0
+kr_input && [ ${#KR_ITEMS[@]} -gt 0 ] || exit 0
+roots=(); commons=(); cmds=(); rels=(); i=0
 while [ $i -lt ${#KR_ITEMS[@]} ]; do
-  KR_FILE="${KR_ITEMS[$i]}"; i=$((i + 2))
-  kr_resolve && [ -f "$KR_ROOT/$KR_REL" ] || continue
+  ruta="${KR_ITEMS[$i]}"; i=$((i + 2))
+  kr_item "$ruta" && [ -f "$KR_ROOT/$KR_REL" ] || continue
   kr_ext
   [ -n "$KR_EXT" ] && kr_config "$KR_EXT" && [ -n "$KR_CMD" ] || continue
-  cmds+=("$KR_CMD"); rels+=("$KR_REL")
+  kr_apunta
+  roots+=("$KR_ROOT"); commons+=("$KR_COMMON"); cmds+=("$KR_CMD"); rels+=("$KR_REL")
 done
 [ ${#cmds[@]} -gt 0 ] || exit 0
-# One run per command, with its files in the order of the input; the lock covers all of them.
+# One run per repo and command, with its files in the order of the input; each repo's lock covers all its runs.
 t="$(kr_tope "${KIT_LINT_TIMEOUT:-}" 10)"
-hechos=$'\n'; n=0
-for c in "${cmds[@]}"; do case "$hechos" in *$'\n'"$c"$'\n'*) ;; *) hechos="$hechos$c"$'\n'; n=$((n + 1)) ;; esac; done
-kr_lock $((t * n)) || exit 0
-KR_LOCK_OK=1; final=0; hechos=$'\n'
-for c in "${cmds[@]}"; do
-  case "$hechos" in *$'\n'"$c"$'\n'*) continue ;; esac
-  hechos="$hechos$c"$'\n'; args=(); what=""; j=0
-  while [ $j -lt ${#cmds[@]} ]; do
-    [ "${cmds[$j]}" != "$c" ] || { args+=("./${rels[$j]}"); what="${what:+$what, }${rels[$j]}"; }
-    j=$((j + 1))
+final=0; hechos=$'\n'; j=0
+while [ $j -lt ${#cmds[@]} ]; do
+  KR_ROOT="${roots[$j]}"; KR_COMMON="${commons[$j]}"; j=$((j + 1))
+  case "$hechos" in *$'\n'"$KR_ROOT"$'\n'*) continue ;; esac
+  hechos="$hechos$KR_ROOT"$'\n'
+  vistos=$'\n'; n=0; k=0
+  while [ $k -lt ${#cmds[@]} ]; do
+    if [ "${roots[$k]}" = "$KR_ROOT" ]; then
+      case "$vistos" in *$'\n'"${cmds[$k]}"$'\n'*) ;; *) vistos="$vistos${cmds[$k]}"$'\n'; n=$((n + 1)) ;; esac
+    fi
+    k=$((k + 1))
   done
-  kr_lint "$t" "$what" "$c" "${args[@]}" || final=2
+  [ -z "${KR_LOCK_OK:-}" ] || { _kr_soltar; KR_LOCK_OK=""; }
+  kr_lock $((t * n)) || continue
+  KR_LOCK_OK=1; vistos=$'\n'; k=0
+  while [ $k -lt ${#cmds[@]} ]; do
+    c="${cmds[$k]}"; k=$((k + 1))
+    [ "${roots[$((k - 1))]}" = "$KR_ROOT" ] || continue
+    case "$vistos" in *$'\n'"$c"$'\n'*) continue ;; esac
+    vistos="$vistos$c"$'\n'; args=(); what=""; m=0
+    while [ $m -lt ${#cmds[@]} ]; do
+      if [ "${cmds[$m]}" = "$c" ] && [ "${roots[$m]}" = "$KR_ROOT" ]; then
+        args+=("./${rels[$m]}"); what="${what:+$what, }${rels[$m]}"
+      fi
+      m=$((m + 1))
+    done
+    kr_lint "$t" "$what" "$c" "${args[@]}" || final=2
+  done
 done
 exit $final

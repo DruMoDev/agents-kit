@@ -1,29 +1,57 @@
 #!/usr/bin/env bash
-# Stop hook. Passes the changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as
-# arguments to .lint.turno (with ./ in front, so a name starting with - is not an option), run from the repo root.
-# Exit 2 with its output on stderr when it fails; 0 with nothing changed, when the lock is busy, when the tool is
+# Stop hook. For the repo of the cwd and for every repo noted for this session by pre-edit/post-edit (kr_apunta: edits
+# in a repo that does not contain the cwd, such as a kit-run worktree), when it has .agents-kit.json and .lint.turno:
+# passes its changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as arguments to
+# .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root.
+# Exit 2 with the output on stderr when any fails; 0 with nothing changed, when a lock is busy, when the tool is
 # missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks again with stop_hook_active, up to
-# KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in <git-common-dir>/agents-kit/turno-bloqueos):
-# then it lets the turn end with a warning. Codex has no cap of its own (it looped with no end on 0.165.0), and
-# Claude Code's (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP, 8 by default) is not verified here.
+# KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in kr_sesion_fichero turno-bloqueos, one file per
+# session, removed after a clean check or at the cap): then it lets the turn end with a warning. Codex has no cap of
+# its own (it looped with no end on 0.165.0), and Claude Code's (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP) is not verified.
 # Inert as in hooks/lib-reglas.sh.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
-kr_input && kr_root && kr_config && [ -n "$KR_TURNO" ] || exit 0
-files=()
-while IFS= read -r -d '' f; do
-  [ -f "$KR_ROOT/$f" ] && files+=("./$f")
-done < <(git -C "$KR_ROOT" diff --name-only --no-renames -z HEAD -- 2>/dev/null
-         git -C "$KR_ROOT" ls-files --others --exclude-standard -z 2>/dev/null)
-[ ${#files[@]} -gt 0 ] || exit 0
-cuenta="$KR_COMMON/agents-kit/turno-bloqueos"; n=0; sid=""; prev=""
-[ -z "$KR_ACTIVO" ] || [ ! -f "$cuenta" ] || read -r sid prev < "$cuenta"
-[ "$sid" != "${KR_SID:--}" ] || case "$prev" in ''|*[!0-9]*) ;; *) n=$prev ;; esac
+kr_input || exit 0
+roots=(); commons=()
+add_root() {
+  local r
+  for r in "${roots[@]}"; do [ "$r" != "$KR_ROOT" ] || return 0; done
+  kr_config && [ -n "$KR_TURNO" ] || return 0
+  roots+=("$KR_ROOT"); commons+=("$KR_COMMON")
+}
+! kr_root || add_root
+ses=""
+[ -z "$KR_SID" ] || ses="$(kr_sesion_fichero sesion)" || ses=""
+if [ -n "$ses" ] && [ -f "$ses" ]; then
+  while IFS= read -r r; do [ -d "$r" ] && _kr_git "$r" && add_root; done < "$ses"
+fi
+[ ${#roots[@]} -gt 0 ] || exit 0
+cuenta="$(kr_sesion_fichero turno-bloqueos)" || cuenta=""
+n=0; prev=""
+[ -z "$KR_ACTIVO" ] || [ -z "$cuenta" ] || [ ! -f "$cuenta" ] || read -r prev < "$cuenta"
+case "$prev" in ''|*[!0-9]*) ;; *) n=$prev ;; esac
 max="$(kr_tope "${KIT_TURNO_BLOQUEOS:-}" 8)"
 if [ "$n" -ge "$max" ]; then
-  rm -f "$cuenta"
+  [ -z "$cuenta" ] || rm -f "$cuenta"
   echo "agents-kit: el lint del turno sigue fallando tras $n intentos seguidos; se deja terminar (lo frenan fusionar y el CI)" >&2
   exit 0
 fi
-kr_lint "$(kr_tope "${KIT_TURNO_TIMEOUT:-}" 120)" "los ficheros cambiados" "$KR_TURNO" "${files[@]}"; rc=$?
-if [ $rc -eq 2 ]; then printf '%s %s\n' "${KR_SID:--}" $((n + 1)) > "$cuenta"; else rm -f "$cuenta"; fi
-exit $rc
+t="$(kr_tope "${KIT_TURNO_TIMEOUT:-}" 120)"
+final=0; j=0
+while [ $j -lt ${#roots[@]} ]; do
+  KR_ROOT="${roots[$j]}"; KR_COMMON="${commons[$j]}"; j=$((j + 1))
+  kr_config && [ -n "$KR_TURNO" ] || continue
+  files=()
+  while IFS= read -r -d '' f; do
+    [ -f "$KR_ROOT/$f" ] && files+=("./$f")
+  done < <(git -C "$KR_ROOT" diff --name-only --no-renames -z HEAD -- 2>/dev/null
+           git -C "$KR_ROOT" ls-files --others --exclude-standard -z 2>/dev/null)
+  [ ${#files[@]} -gt 0 ] || continue
+  what="los ficheros cambiados"
+  case "$KR_CWD/" in "$KR_ROOT"/*) ;; *) what="los ficheros cambiados de $KR_ROOT" ;; esac
+  [ -z "${KR_LOCK_OK:-}" ] || { _kr_soltar; KR_LOCK_OK=""; }
+  kr_lint "$t" "$what" "$KR_TURNO" "${files[@]}" || final=2
+done
+if [ -z "$cuenta" ]; then :
+elif [ $final -eq 2 ]; then printf '%s\n' $((n + 1)) > "$cuenta"
+else rm -f "$cuenta"; fi
+exit $final

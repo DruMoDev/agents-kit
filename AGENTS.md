@@ -131,30 +131,38 @@ Verificado el 2026-11-03 con codex-cli 0.165.0, opencode 2.1.4 (`run --standalon
 - Codex (`codex exec --dangerously-bypass-hook-trust`): `PreToolUse`, `PostToolUse` y `Stop` de `hooks/hooks.json` se ejecutan.
   - Las ediciones llegan como `tool_name: "apply_patch"` con `tool_input: {"command": "<parche>"}`, el parche entero con `*** Begin Patch`. Pasa igual si el modelo llama a `apply_patch` directamente o desde `exec` (el modo código de los modelos `gpt-6.x`, `tools.apply_patch(...)`).
   - El matcher `Edit|Write|MultiEdit|NotebookEdit` ya las recoge: Codex trata `apply_patch` como `Edit`/`Write`, y un `exec_command` no entró en ese matcher. No sé qué alias exactos admite.
-  - La entrada trae `session_id`, `turn_id`, `cwd`, `tool_use_id`, `model` y `permission_mode`. En `PostToolUse` llega además `tool_response` en texto, y en `Stop`, `stop_hook_active` y `last_assistant_message`.
+  - La entrada trae `session_id`, `turn_id`, `cwd`, `model` y `permission_mode`; las de herramienta, también `tool_use_id` (visto en los logs). En `PostToolUse` llega además `tool_response` en texto, y en `Stop`, `stop_hook_active` y `last_assistant_message`.
   - Exit 2 en `PreToolUse` bloquea: el fichero no se crea y el modelo recibe `Command blocked by PreToolUse hook: <stderr>. Command: <parche>`.
   - Exit 2 en `PostToolUse` sustituye la salida de la herramienta por el stderr.
-  - Exit 2 en `Stop` vuelve a llamar al modelo con el stderr dentro de `<hook_prompt>`. Codex no pone tope: un `Stop` que siempre falla dio 982 vueltas en 90 s. Por eso `stop-check` lleva su propio tope de 8 bloqueos seguidos por sesión (`KIT_TURNO_BLOQUEOS`).
+  - Exit 2 en `Stop` vuelve a llamar al modelo con el stderr dentro de `<hook_prompt>`. Codex no pone tope: un `Stop` que siempre falla dio 982 vueltas en 90 s. Por eso `stop-check` lleva su propio tope de 8 bloqueos seguidos (`KIT_TURNO_BLOQUEOS`), con una cuenta por sesión en `${TMPDIR}/agents-kit-turno-bloqueos-<sha256 del session_id>`.
   - Sin `--dangerously-bypass-hook-trust` no corre ningún hook del plugin, ni siquiera `SessionStart`.
   - `lib-reglas.sh` (`kr_input`) convierte cada fichero del parche en una entrada aparte:
     - `Add` cuenta como `Write`;
     - `Update` cuenta como `MultiEdit`, con un hunk por edición (contexto más líneas `-` frente a contexto más líneas `+`);
     - `Move to` cuenta como `MultiEdit` sobre el destino;
     - `Delete` solo pasa por el blindado.
-  - Si el parche no se puede leer, `pre-edit` bloquea.
+  - Los marcadores (`*** Begin Patch`, `*** End Patch`, `*** Add|Update|Delete File:`, `*** Move to:`) se reconocen sobre la línea recortada por los dos lados, como hace `apply_patch`: en Codex real, un ` *** Add File:` con un espacio delante crea el fichero. Las rutas también se recortan.
+  - El parche es ilegible, y `pre-edit` bloquea, si:
+    - una línea empieza por `***` sin ser un marcador;
+    - hay texto antes del primer fichero, tras `*** End Patch` o en un `Delete`;
+    - una línea de un `Add` no empieza por `+`;
+    - falta la ruta.
+  - Las rutas se normalizan sin tocar el disco, como `path.resolve`: `nodir/../src/x.ts` es `src/x.ts`, aunque `nodir` no exista (verificado en Codex real).
+- La raíz es la del repo de cada fichero, no la del `cwd` (`kr_item`): `kit-run` edita en worktrees fuera del `cwd` de la sesión. Una edición permitida en un repo que no contiene el `cwd` se apunta en `${TMPDIR}/agents-kit-sesion-<sha256 del session_id>`, y `stop-check` revisa ese repo además del del `cwd`.
 - OpenCode V2 (2.1.4): `setup(ctx)` tiene `ctx.tool.hook("execute.before" | "execute.after", cb)`. Lo vi en el binario y lo usé de verdad.
   - Lanzar un error en `execute.before` bloquea la herramienta, y el mensaje llega al modelo como su error.
   - `execute.after` recibe `{tool, sessionID, input, status, result: {content, output, metadata}}`. Al añadir texto a `result.content`, el modelo lo lee con el resultado.
   - Herramientas: `write {path, content}` y `edit {path, oldString, newString, replaceAll}`. Los modelos `gpt-` (sin `oss` ni `gpt-4`) usan `patch {patchText}` en su lugar, con el mismo formato de parche que Codex.
 - OpenCode V1 (1.19.4): `tool.execute.before` (lanzar un error bloquea) y `tool.execute.after` (se añade texto a `output.output`).
   - Herramientas: `write`/`edit` con `filePath`. Los modelos `gpt-` usan `apply_patch {patchText}`.
-  - El plugin traduce todas estas herramientas a la entrada de Claude Code o a la de `apply_patch` de Codex, y llama a `hooks/pre-edit` y `hooks/post-edit`. Solo lo hace si el repo de la sesión tiene marcador. `multiedit` (V1) se traduce, pero no lo vi en uso real.
+  - El plugin traduce todas estas herramientas a la entrada de Claude Code o a la de `apply_patch` de Codex, y llama a `hooks/pre-edit` y `hooks/post-edit` de forma asíncrona (`execFile`, con tope: 15 s el primero; 10 s por fichero más 15 el segundo). Si un hook no puede ejecutarse, la edición pasa, como en Claude Code. Los hooks de herramienta se registran después de `session.hook("context")` y dentro de un try/catch, así que un fallo ahí no deja la sesión sin reglas. `multiedit` (V1) se traduce, pero no lo vi en uso real.
   - Verificado en las dos versiones: `as any` y un fichero blindado bloquean, y el fallo del lint llega al modelo.
 - OpenCode no tiene equivalente a `Stop` que pueda bloquear: ningún hook de sesión de V2 (`context`, `generate`, `compaction`, `model.request`...) ni el evento `session.idle` de V1. `stop-check` no corre ahí, y lo frenan `fusionar` y el CI.
 - Sin verificar:
   - la aprobación con `/hooks` en el CLI interactivo de Codex: tocaría la configuración real;
   - un modelo de verdad que corrige tras el bloqueo: el falso no razona;
-  - `multiedit` de V1 en uso real.
+  - `multiedit` de V1 en uso real;
+  - la cifra del tope de bloqueos de `Stop` en Claude Code (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`).
 - Límite conocido: las ediciones hechas por shell no pasan por `pre-edit` ni `post-edit`, igual que el `Bash` de Claude Code. En Codex se vio con un `exec_command` que escribió un fichero. En OpenCode serían `bash`/`shell`, pero no lo probé. Solo las ve `stop-check`, en Codex y Claude Code.
 
 #### Flujo de issues (fase 2)

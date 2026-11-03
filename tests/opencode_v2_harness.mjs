@@ -21,7 +21,11 @@ const ctx = {
   skill: { transform: async (cb) => { cb(editor); return { dispose: async () => {} }; } },
   permission: { hook: async (name, cb) => { hooks[`permission.${name}`] = cb; } },
   session: { hook: async (name, cb) => { hooks[`session.${name}`] = cb; } },
-  tool: { hook: async (name, cb) => { hooks[`tool.${name}`] = cb; } },
+  // HARNESS_TOOL_HOOK_FALLA=1: registering a tool hook throws (an OpenCode without it, or a broken one).
+  tool: { hook: async (name, cb) => {
+    if (process.env.HARNESS_TOOL_HOOK_FALLA) throw new Error('sin tool.hook');
+    hooks[`tool.${name}`] = cb;
+  } },
 };
 await plugin.setup(ctx);
 const system = async () => {
@@ -30,7 +34,7 @@ const system = async () => {
   return event.system.map((p) => p.text);
 };
 const tools = [];
-for (const { tool, input } of JSON.parse(toolEvents || '[]')) {
+for (const { tool, input } of (hooks['tool.execute.before'] ? JSON.parse(toolEvents || '[]') : [])) {
   const base = { tool, sessionID: 's1', agent: 'build', messageID: 'm1', id: 'c1', input };
   let before = null;
   try { await hooks['tool.execute.before']({ ...base }); } catch (err) { before = err.message; }

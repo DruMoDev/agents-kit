@@ -1,9 +1,11 @@
 // agents-kit plugin for OpenCode, V1 (`opencode` 1.x, `server`) and V2 (2.x, `setup`).
 // Registers the plugin skills and, only in repos with .agents-kit.json, injects
 // the same context as hooks/session-start (V1: first user message; V2: system)
-// and runs hooks/pre-edit and hooks/post-edit around the edit tools (editHook).
+// and runs hooks/pre-edit and hooks/post-edit around the edit tools (editHook). The hooks find the repo of each
+// edited file themselves and stay inert outside repos with .agents-kit.json; if a hook cannot run (it fails to start,
+// dies or passes its time limit), the edit goes through, as in Claude Code.
 
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -103,25 +105,38 @@ const hookInput = (directory, sessionID, tool, args) => {
   return { session_id: sessionID || '', cwd: directory, tool_name: name, tool_input: input };
 };
 
-// editHook <hook> <directory> <sessionID> <tool> <args>: '' when the hook lets it pass (exit 0, an inert repo or a
-// hook that could not run), its stderr when it blocks (exit 2). Only in repos with .agents-kit.json.
-export const editHook = (hook, directory, sessionID, tool, args) => {
-  const input = hookInput(directory, sessionID, tool, args);
-  if (!input) return '';
-  const marker = markerOf(gitRoot(directory));
-  if (!marker || !fs.existsSync(marker)) return '';
-  try {
-    execFileSync(hook, {
-      cwd: directory, input: JSON.stringify(input), encoding: 'utf8', timeout: 30000,
-      stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
-    });
-    return '';
-  } catch (err) {
-    if (err.status === 2) return String(err.stderr || '').trim() || 'agents-kit: el hook de reglas bloquea la edición';
-    console.error(`[agents-kit] ${path.basename(hook)} no se pudo ejecutar: ${err.message}`);
-    return '';
-  }
+// Time limit of a hook run: pre-edit 15 s; post-edit KIT_LINT_TIMEOUT (10 s) per file of the edit plus 15 s.
+const hookTimeout = (hook, input) => {
+  if (hook !== POST_EDIT) return 15000;
+  const per = Number(process.env.KIT_LINT_TIMEOUT) > 0 ? Number(process.env.KIT_LINT_TIMEOUT) : 10;
+  const files = input.tool_name === 'apply_patch'
+    ? (String(input.tool_input.command || '').match(/^\s*\*\*\* (Add|Update) File:/gm) || []).length : 1;
+  return (per * Math.max(1, files) + 15) * 1000;
 };
+
+// editHook <hook> <directory> <sessionID> <tool> <args>: resolves to '' when the hook lets it pass (exit 0, an inert
+// repo or a hook that could not run) and to its stderr when it blocks (exit 2).
+export const editHook = (hook, directory, sessionID, tool, args) => new Promise((resolve) => {
+  const input = hookInput(directory, sessionID, tool, args);
+  if (!input) return resolve('');
+  let child;
+  try {
+    child = execFile(hook, [], {
+      cwd: directory, encoding: 'utf8', timeout: hookTimeout(hook, input), maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+    }, (err, _stdout, stderr) => {
+      if (!err) return resolve('');
+      if (err.code === 2) return resolve(String(stderr || '').trim() || 'agents-kit: el hook de reglas bloquea la edición');
+      console.error(`[agents-kit] ${path.basename(hook)} no se pudo ejecutar: ${err.message}`);
+      resolve('');
+    });
+  } catch (err) {
+    console.error(`[agents-kit] ${path.basename(hook)} no se pudo ejecutar: ${err.message}`);
+    return resolve('');
+  }
+  child.stdin.on('error', () => {});
+  child.stdin.end(JSON.stringify(input));
+});
 
 export const AgentsKitPlugin = async ({ directory }) => ({
   config: async (config) => {
@@ -149,11 +164,11 @@ export const AgentsKitPlugin = async ({ directory }) => ({
 
   // Throwing here blocks the tool; the message reaches the model.
   'tool.execute.before': async (input, output) => {
-    const msg = editHook(PRE_EDIT, directory, input.sessionID, input.tool, output.args);
+    const msg = await editHook(PRE_EDIT, directory, input.sessionID, input.tool, output.args);
     if (msg) throw new Error(msg);
   },
   'tool.execute.after': async (input, output) => {
-    const msg = editHook(POST_EDIT, directory, input.sessionID, input.tool, input.args);
+    const msg = await editHook(POST_EDIT, directory, input.sessionID, input.tool, input.args);
     if (msg) output.output = `${output.output ?? ''}\n\n${msg}`;
   },
 
@@ -193,27 +208,36 @@ const setup = async (ctx) => {
     for (const s of skills) if (!editor.get(s.id)) editor.add(s);
   });
 
-  // Same rule hooks as V1: throwing in execute.before blocks the tool (the SDK turns it into the tool's error); after a
-  // completed edit, the lint failure is added to the result the model reads.
-  if (ctx.tool?.hook) await ctx.tool.hook('execute.before', (event) => {
-    const msg = editHook(PRE_EDIT, directory, event.sessionID, event.tool, event.input);
-    if (msg) throw new Error(msg);
-  });
-  if (ctx.tool?.hook) await ctx.tool.hook('execute.after', (event) => {
-    if (event.status !== 'completed' || !event.result) return;
-    const msg = editHook(POST_EDIT, directory, event.sessionID, event.tool, event.input);
-    if (!msg) return;
-    const r = event.result;
-    if (Array.isArray(r.content)) r.content.push({ type: 'text', text: msg });
-    else if (typeof r.content === 'string') r.content = `${r.content}\n\n${msg}`;
-    else r.content = [{ type: 'text', text: msg }];
-  });
-
-  // System parts are rebuilt for every model call and never persisted: no guard needed.
+  // System parts are rebuilt for every model call and never persisted: no guard needed. Registered before the rule
+  // hooks so a failure there cannot leave the session without the rules.
   await ctx.session.hook('context', (event) => {
     const ctxText = kitContext(directory);
     if (ctxText) event.system.push({ type: 'text', text: ctxText });
   });
+
+  // Same rule hooks as V1: throwing in execute.before blocks the tool (the SDK turns it into the tool's error); after a
+  // completed edit, the lint failure is added to the result the model reads.
+  try {
+    await ctx.tool.hook('execute.before', async (event) => {
+      const msg = await editHook(PRE_EDIT, directory, event.sessionID, event.tool, event.input);
+      if (msg) throw new Error(msg);
+    });
+  } catch (err) {
+    console.error(`[agents-kit] no se pudo registrar tool.execute.before: ${err.message}`);
+  }
+  try {
+    await ctx.tool.hook('execute.after', async (event) => {
+      if (event.status !== 'completed' || !event.result) return;
+      const msg = await editHook(POST_EDIT, directory, event.sessionID, event.tool, event.input);
+      if (!msg) return;
+      const r = event.result;
+      if (Array.isArray(r.content)) r.content.push({ type: 'text', text: msg });
+      else if (typeof r.content === 'string') r.content = `${r.content}\n\n${msg}`;
+      else r.content = [{ type: 'text', text: msg }];
+    });
+  } catch (err) {
+    console.error(`[agents-kit] no se pudo registrar tool.execute.after: ${err.message}`);
+  }
 };
 
 export default { id: 'agents-kit', setup, server: AgentsKitPlugin };

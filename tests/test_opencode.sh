@@ -81,6 +81,10 @@ out="$(run2 "$link" "$v2repo/src")" || fail "v2 harness failed: $out"
 printf '%s' "$out" | jq -e --arg r "$REPO_ROOT/rules/testing.md" '(.system | length) == 2 and .system[0] == "base"
   and (.system[1] | contains("agents-kit está activo") and contains($r)) and .systemAgain == .system' >/dev/null \
   || fail "v2 marked repo must add the rules to every model call: $out"
+# a tool.hook that fails to register does not take the rules down
+out="$(HARNESS_TOOL_HOOK_FALLA=1 run2 "$plugin" "$v2repo" 2>/dev/null)" || fail "v2 harness con tool.hook roto: $out"
+printf '%s' "$out" | jq -e '.hooks == ["session.context"] and (.system | length) == 2' >/dev/null \
+  || fail "v2 con tool.hook roto sigue inyectando las reglas: $out"
 
 # rule hooks around the edit tools (hooks/pre-edit and hooks/post-edit): V1 args use filePath, V2 input path;
 # patch/apply_patch go as Codex's apply_patch

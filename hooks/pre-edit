@@ -8,13 +8,15 @@
 #     that cannot run (jq error, unreadable file) blocks too; or
 #   - touches a shielded file (.blindado) without <git-common-dir>/agents-kit/reglas-abiertas holding this session_id
 #     (kit-reglas.sh abrir). package.json is not checked here: kit-pr.sh fusionar does it.
-# Paths and globs are compared without case on macOS; a symlink is checked by its target, and a target outside the
-# repo does nothing. Inert (exit 0, no output) as described in hooks/lib-reglas.sh, and for paths outside the repo of
-# the input's cwd.
+# Each path is normalized ('.' and '..') and checked against the rules of ITS repo (kr_item), which may not be the
+# cwd's; a path inside a marked repo that cannot be resolved blocks. Paths and globs are compared without case on
+# macOS; a symlink is checked by its target, and a target outside its repo does nothing. Inert (exit 0, no output)
+# as described in hooks/lib-reglas.sh, and for paths outside any repo with .agents-kit.json. An allowed edit in a
+# repo that does not contain the cwd is noted for stop-check (kr_apunta).
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
-kr_input && { [ ${#KR_ITEMS[@]} -gt 0 ] || [ -n "$KR_PARCHE" ]; } && kr_root || exit 0
+kr_input && { [ ${#KR_ITEMS[@]} -gt 0 ] || [ -n "$KR_PARCHE" ]; } || exit 0
 if [ ${#KR_ITEMS[@]} -eq 0 ]; then
-  kr_config || exit 0
+  kr_root && kr_config || exit 0
   echo "No se pudo leer el parche (apply_patch) para comprobar las reglas; se bloquea por si acaso." >&2
   exit 2
 fi
@@ -23,12 +25,19 @@ nocase=""
 case "$OSTYPE" in darwin*) nocase=1 ;; esac
 i=0
 while [ $i -lt ${#KR_ITEMS[@]} ]; do
-  KR_FILE="${KR_ITEMS[$i]}"; KR_JSON="${KR_ITEMS[$((i + 1))]}"; i=$((i + 2))
-  kr_resolve || continue
-  kr_ext
-  kr_config "$KR_EXT" || exit 0
+  ruta="${KR_ITEMS[$i]}"; KR_JSON="${KR_ITEMS[$((i + 1))]}"; i=$((i + 2))
+  kr_item "$ruta"; rc=$?
+  [ $rc -ne 1 ] || continue
   en=""
+  [ -z "$KR_PARCHE" ] || en="$ruta: "
+  if [ $rc -ne 0 ]; then
+    kr_config || continue
+    echo "${en}No se pudo resolver la ruta dentro del repo; se bloquea por si acaso." >&2
+    exit 2
+  fi
   [ -z "$KR_PARCHE" ] || en="$KR_REL: "
+  kr_ext
+  kr_config "$KR_EXT" || continue
   if kr_codigo "$KR_EXT"; then
     case "$(kr_sube_prohibido)" in
       no) ;;
@@ -46,5 +55,6 @@ while [ $i -lt ${#KR_ITEMS[@]} ]; do
       exit 2
     fi
   fi
+  kr_apunta
 done
 exit 0
