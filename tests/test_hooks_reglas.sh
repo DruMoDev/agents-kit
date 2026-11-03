@@ -593,8 +593,16 @@ bjson() { inp --arg c "${2:-$r}" --arg k "$1" '{session_id: "s1", cwd: $c, hook_
   tool_input: {command: $k}}'; }
 malos=('git commit --no-verify -m x' 'git push --no-verify origin main' 'HUSKY=0 git commit -m x' 'LEFTHOOK=0 git push'
   'SKIP=eslint git commit -m x' 'git -c core.hooksPath=/dev/null commit -m x' 'cd src && git commit -qm x --no-verify'
-  "HUSKY='0' git commit -m x" 'npm publish --no-verify')
-buenos=('git commit -m x' 'git push origin main' 'NOSKIP=1 make' 'echo HUSKY=1' 'git config --get core.hooksPath' 'ls -la')
+  "HUSKY='0' git commit -m x" 'npm publish --no-verify'
+  'git commit -n -m x' 'git commit -an' 'git commit -nm x' 'git merge -n topic' 'git am -n p.patch'
+  'git status && git commit -n' 'git commit --no-ve -m x' 'git push --no-v' 'git commit --no-verif'
+  'git -c Core.HooksPath=/x commit -m x' 'git config core.hooksPath /dev/null' 'git config --get core.hooksPath'
+  "GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/x'\" git commit -m x"
+  'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hookspath GIT_CONFIG_VALUE_0=/x git commit -m x'
+  'HUSKY_SKIP_HOOKS=1 git commit -m x')
+buenos=('git commit -m x' 'git push origin main' 'NOSKIP=1 make' 'echo HUSKY=1' 'ls -la'
+  'git commit -m "no verify del todo"' 'ls -n' 'git log -n 3' 'git commit --amend -m x' 'git commit --no-edit'
+  'git merge --no-ff topic')
 for m in "" '{"reglas": false}'; do
   if [ -z "$m" ]; then rm -f "$r/.agents-kit.json"; else marker "$m"; fi
   for k in "${malos[@]}"; do

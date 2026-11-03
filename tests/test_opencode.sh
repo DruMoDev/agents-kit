@@ -129,8 +129,10 @@ out="$(run "$plugin" "$hrepo" '{}' - '[{"tool":"bash","args":{"command":"git com
   {"tool":"bash","args":{"command":"git status"}}]')" || fail "harness bash: $out"
 printf '%s' "$out" | jq -e '(.tools[0].before | contains("No te saltes los hooks de git"))
   and .tools[1].before == null and .tools[1].output == "hecho"' >/dev/null || fail "v1 pre-bash en la herramienta bash: $out"
-out="$(run2 "$plugin" "$hrepo" '[{"tool":"bash","input":{"command":"HUSKY=0 git push"}}]')" || fail "v2 harness bash: $out"
-printf '%s' "$out" | jq -e '(.tools[0].before | contains("No te saltes los hooks de git"))' >/dev/null \
+out="$(run2 "$plugin" "$hrepo" '[{"tool":"bash","input":{"command":"HUSKY=0 git push"}},
+  {"tool":"bash","input":{"command":"git commit -an"}}, {"tool":"bash","input":{"command":"git -c CORE.HOOKSPATH=/x commit"}}]')" \
+  || fail "v2 harness bash: $out"
+printf '%s' "$out" | jq -e '[.tools[] | .before | contains("No te saltes los hooks de git")] == [true, true, true]' >/dev/null \
   || fail "v2 pre-bash en la herramienta bash: $out"
 
 echo ok

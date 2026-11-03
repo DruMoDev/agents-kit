@@ -16,8 +16,8 @@ const HOOK = path.join(PLUGIN_ROOT, 'hooks', 'session-start');
 const PRE_EDIT = path.join(PLUGIN_ROOT, 'hooks', 'pre-edit');
 const POST_EDIT = path.join(PLUGIN_ROOT, 'hooks', 'post-edit');
 const PRE_BASH = path.join(PLUGIN_ROOT, 'hooks', 'pre-bash');
-// What hooks/pre-bash looks for, checked first so a plain command spawns nothing.
-const SKIP_HOOKS = /no-verify|HUSKY|LEFTHOOK|SKIP|hooksPath/;
+// The cheap gate of hooks/pre-bash (same patterns, without case), checked first so a plain command spawns nothing.
+const SKIP_HOOKS = /no-v|husky|lefthook|skip|hookspath|commit|merge|git.*am/i;
 const MARK = 'agents-kit está activo';
 // What the kit skills read or run outside the project. Never hooks/ or .opencode/.
 const ALLOWED_DIRS = ['scripts', 'skills', 'rules', 'templates'];
