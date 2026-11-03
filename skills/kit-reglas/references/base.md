@@ -84,6 +84,17 @@ export default defineConfig(
 - Si el repo tiene alias de imports (`@/`), añade `no-restricted-imports` contra las rutas relativas largas (ejemplo en `escalera.md`).
 - Si el repo ya usa Biome u oxlint, se quedan (pueden ser el lint de cada edición), pero la base con tipos va en ESLint. Lo que ya cubre el otro linter no se duplica.
 
+### TypeScript 7 o más nuevo
+
+TypeScript 7 es nativo y su paquete `typescript` ya no trae la API de JS que usan `typescript-eslint` y los parsers de ESLint (el de Astro, por ejemplo). Mientras `typescript-eslint` no lo soporte, ESLint ni arranca (`typescript-eslint does not support TS 7.0`). Antes de decidir:
+- `npm view typescript-eslint peerDependencies`: si su rango de `typescript` no incluye la versión del repo, sigue con lo de abajo; si la incluye, nada de esto hace falta.
+- `npm view @typescript/typescript6 version`: el paquete que da la API de TS 6 (y un `tsc6`).
+
+El montaje, lado a lado:
+- `typescript` en `node_modules` es la API de TS 6, para ESLint: `"typescript": "npm:@typescript/typescript6@<versión>"` en `devDependencies`. Tiene que ser `typescript` en la raíz, no un paquete anidado bajo `typescript-eslint`: algunos parsers (el de Astro) cargan `typescript` desde el directorio del proyecto.
+- El `tsc` de TS 7 queda aparte para `tsc-base.mjs` y `turno.sh`, con otro nombre: `"typescript7": "npm:typescript@<versión que ya usa el repo>"`, que deja su `tsc` en `node_modules/.bin/tsc` (el `typescript` de TS 6 solo trae `tsc6`). Comprueba después de instalar que `node_modules/.bin/tsc --version` da la 7 y que `node -e "console.log(require('typescript').version)"` da la 6.
+- Explícaselo a Dru como pieza propia: cambia cómo se declara `typescript` en `package.json`, y hay que deshacerlo cuando `typescript-eslint` soporte la 7.
+
 ### Scripts de `package.json`
 
 ```json
