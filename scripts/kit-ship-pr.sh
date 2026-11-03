@@ -4,7 +4,9 @@
 #   enviar    <root> <rama> <titulo> <cuerpo>
 #   descartar <root> <rama>
 #   fusionar  <root> <rama>
-# Changes of kit-on/kit-off go through a temporary worktree of origin/<default branch>, never through Dru's tree:
+# <rama> is kit-on, kit-off or kit-reglas (any other exits 1): it merges without the kit-regla-aprobada gate, so it
+# only serves the sessions where Dru approves each piece in the chat.
+# Changes of kit-on/kit-off/kit-reglas go through a temporary worktree of origin/<default branch>, never through Dru's tree:
 # ${KIT_WORKTREES:-$HOME/.agents-kit/worktrees}/<repo>/<rama>, on a new local branch <rama>.
 #   abrir: checks that origin/<default> has (con-marcador) or lacks (sin-marcador) .agents-kit.json, that no open PR
 #     comes from <rama> and that no stale <rama> exists; creates the worktree, or reuses it ("ya existía").
@@ -37,6 +39,10 @@ case "$sub" in
 esac
 git check-ref-format --branch "$3" >/dev/null 2>&1 || { echo "nombre de rama inválido: $3" >&2; exit 1; }
 branch="$3"
+case "$branch" in
+  kit-on|kit-off|kit-reglas) ;;
+  *) echo "rama no permitida: $branch (kit-ship-pr.sh solo envía las ramas kit-on, kit-off y kit-reglas)" >&2; exit 1 ;;
+esac
 command -v git >/dev/null 2>&1 || { echo "error: falta 'git' en el PATH" >&2; exit 2; }
 [ -d "$2" ] || { echo "error: '$2' no es un directorio" >&2; exit 2; }
 root="$(cd "$2" && pwd)"

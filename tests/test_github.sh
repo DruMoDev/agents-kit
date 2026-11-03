@@ -324,6 +324,13 @@ err="$(bash "$ship" abrir "$r" kit-on sin-marcador 2>&1 >/dev/null)"; rc=$?
 case "$err" in *"sin remoto de GitHub"*) ;; *) fail "origin no GitHub: stderr '$err'";; esac
 bash "$ship" >/dev/null 2>&1; [ $? -eq 1 ] || fail "sin argumentos debe salir 1"
 bash "$ship" abrir "$r" "rama mala" sin-marcador >/dev/null 2>&1; [ $? -eq 1 ] || fail "rama inválida debe salir 1"
+# only the branches of kit-on, kit-off and kit-reglas: any other is rejected before touching anything
+for sub in "abrir $r issue-3-x sin-marcador" "enviar $r main t b" "descartar $r feature" "fusionar $r kit-run"; do
+  err="$(bash "$ship" $sub 2>&1 >/dev/null)"; rc=$?
+  [ $rc -eq 1 ] || fail "rama fuera de la lista ($sub): exit $rc"
+  case "$err" in *"rama no permitida"*"kit-on, kit-off y kit-reglas"*) ;; *) fail "rama fuera de la lista ($sub): '$err'";; esac
+done
+[ "$(git -C "$r" worktree list | wc -l | tr -d ' ')" = 1 ] || fail "una rama rechazada no crea worktree"
 r="$(mk_with_origin main)"
 GH_STUB_MODE=no-auth bash "$ship" abrir "$r" kit-on sin-marcador >/dev/null 2>&1; [ $? -eq 2 ] || fail "ship sin auth debe salir 2"
 
