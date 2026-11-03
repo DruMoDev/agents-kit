@@ -22,9 +22,12 @@ KR_CODIGO=',ts,tsx,js,jsx,mjs,cjs,mts,cts,astro,vue,svelte,ipynb,'
 #   - Codex apply_patch (tool_input.command, the patch): one pair per "*** Add|Update|Delete File:" and per
 #     "*** Move to:", as a Write (Add: content, the + lines), a MultiEdit (Update and its destination: one edit per
 #     hunk, old_string the context and - lines, new_string the context and + lines) or nothing to check (Delete).
-#     Markers are recognized on the line trimmed at both ends (as apply_patch does), and so are their paths. The
-#     whole patch is unreadable (no pairs, so pre-edit blocks) on any other line starting with "***", a non-blank
-#     line before the first file, after "*** End Patch" or in a Delete, an Add line without "+", or an empty path.
+#     Lines are classified as Codex does: in an Add, "+" is content; in an Update, " ", "+" and "-" are hunk lines
+#     (an empty line is empty context) and "@@" a hunk header; any other line, trimmed at both ends, must be a marker
+#     (also outside any file; blank lines are fine there and after "*** End Patch", not in an Add). The patch is
+#     unreadable on any other line, an empty path, a misplaced "*** Move to:", or a context line that is a marker once
+#     trimmed (ambiguous). Then its pairs are the paths found after "File:" and "Move to:" anywhere, with the input
+#     "ilegible": pre-edit blocks if one is in a repo with rules.
 # Return 1 if unusable.
 kr_input() {
   local cwd ok x
@@ -38,32 +41,40 @@ kr_input() {
       def ultimo(f): .fs[(.fs | length) - 1] |= f;
       def hunk(f): (if (.h | length) == 0 then .h = [{o: [], n: []}] else . end) | .h[(.h | length) - 1] |= f;
       def tr: sub("^\\s+"; "") | sub("\\s+$"; "");
-      def parche: (split("\r\n") | join("\n") | split("\n") | if .[-1] == "" then .[:-1] else . end) as $ls
-        | reduce $ls[] as $l ({fs: [], fin: false, mal: false}; ($l | tr) as $t |
-        if .mal then .
-        elif .fin then (if $t != "" then .mal = true else . end)
-        elif $t == "*** Begin Patch" or $t == "*** End of File" then .
+      def marca: . == "*** Begin Patch" or . == "*** End Patch" or . == "*** End of File"
+        or test("^\\*\\*\\* (Add|Update|Delete) File:") or test("^\\*\\*\\* Move to:");
+      def marcador($t; $op):
+        if $t == "*** Begin Patch" or $t == "*** End of File" then .
         elif $t == "*** End Patch" then .fin = true
         elif ($t | test("^\\*\\*\\* (Add|Update|Delete) File:")) then
           ($t | capture("^\\*\\*\\* (?<op>[A-Za-z]+) File:(?<p>.*)$")) as $c | ($c.p | tr) as $p
           | if $p == "" then .mal = true else .fs += [{op: $c.op, p: $p, mv: null, add: [], h: []}] end
         elif ($t | test("^\\*\\*\\* Move to:")) then
           ($t | sub("^\\*\\*\\* Move to:"; "") | tr) as $p
-          | if (.fs | length) == 0 or .fs[-1].op != "Update" or .fs[-1].mv != null or $p == "" then .mal = true
-            else ultimo(.mv = $p) end
-        elif ($t | startswith("***")) then .mal = true
-        elif (.fs | length) == 0 then (if $t != "" then .mal = true else . end)
-        elif .fs[-1].op == "Add" then (if ($l | startswith("+")) then ultimo(.add += [$l[1:]]) else .mal = true end)
-        elif .fs[-1].op == "Delete" then (if $t != "" then .mal = true else . end)
-        elif ($l | startswith("@@")) then ultimo(.h += [{o: [], n: []}])
-        elif ($l | startswith("+")) then ultimo(hunk(.n += [$l[1:]]))
-        elif ($l | startswith("-")) then ultimo(hunk(.o += [$l[1:]]))
-        else ($l | if startswith(" ") then .[1:] else . end) as $x | ultimo(hunk(.o += [$x] | .n += [$x])) end)
-        | select(.mal | not)
-        | .fs[] | (if .op == "Add" then {content: (.add | lineas)}
-                   elif .op == "Update" then {edits: [.h[] | {old_string: (.o | lineas), new_string: (.n | lineas)}]}
-                   else {} end) as $i
-        | (.p, (.mv | values)) | select(. != "") | ., "\u0000", ({tool_input: ($i + {file_path: .})} | tojson), "\u0000";
+          | if $op != "Update" or .fs[-1].mv != null or $p == "" then .mal = true else ultimo(.mv = $p) end
+        elif $t == "" and $op != "Add" then .
+        else .mal = true end;
+      def parche: (split("\r\n") | join("\n") | split("\n") | if .[-1] == "" then .[:-1] else . end) as $ls
+        | reduce $ls[] as $l ({fs: [], fin: false, mal: false}; ($l | tr) as $t | (.fs[-1].op // "") as $op |
+        if .mal then .
+        elif .fin then (if $t != "" then .mal = true else . end)
+        elif $op == "Add" and ($l | startswith("+")) then ultimo(.add += [$l[1:]])
+        elif $op == "Update" and $l == "" then ultimo(hunk(.o += [""] | .n += [""]))
+        elif $op == "Update" and ($l | startswith(" ")) then
+          (if ($t | marca) then .mal = true else ($l[1:]) as $x | ultimo(hunk(.o += [$x] | .n += [$x])) end)
+        elif $op == "Update" and ($l | startswith("+")) then ultimo(hunk(.n += [$l[1:]]))
+        elif $op == "Update" and ($l | startswith("-")) then ultimo(hunk(.o += [$l[1:]]))
+        elif $op == "Update" and ($l | startswith("@@")) then ultimo(.h += [{o: [], n: []}])
+        else marcador($t; $op) end)
+        | if .mal then
+            $ls[] | (capture("(File|Move to):(?<p>.*)$") // empty) | .p | tr | select(. != "")
+            | ., "\u0000", "\"ilegible\"", "\u0000"
+          else
+            .fs[] | (if .op == "Add" then {content: (.add | lineas)}
+                     elif .op == "Update" then {edits: [.h[] | {old_string: (.o | lineas), new_string: (.n | lineas)}]}
+                     else {} end) as $i
+            | (.p, (.mv | values)) | select(. != "") | ., "\u0000", ({tool_input: ($i + {file_path: .})} | tojson), "\u0000"
+          end;
       (.tool_input | if type == "object" then . else {} end) as $i |
       (.cwd | s), "\u0000", (.session_id | s), "\u0000", (if .stop_hook_active == true then "1" else "" end), "\u0000",
       (if .tool_name == "apply_patch" then "1" else "" end), "\u0000", "ok", "\u0000",
@@ -113,22 +124,62 @@ kr_sube_prohibido() {
     if $celda or $escrito or $editado then "sube" else "no" end' 2>/dev/null
 }
 
-# kr_root: KR_ROOT and KR_COMMON (git common dir, absolute) of KR_CWD. Return 1 outside git or without the marker.
+# kr_root: KR_ROOT and KR_COMMON (git common dir, physical) of KR_CWD. Return 1 outside git or without the marker.
 kr_root() { _kr_git "$KR_CWD"; }
 
-# _kr_git <dir>: KR_ROOT and KR_COMMON of the repo of <dir> (cached for the last <dir>). Return 1 outside git or when
-# that repo has no .agents-kit.json.
+# _kr_git <dir>: KR_ROOT and KR_COMMON (physical) of the repo of <dir> (cached for the last <dir>). Return 0 when that
+# repo has .agents-kit.json, 3 when it has not, 1 outside git.
 _kr_git() {
   local out
   if [ "$1" != "${_KR_GIT_DIR-}" ]; then
     _KR_GIT_DIR="$1"; _KR_GIT_OUT=""
-    _KR_GIT_OUT="$(git -C "$1" rev-parse --show-toplevel --git-common-dir 2>/dev/null)" || _KR_GIT_OUT=""
+    out="$(git -C "$1" rev-parse --show-toplevel --git-common-dir 2>/dev/null)" || out=""
+    if [ -n "$out" ]; then
+      KR_COMMON="${out#*$'\n'}"
+      case "$KR_COMMON" in /*) ;; *) KR_COMMON="$1/$KR_COMMON" ;; esac
+      KR_COMMON="$(cd "$KR_COMMON" 2>/dev/null && pwd -P)" && _KR_GIT_OUT="${out%%$'\n'*}"$'\n'"$KR_COMMON"
+    fi
   fi
   out="$_KR_GIT_OUT"
   [ -n "$out" ] || return 1
   KR_ROOT="${out%%$'\n'*}"; KR_COMMON="${out#*$'\n'}"
-  case "$KR_COMMON" in /*) ;; *) KR_COMMON="$1/$KR_COMMON" ;; esac
-  [ -n "$KR_ROOT" ] && [ -f "$KR_ROOT/.agents-kit.json" ]
+  [ -n "$KR_ROOT" ] || return 1
+  [ -f "$KR_ROOT/.agents-kit.json" ] || return 3
+}
+
+# _kr_marcado <dir>: like _kr_git, but when the repo of <dir> has no marker it climbs to the repos that contain it (the
+# toplevel of the parent of each toplevel: a nested repo or a submodule) and keeps the nearest marked one. Return 0
+# with KR_ROOT/KR_COMMON of that repo, 1 when there is none.
+_kr_marcado() {
+  local rc prev
+  _kr_git "$1"; rc=$?
+  while [ $rc -eq 3 ]; do
+    prev="$KR_ROOT"
+    [ "${prev%/*}" != "" ] || return 1
+    _kr_git "${prev%/*}"; rc=$?
+    [ $rc -ne 3 ] || [ "$KR_ROOT" != "$prev" ] || return 1
+  done
+  [ $rc -eq 0 ]
+}
+
+# kr_confianza: return 0 when KR_COMMON is the git common dir of the cwd's repo (KR_CWD_COMMON, looked up once): the
+# same clone, so its worktrees (kit-run) count and foreign repos do not. Only trusted repos get their lint commands
+# run (post-edit, stop-check) or noted for the session (kr_apunta). Outside git, nothing is trusted.
+kr_confianza() {
+  kr_cwd_common && [ "$KR_COMMON" = "$KR_CWD_COMMON" ]
+}
+
+# kr_cwd_common: KR_CWD_COMMON, the physical git common dir of KR_CWD (looked up once). Return 1 outside git.
+kr_cwd_common() {
+  local out
+  if [ -z "${KR_CWD_COMMON+x}" ]; then
+    KR_CWD_COMMON=""
+    if out="$(git -C "$KR_CWD" rev-parse --git-common-dir 2>/dev/null)"; then
+      case "$out" in /*) ;; *) out="$KR_CWD/$out" ;; esac
+      KR_CWD_COMMON="$(cd "$out" 2>/dev/null && pwd -P)" || KR_CWD_COMMON=""
+    fi
+  fi
+  [ -n "$KR_CWD_COMMON" ]
 }
 
 # kr_abs: KR_ABS, KR_FILE made absolute against KR_CWD and normalized without touching the disk ('.' and '..' as
@@ -145,35 +196,66 @@ kr_abs() {
 }
 
 # kr_item <path>: KR_ROOT, KR_COMMON and KR_REL for one file of the input. The repo is the one of the file (of its
-# nearest existing directory), not the cwd's: kit-run edits in worktrees outside the session's cwd. Return 0 to
-# check it; 1 to skip it (no path, outside git, a repo without .agents-kit.json, or a symlink whose target is outside
-# that repo); 2 when its path inside a marked repo cannot be resolved (the caller blocks).
+# nearest existing directory; _kr_marcado), not the cwd's: kit-run edits in worktrees outside the session's cwd.
+# Return 0 to check it; 1 to skip it (no path, outside git, no marked repo, or a symlink whose target is outside that
+# repo); 2 when its path inside a marked repo cannot be resolved, also when its nearest existing directory cannot be
+# entered (the caller blocks if that repo has rules).
 kr_item() {
-  local d
+  local d f
   KR_FILE="$1"
   kr_abs || return 1
   d="${KR_ABS%/*}"
   while [ -n "$d" ] && [ ! -d "$d" ]; do d="${d%/*}"; done
-  d="$(cd "${d:-/}" 2>/dev/null && pwd -P)" || return 1
-  _kr_git "$d" || return 1
+  if ! f="$(cd "${d:-/}" 2>/dev/null && pwd -P)"; then
+    while [ -n "$d" ] && ! f="$(cd "$d" 2>/dev/null && pwd -P)"; do d="${d%/*}"; done
+    _kr_marcado "${f:-/}" && return 2
+    return 1
+  fi
+  _kr_marcado "$f" || return 1
   kr_resolve
 }
 
-# kr_apunta: when the repo of the item (KR_ROOT) does not contain KR_CWD, note it in the session's file
-# (kr_sesion_fichero) so stop-check also checks it. Nothing without a session_id.
+# kr_apunta: when the repo of the item (KR_ROOT) does not contain KR_CWD and is trusted (kr_confianza), note it in
+# the session's file (kr_sesion_fichero) so stop-check also checks it. Nothing without a session_id.
 kr_apunta() {
-  local f
+  local f nuevo=""
   case "$KR_CWD/" in "$KR_ROOT"/*) return 0 ;; esac
-  [ -n "$KR_SID" ] && f="$(kr_sesion_fichero sesion)" || return 0
+  [ -n "$KR_SID" ] && kr_confianza && f="$(kr_sesion_fichero sesion)" || return 0
+  [ -e "$f" ] || nuevo=1
   grep -qxF -- "$KR_ROOT" "$f" 2>/dev/null || printf '%s\n' "$KR_ROOT" >> "$f"
+  [ -z "$nuevo" ] || kr_sesion_limpia
 }
 
-# kr_sesion_fichero <qué>: print ${TMPDIR:-/tmp}/agents-kit-<qué>-<sha256 of the session_id ("-" without one)>.
+# kr_sesion_dir: print ${TMPDIR:-/tmp}/agents-kit-<uid>, created with mode 0700. Return 1 (nothing that depends on it
+# may run) when it exists but is a symlink, is not ours or has another mode.
+kr_sesion_dir() {
+  local d="${TMPDIR:-/tmp}" m
+  d="${d%/}/agents-kit-$(id -u)"
+  [ -e "$d" ] || [ -L "$d" ] || mkdir -m 700 "$d" 2>/dev/null
+  [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ] || return 1
+  m="$(stat -f %Lp "$d" 2>/dev/null || stat -c %a "$d" 2>/dev/null)"
+  [ "$m" = 700 ] || return 1
+  printf '%s\n' "$d"
+}
+
+# kr_sesion_fichero <qué>: print <kr_sesion_dir>/<qué>-<sha256 of the session_id ("-" without one)>. Return 1 when
+# the directory is not reliable or the file exists and is a symlink or not ours.
 kr_sesion_fichero() {
-  local h
+  local d h f
+  d="$(kr_sesion_dir)" || return 1
   h="$(printf '%s' "${KR_SID:--}" | shasum -a 256 2>/dev/null)"; h="${h%% *}"
   [ ${#h} -eq 64 ] || return 1
-  printf '%s/agents-kit-%s-%s\n' "${TMPDIR:-/tmp}" "$1" "$h"
+  f="$d/$1-$h"
+  [ ! -L "$f" ] || return 1
+  [ ! -e "$f" ] || { [ -f "$f" ] && [ -O "$f" ]; } || return 1
+  printf '%s\n' "$f"
+}
+
+# kr_sesion_limpia: remove the session files older than 7 days (when a new one is written).
+kr_sesion_limpia() {
+  local d
+  d="$(kr_sesion_dir)" && find "$d" -type f -mtime +7 -delete 2>/dev/null
+  return 0
 }
 
 # kr_resolve: KR_REL, KR_ABS relative to KR_ROOT (KR_ABS may not exist yet). Symlinks in the existing part are

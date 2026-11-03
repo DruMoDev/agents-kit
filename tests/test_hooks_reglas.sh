@@ -240,6 +240,17 @@ printf 'let a = b as any;\n' > "$r/src/p5.ts"
 hook pre-edit "$(pjson "$(patch $'*** Update File: src/p5.ts\n@@\n-let a = b as any;\n+let a = b;\n*** Add File: src/p6.ts\n+let c = d as any;')")"
 [ $rc -eq 2 ] && [[ "$out" == *"src/p6.ts: "* ]] || fail "quitar as any de un fichero no tapa meterlo en otro: $rc $out"
 rm -f "$r/src/p5.ts"
+# clasificación de líneas como Codex: un contexto que es un marcador una vez recortado hace ilegible el parche
+printf '/**\n*** Update File: README.md\n*/\n' > "$r/src/byp.ts"
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/byp.ts\n@@\n *** Update File: README.md\n+const z = 1 as any;')")"
+[ $rc -eq 2 ] || fail "un contexto que parece un marcador no esconde un as any: $rc $out"
+rm -f "$r/src/byp.ts"
+printf 'a\n***\nb ***negrita*** c\n' > "$r/doc.md"
+hook pre-edit "$(pjson "$(patch $'*** Update File: doc.md\n@@\n a\n ***\n-b ***negrita*** c\n+b ***negrita*** d')")"
+[ $rc -eq 0 ] && [ -z "$out" ] || fail "*** y ***negrita*** como contexto de markdown no bloquean: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Update File: doc.md\n@@\n a\n\n ***')")"
+[ $rc -eq 0 ] || fail "una línea vacía en un Update es contexto vacío: $rc $out"
+rm -f "$r/doc.md"
 # rutas con .. normalizadas como path.resolve, aunque el directorio intermedio no exista
 hook pre-edit "$(pjson "$(patch $'*** Add File: nodir/../src/x.ts\n+x as any')")"
 [ $rc -eq 2 ] || fail "apply_patch con nodir/../src/x.ts y as any bloquea: $rc $out"
@@ -349,12 +360,13 @@ echo "post-edit: sobrecarga mínima ${best} ms"
 [ $best -lt 300 ] || fail "post-edit tarda ${best} ms (tope 300)"
 marker "$LINT"
 
-# --- la raíz sale de la ruta del fichero: sesión en el clon A (sin marcador) editando el worktree B (con marcador)
-ra="$(mk_repo)"; rb="$(mk_repo)"; rc_="$(mk_repo)"
-printf '%s\n' "$LINT" > "$rb/.agents-kit.json"; mkdir -p "$rb/src" "$rc_/src"
+# --- la raíz sale de la ruta del fichero: sesión en el clon A (sin marcador) editando su worktree B (con marcador)
+ra="$(mk_repo)"; rb="$(mktemp -d)/wt b"; rc_="$(mk_repo)"; rf="$(mk_repo)"
+git -C "$ra" worktree add -q -b wt "$rb" || fail "worktree B"
+printf '%s\n' "$LINT" > "$rb/.agents-kit.json"; mkdir -p "$rb/src" "$rc_/src" "$rf/src"
 (cd "$rb" && git add -A && git commit -q -m base) || fail "commit base de B"
-xjson() { inp --arg c "$ra" --arg f "$1" --arg t "$2" --arg e "$3" '{session_id: "cruz", cwd: $c, hook_event_name: $e,
-  tool_name: "Write", tool_input: {file_path: $f, content: $t}}'; }
+xjson() { inp --arg c "${4:-$ra}" --arg f "$1" --arg t "$2" --arg e "$3" --arg s "${5:-cruz}" '{session_id: $s, cwd: $c,
+  hook_event_name: $e, tool_name: "Write", tool_input: {file_path: $f, content: $t}}'; }
 hook pre-edit "$(xjson "$rb/src/x.ts" 'x as any' PreToolUse)"
 [ $rc -eq 2 ] || fail "pre-edit desde A aplica las reglas de B: $rc $out"
 hook pre-edit "$(xjson "$rb/eslint.config.mjs" 'x' PreToolUse)"
@@ -363,7 +375,7 @@ hook pre-edit "$(xjson "$rc_/src/x.ts" 'x as any' PreToolUse)"
 [ $rc -eq 0 ] && [ -z "$out" ] || fail "un repo sin marcador sigue inerte aunque no sea el del cwd: $rc $out"
 echo 'export const y = 1;' > "$rb/src/y.ts"; : > "$LOG"
 hook post-edit "$(xjson "$rb/src/y.ts" 'x' PostToolUse)"
-[ $rc -eq 0 ] && [ "$(cat "$LOG")" = "$(printf -- '--rapido\n./src/y.ts')" ] || fail "post-edit desde A pasa el lint de B: $rc $out / $(cat "$LOG")"
+[ $rc -eq 0 ] && [ "$(cat "$LOG")" = "$(printf -- '--rapido\n./src/y.ts')" ] || fail "post-edit desde A pasa el lint de su worktree B: $rc $out / $(cat "$LOG")"
 : > "$LOG"
 FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" '{session_id: "cruz", cwd: $c, stop_hook_active: false}')"
 [ $rc -eq 2 ] && [[ "$out" == *"los ficheros cambiados de "* ]] && [ "$(sed -n 1p "$LOG")" = "--turno" ] \
@@ -371,6 +383,49 @@ FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" '{session_id: "cruz", cwd: $c, st
 : > "$LOG"
 FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" '{session_id: "otra-cruz", cwd: $c, stop_hook_active: false}')"
 [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "otra sesión en A no revisa B: $rc $out"
+# parche ilegible hacia B desde A (sin marcador): bloquea; hacia un repo sin marcador, no
+xpatch() { inp --arg c "$ra" --arg p "$1" '{session_id: "cruz", cwd: $c, tool_name: "apply_patch", tool_input: {command: $p}}'; }
+hook pre-edit "$(xpatch "*** Begin Patch"$'\n'"*** Add File: $rb/src/q.ts"$'\nbasura\n*** End Patch')"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo leer el parche"* ]] || fail "un parche ilegible hacia B bloquea desde A: $rc $out"
+hook pre-edit "$(xpatch "*** Begin Patch"$'\n'"*** Add File: $rc_/src/q.ts"$'\nbasura\n*** End Patch')"
+[ $rc -eq 0 ] || fail "un parche ilegible hacia un repo sin marcador no bloquea: $rc $out"
+# repo ajeno con marcador (otro clon): sus reglas se aplican, pero su lint no se ejecuta nunca
+printf '{"lint": {"fichero": {"ts": "touch testigo"}, "turno": "touch testigo-turno"}}\n' > "$rf/.agents-kit.json"
+(cd "$rf" && git add -A && git commit -q -m base) || fail "commit base ajeno"
+echo 'x' > "$rf/src/z.ts"
+hook pre-edit "$(xjson "$rf/src/z.ts" 'x as any' PreToolUse)"; [ $rc -eq 2 ] || fail "pre-edit aplica las reglas del repo ajeno: $rc $out"
+hook post-edit "$(xjson "$rf/src/z.ts" 'x' PostToolUse)"
+[ $rc -eq 0 ] && [ ! -e "$rf/testigo" ] || fail "post-edit no ejecuta el lint de un repo ajeno: $rc $out"
+nogit_cwd="$(mktemp -d)"; : > "$LOG"
+hook post-edit "$(xjson "$rb/src/y.ts" 'x' PostToolUse "$nogit_cwd")"
+[ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "con el cwd fuera de git no se ejecuta ningún lint: $rc $(cat "$LOG")"
+sesdir="$TMPDIR/agents-kit-$(id -u)"
+h="$(printf '%s' cruz | shasum -a 256)"; printf '%s\n' "$rf" >> "$sesdir/sesion-${h%% *}"
+FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" '{session_id: "cruz", cwd: $c, stop_hook_active: false}')"
+[ ! -e "$rf/testigo-turno" ] || fail "stop-check no ejecuta el turno de un repo ajeno metido en el fichero de sesión"
+[ $rc -eq 2 ] || fail "stop-check sigue revisando B con una entrada envenenada: $rc $out"
+# repo anidado sin marcador dentro de B: se aplica B (el repo marcado más cercano), y su lint por confianza
+mkdir -p "$rb/sub" && git -C "$rb/sub" init -q && echo 'x' > "$rb/sub/n.ts"
+hook pre-edit "$(xjson "$rb/sub/n.ts" 'x as any' PreToolUse)"; [ $rc -eq 2 ] || fail "un repo anidado sin marcador hereda B: $rc $out"
+: > "$LOG"; hook post-edit "$(xjson "$rb/sub/n.ts" 'x' PostToolUse)"
+[ "$(sed -n 2p "$LOG")" = "./sub/n.ts" ] || fail "post-edit en el repo anidado pasa el lint de B: $(cat "$LOG")"
+rm -rf "$rb/sub"
+# un directorio en el que no se puede entrar, dentro de B: bloquea
+mkdir -p "$rb/src/cerrado/x"; chmod 000 "$rb/src/cerrado"
+hook pre-edit "$(xjson "$rb/src/cerrado/x/y.ts" 'x' PreToolUse)"
+chmod 755 "$rb/src/cerrado"; rm -rf "$rb/src/cerrado"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo resolver la ruta"* ]] || fail "un directorio cerrado dentro de B bloquea: $rc $out"
+# directorio de sesión con otro modo o que es un enlace: no se usa (ni se apunta B ni se lleva la cuenta del tope)
+for mal in modo enlace; do
+  export TMPDIR="$(mktemp -d)"; sd="$TMPDIR/agents-kit-$(id -u)"
+  if [ $mal = modo ]; then mkdir -m 755 "$sd"; else mkdir -m 700 "$TMPDIR/otro"; ln -s "$TMPDIR/otro" "$sd"; fi
+  hook post-edit "$(xjson "$rb/src/y.ts" 'x' PostToolUse "$ra" s-$mal)"
+  [ -z "$(ls -A "$sd/")" ] || fail "directorio de sesión no fiable ($mal): no se escribe nada: $(ls -A "$sd/")"
+  : > "$LOG"
+  FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" --arg s s-$mal '{session_id: $s, cwd: $c, stop_hook_active: false}')"
+  [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "sin directorio de sesión fiable no se revisa B ($mal): $rc $out"
+done
+export TMPDIR="$(mktemp -d)"
 rm -f "$rb/src/y.ts"; : > "$LOG"
 
 # --- stop-check
@@ -390,7 +445,7 @@ FAKE_RC=1 hook stop-check "$(inp --arg c "$r" '{cwd: $c, stop_hook_active: true}
 [ $rc -eq 2 ] || fail "stop_hook_active sigue comprobando: $rc"
 # tope propio de bloqueos seguidos (Codex no tiene): con stop_hook_active, a los 8 deja terminar y vuelve a empezar
 sjson() { inp --arg c "$r" --arg s "$1" --argjson a "$2" '{session_id: $s, cwd: $c, stop_hook_active: $a}'; }
-cnt() { local h; h="$(printf '%s' "$1" | shasum -a 256)"; echo "$TMPDIR/agents-kit-turno-bloqueos-${h%% *}"; }
+cnt() { local h; h="$(printf '%s' "$1" | shasum -a 256)"; echo "$TMPDIR/agents-kit-$(id -u)/turno-bloqueos-${h%% *}"; }
 FAKE_RC=1 hook stop-check "$(sjson t1 false)"; [ $rc -eq 2 ] || fail "primer bloqueo: $rc"
 for k in 2 3 4 5 6 7; do FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "bloqueo $k: $rc"; done
 FAKE_RC=1 hook stop-check "$(sjson otra true)"; [ $rc -eq 2 ] || fail "otra sesión no hereda la cuenta: $rc"

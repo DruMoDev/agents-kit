@@ -134,21 +134,31 @@ Verificado el 2026-11-03 con codex-cli 0.165.0, opencode 2.1.4 (`run --standalon
   - La entrada trae `session_id`, `turn_id`, `cwd`, `model` y `permission_mode`; las de herramienta, también `tool_use_id` (visto en los logs). En `PostToolUse` llega además `tool_response` en texto, y en `Stop`, `stop_hook_active` y `last_assistant_message`.
   - Exit 2 en `PreToolUse` bloquea: el fichero no se crea y el modelo recibe `Command blocked by PreToolUse hook: <stderr>. Command: <parche>`.
   - Exit 2 en `PostToolUse` sustituye la salida de la herramienta por el stderr.
-  - Exit 2 en `Stop` vuelve a llamar al modelo con el stderr dentro de `<hook_prompt>`. Codex no pone tope: un `Stop` que siempre falla dio 982 vueltas en 90 s. Por eso `stop-check` lleva su propio tope de 8 bloqueos seguidos (`KIT_TURNO_BLOQUEOS`), con una cuenta por sesión en `${TMPDIR}/agents-kit-turno-bloqueos-<sha256 del session_id>`.
+  - Exit 2 en `Stop` vuelve a llamar al modelo con el stderr dentro de `<hook_prompt>`. Codex no pone tope: un `Stop` que siempre falla dio 982 vueltas en 90 s. Por eso `stop-check` lleva su propio tope de 8 bloqueos seguidos (`KIT_TURNO_BLOQUEOS`), con una cuenta por sesión en `${TMPDIR}/agents-kit-<uid>/turno-bloqueos-<sha256 del session_id>`.
   - Sin `--dangerously-bypass-hook-trust` no corre ningún hook del plugin, ni siquiera `SessionStart`.
   - `lib-reglas.sh` (`kr_input`) convierte cada fichero del parche en una entrada aparte:
     - `Add` cuenta como `Write`;
     - `Update` cuenta como `MultiEdit`, con un hunk por edición (contexto más líneas `-` frente a contexto más líneas `+`);
     - `Move to` cuenta como `MultiEdit` sobre el destino;
     - `Delete` solo pasa por el blindado.
-  - Los marcadores (`*** Begin Patch`, `*** End Patch`, `*** Add|Update|Delete File:`, `*** Move to:`) se reconocen sobre la línea recortada por los dos lados, como hace `apply_patch`: en Codex real, un ` *** Add File:` con un espacio delante crea el fichero. Las rutas también se recortan.
+  - Las líneas se clasifican como en Codex:
+    - en un `Add`, `+` es contenido;
+    - en un `Update`, ` `, `+` y `-` son del hunk (una línea vacía es contexto vacío) y `@@` es la cabecera;
+    - cualquier otra línea, recortada por los dos lados, tiene que ser un marcador (`*** Begin Patch`, `*** End Patch`, `*** End of File`, `*** Add|Update|Delete File:`, `*** Move to:`), también fuera de los ficheros.
+    - En Codex real, un ` *** Add File:` con un espacio delante dentro de un `Add` abre otro fichero. Las rutas se recortan.
   - El parche es ilegible, y `pre-edit` bloquea, si:
-    - una línea empieza por `***` sin ser un marcador;
-    - hay texto antes del primer fichero, tras `*** End Patch` o en un `Delete`;
-    - una línea de un `Add` no empieza por `+`;
-    - falta la ruta.
+    - una línea no es nada de lo anterior;
+    - una línea de contexto es un marcador una vez recortada: es ambiguo, y en Codex real un ` *** Update File: README.md` como contexto metía el `as any` en el fichero de código;
+    - falta la ruta o un `Move to` está fuera de sitio.
+  - Los `***` sueltos y `***negrita***` de un markdown como contexto no bloquean.
+  - Con un parche ilegible, `pre-edit` saca de forma tosca las rutas que siguen a `File:` y a `Move to:`. Bloquea si alguna cae en un repo con reglas (o si las tiene el del `cwd`).
   - Las rutas se normalizan sin tocar el disco, como `path.resolve`: `nodir/../src/x.ts` es `src/x.ts`, aunque `nodir` no exista (verificado en Codex real).
-- La raíz es la del repo de cada fichero, no la del `cwd` (`kr_item`): `kit-run` edita en worktrees fuera del `cwd` de la sesión. Una edición permitida en un repo que no contiene el `cwd` se apunta en `${TMPDIR}/agents-kit-sesion-<sha256 del session_id>`, y `stop-check` revisa ese repo además del del `cwd`.
+- La raíz es la del repo de cada fichero, no la del `cwd` (`kr_item`): `kit-run` edita en worktrees fuera del `cwd` de la sesión.
+  - Si el repo del fichero no tiene marcador (repo anidado, submódulo), se sube al repo marcado más cercano que lo contenga.
+  - `pre-edit` aplica las reglas de cualquier repo con marcador, porque solo lee JSON.
+  - `post-edit`, `stop-check` y el apunte de sesión solo ejecutan el lint de repos con el mismo `git-common-dir` (con `pwd -P`) que el del `cwd`. Así cuentan los worktrees del mismo clon y no los repos ajenos. Con el `cwd` fuera de git no se ejecuta nada.
+  - Una edición permitida en un worktree de confianza que no contiene el `cwd` se apunta en `${TMPDIR}/agents-kit-<uid>/sesion-<sha256 del session_id>`, y `stop-check` revisa ese repo además del del `cwd`.
+  - Ese directorio se crea con modo 0700. Si no es nuestro, es un enlace o tiene otro modo, no se usa: ni se apunta ni se lleva la cuenta del tope, y `Stop` bloquea sin tope. Los ficheros de más de 7 días se borran al crear uno nuevo.
 - OpenCode V2 (2.1.4): `setup(ctx)` tiene `ctx.tool.hook("execute.before" | "execute.after", cb)`. Lo vi en el binario y lo usé de verdad.
   - Lanzar un error en `execute.before` bloquea la herramienta, y el mensaje llega al modelo como su error.
   - `execute.after` recibe `{tool, sessionID, input, status, result: {content, output, metadata}}`. Al añadir texto a `result.content`, el modelo lo lee con el resultado.

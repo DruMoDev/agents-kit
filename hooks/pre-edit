@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse hook (Edit|Write|MultiEdit|NotebookEdit, and Codex's apply_patch: every file of the patch, see kr_input in
-# hooks/lib-reglas.sh; a patch with no file to read blocks). Exit 2 with the remedy on stderr when the edit
+# hooks/lib-reglas.sh; an unreadable patch blocks when a path it names, or the cwd, is in a repo with rules).
+# It only reads JSON, so it applies the rules of any marked repo (no trust check). Exit 2 with the remedy on stderr
+# when the edit
 #   - raises the number of eslint-disable, @ts-ignore, @ts-nocheck or `as any` (KR_PROHIBIDO) in a code file
 #     (extension, without case, in the keys of .lint.fichero or KR_CODIGO): the whole file before and after the edit
 #     (kr_sube_prohibido, over every field present), so inherited occurrences kept as they are do not count; an edit
@@ -15,11 +17,13 @@
 # repo that does not contain the cwd is noted for stop-check (kr_apunta).
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input && { [ ${#KR_ITEMS[@]} -gt 0 ] || [ -n "$KR_PARCHE" ]; } || exit 0
+ilegible_msg="No se pudo leer el parche (apply_patch) para comprobar las reglas; se bloquea por si acaso."
 if [ ${#KR_ITEMS[@]} -eq 0 ]; then
   kr_root && kr_config || exit 0
-  echo "No se pudo leer el parche (apply_patch) para comprobar las reglas; se bloquea por si acaso." >&2
+  echo "$ilegible_msg" >&2
   exit 2
 fi
+ilegible=""
 source "$KR_PLUGIN/scripts/lib/blindado.sh"
 nocase=""
 case "$OSTYPE" in darwin*) nocase=1 ;; esac
@@ -27,6 +31,11 @@ i=0
 while [ $i -lt ${#KR_ITEMS[@]} ]; do
   ruta="${KR_ITEMS[$i]}"; KR_JSON="${KR_ITEMS[$((i + 1))]}"; i=$((i + 2))
   kr_item "$ruta"; rc=$?
+  if [ "$KR_JSON" = '"ilegible"' ]; then
+    ilegible=1
+    [ $rc -eq 1 ] || ! kr_config || { echo "$ilegible_msg" >&2; exit 2; }
+    continue
+  fi
   [ $rc -ne 1 ] || continue
   en=""
   [ -z "$KR_PARCHE" ] || en="$ruta: "
@@ -57,4 +66,5 @@ while [ $i -lt ${#KR_ITEMS[@]} ]; do
   fi
   kr_apunta
 done
+if [ -n "$ilegible" ] && kr_root && kr_config; then echo "$ilegible_msg" >&2; exit 2; fi
 exit 0

@@ -10,8 +10,8 @@ source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input && [ ${#KR_ITEMS[@]} -gt 0 ] || exit 0
 roots=(); commons=(); cmds=(); rels=(); i=0
 while [ $i -lt ${#KR_ITEMS[@]} ]; do
-  ruta="${KR_ITEMS[$i]}"; i=$((i + 2))
-  kr_item "$ruta" && [ -f "$KR_ROOT/$KR_REL" ] || continue
+  ruta="${KR_ITEMS[$i]}"; [ "${KR_ITEMS[$((i + 1))]}" != '"ilegible"' ] || { i=$((i + 2)); continue; }; i=$((i + 2))
+  kr_item "$ruta" && [ -f "$KR_ROOT/$KR_REL" ] && kr_confianza || continue
   kr_ext
   [ -n "$KR_EXT" ] && kr_config "$KR_EXT" && [ -n "$KR_CMD" ] || continue
   kr_apunta

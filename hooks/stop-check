@@ -8,7 +8,9 @@
 # KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in kr_sesion_fichero turno-bloqueos, one file per
 # session, removed after a clean check or at the cap): then it lets the turn end with a warning. Codex has no cap of
 # its own (it looped with no end on 0.165.0), and Claude Code's (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP) is not verified.
-# Inert as in hooks/lib-reglas.sh.
+# Only repos of the cwd's clone run (kr_confianza): a noted root of another clone is ignored, and with the cwd outside
+# git nothing runs. Without a reliable session directory (kr_sesion_dir) it neither reads noted roots nor counts
+# blocks (no cap). Inert as in hooks/lib-reglas.sh.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input || exit 0
 roots=(); commons=()
@@ -18,11 +20,15 @@ add_root() {
   kr_config && [ -n "$KR_TURNO" ] || return 0
   roots+=("$KR_ROOT"); commons+=("$KR_COMMON")
 }
+kr_cwd_common || exit 0
 ! kr_root || add_root
 ses=""
 [ -z "$KR_SID" ] || ses="$(kr_sesion_fichero sesion)" || ses=""
 if [ -n "$ses" ] && [ -f "$ses" ]; then
-  while IFS= read -r r; do [ -d "$r" ] && _kr_git "$r" && add_root; done < "$ses"
+  while IFS= read -r r; do
+    case "$r" in /*) ;; *) continue ;; esac
+    [ -d "$r" ] && _kr_git "$r" && [ "$KR_ROOT" = "$r" ] && kr_confianza && add_root
+  done < "$ses"
 fi
 [ ${#roots[@]} -gt 0 ] || exit 0
 cuenta="$(kr_sesion_fichero turno-bloqueos)" || cuenta=""
@@ -52,6 +58,8 @@ while [ $j -lt ${#roots[@]} ]; do
   kr_lint "$t" "$what" "$KR_TURNO" "${files[@]}" || final=2
 done
 if [ -z "$cuenta" ]; then :
-elif [ $final -eq 2 ]; then printf '%s\n' $((n + 1)) > "$cuenta"
+elif [ $final -eq 2 ]; then
+  [ -e "$cuenta" ] || kr_sesion_limpia
+  printf '%s\n' $((n + 1)) > "$cuenta"
 else rm -f "$cuenta"; fi
 exit $final
