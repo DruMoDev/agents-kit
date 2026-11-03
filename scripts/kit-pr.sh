@@ -36,6 +36,7 @@ source "$here/lib/default-branch.sh"
 source "$here/lib/repo-hook.sh"
 source "$here/lib/ci.sh"
 source "$here/lib/locks.sh"
+source "$here/lib/comments.sh"
 
 usage() {
   echo "uso: $0 abrir <wt> <N> <titulo> <fichero-cuerpo> | esperar-ci <wt> <pr> |" \
@@ -110,13 +111,9 @@ comment() { # <body-file>: the comment URL (gh prints it) goes to $posted
   posted="$(printf '%s\n' "$posted" | sed -n '$p')"
 }
 
-# rest_comments <N> <file>: the comments of issue or PR <N> by REST ({id, login, body, created_at}, posting order)
-# into <file>; exit 2 if unreadable.
-rest_comments() {
-  gh api "repos/$slug/issues/$1/comments?per_page=100" --paginate > "$tmpd/raw" \
-    || { echo "error: no se pudo leer los comentarios de #$1" >&2; exit 2; }
-  jq -cs '[(add // [])[] | {id, login: .user.login, body: (.body // ""), created_at}]' "$tmpd/raw" > "$2" \
-    || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
+# comments_file <N> <file>: kit_rest_comments of issue or PR <N> into <file>; exit 2 if unreadable.
+comments_file() {
+  kit_rest_comments "$slug" "$1" > "$2" || { echo "error: no se pudo leer los comentarios de #$1" >&2; exit 2; }
 }
 # shielded <base>: run kit-reglas.sh blindado against origin/<base>; sets $sh_n (count), $sh_hash and $sh_list
 # (comma-separated). Exit 2 on any failure of the check: the gate never passes on an error.
@@ -137,8 +134,9 @@ RULE_JQ='($pr[0]) as $pc | ($pc + $iss[0]) as $all
   | ([$pc[] | select(.login == $me and (.body | test("^\\s*<!-- kit-regla: [0-9a-f]{64} -->")))] | last) as $r
   | def why($i): ([$all[] | select((.id | tostring) == $i)] | first) as $c
       | if $c == null then "el comentario \($i) no está en la PR ni en su issue"
-        elif $c.login != $me then "el comentario \($i) es de otra cuenta (\($c.login)): solo vale una respuesta de \($me)"
-        elif ($c.body | contains("<!-- kit-")) then "el comentario \($i) lleva un marcador del kit: no es una respuesta de Dru"
+        elif ($c | kit_answer($me) | not) then
+          if $c.login != $me then "el comentario \($i) es de otra cuenta (\($c.login)): solo vale una respuesta de \($me)"
+          else "el comentario \($i) lleva un marcador del kit: no es una respuesta de Dru" end
         elif $c.created_at <= $r.created_at then "el comentario \($i) es anterior a la última propuesta kit-regla"
         else "" end;
   if $r == null then "no hay ninguna propuesta kit-regla en la PR: publícala con kit-pr.sh regla"
@@ -150,7 +148,7 @@ RULE_JQ='($pr[0]) as $pc | ($pc + $iss[0]) as $all
       .h == $h and why(.i) == "") then ""
   else "sin aprobar" end'
 rule_check() {
-  jq -nr --slurpfile pr "$1" --slurpfile iss "$2" --arg me "$me" --arg h "$3" --arg id "${4:-}" "$RULE_JQ" \
+  jq -nr --slurpfile pr "$1" --slurpfile iss "$2" --arg me "$me" --arg h "$3" --arg id "${4:-}" "$KIT_ANSWER_JQ$RULE_JQ" \
     || { echo "error: respuesta de gh ilegible" >&2; exit 2; }
 }
 
@@ -393,12 +391,12 @@ ${out: -38000}"
     base="$(base_branch)" || exit 2
     shielded "$base"
     [ "$sh_n" -gt 0 ] || { echo "la PR no cambia ningún fichero de reglas: no hay nada que aprobar" >&2; exit 1; }
-    rest_comments "$p" "$tmpd/pr.json"
+    comments_file "$p" "$tmpd/pr.json"
     # the issues the PR closes (kit-pr.sh abrir writes "Cierra #N" in its body): Dru may answer there
     body="$(pr_json body | jq -r '.body // ""')" || exit 2
     echo '[]' > "$tmpd/iss.json"
     for x in $(printf '%s\n' "$body" | grep -Eo 'Cierra #[0-9]+' | sed 's/.*#//' | sort -u); do
-      rest_comments "$x" "$tmpd/c.json"
+      comments_file "$x" "$tmpd/c.json"
       jq -s add "$tmpd/iss.json" "$tmpd/c.json" > "$tmpd/acc.json" && mv "$tmpd/acc.json" "$tmpd/iss.json" || exit 2
     done
     # the proposal must be for the current shielded diff before anything is posted
@@ -540,8 +538,8 @@ $cl_err") ;;
     approved=false
     shielded "$base"
     if [ "$sh_n" -gt 0 ]; then
-      rest_comments "$p" "$tmpd/pr.json"
-      rest_comments "$n" "$tmpd/iss.json"
+      comments_file "$p" "$tmpd/pr.json"
+      comments_file "$n" "$tmpd/iss.json"
       why="$(rule_check "$tmpd/pr.json" "$tmpd/iss.json" "$sh_hash")" || exit 2
       if [ -z "$why" ]; then approved=true
       else reasons+=("la PR cambia ficheros de reglas ($sh_list) sin la aprobación de Dru: kit-pr.sh regla y espera su respuesta"); fi

@@ -52,6 +52,7 @@ source "$here/lib/github-slug.sh"
 source "$here/lib/config.sh"
 source "$here/lib/transport.sh"
 source "$here/lib/locks.sh"
+source "$here/lib/comments.sh"
 
 usage() {
   echo "uso: $0 siguiente <root> [<N>] [--excluir N[,N...]] | leer <root> <N> | reparto <root> | aparcar <root> <N>... | reclamar <root> <N> <id> | soltar <root> <N> <id> [motivo] |" \
@@ -272,20 +273,13 @@ $4"
   fi
   return 0
 }
-# rest_comments <N>: the comments of issue or PR <N> by REST, as one JSON array of {login, body, created_at} in
-# posting order; fails if gh fails or the answer is unreadable.
-rest_comments() {
-  local raw
-  raw="$(gh api "repos/$slug/issues/$1/comments?per_page=100" --paginate)" || return 1
-  printf '%s' "$raw" | jq -cs '[(add // [])[] | {login: .user.login, body: (.body // ""), created_at}]'
-}
 # answered <N>: return 0 if, after the last own kit-decision of issue <N>, an own comment without a kit marker (Dru's
 # answer) is in the issue or in its open PR (branch issue-<N>-...), 1 if not; 2 (reason on stderr) if gh fails.
 # The open PRs are read once per run ($open_prs).
 open_prs=""
 answered() {
   local c d pr
-  c="$(rest_comments "$1")" || { echo "error: no se pudo leer los comentarios de #$1" >&2; return 2; }
+  c="$(kit_rest_comments "$slug" "$1")" || { echo "error: no se pudo leer los comentarios de #$1" >&2; return 2; }
   d="$(printf '%s' "$c" | jq -r --arg me "$me" '[.[] | select(.login == $me and (.body | test("^\\s*<!-- kit-decision -->")))] | last | .created_at // ""')"
   [ -n "$d" ] || return 1
   if [ -z "$open_prs" ]; then
@@ -293,10 +287,9 @@ answered() {
       || { echo "error: no se pudo listar las PR abiertas" >&2; return 2; }
   fi
   for pr in $(printf '%s' "$open_prs" | jq -r --arg b "issue-$1-" '.[] | select(.headRefName | startswith($b)) | .number'); do
-    c="$c$(rest_comments "$pr")" || { echo "error: no se pudo leer los comentarios de la PR #$pr" >&2; return 2; }
+    c="$c$(kit_rest_comments "$slug" "$pr")" || { echo "error: no se pudo leer los comentarios de la PR #$pr" >&2; return 2; }
   done
-  printf '%s' "$c" | jq -se --arg me "$me" --arg d "$d" \
-    'add | any(.[]; .login == $me and (.body | contains("<!-- kit-") | not) and .created_at > $d)' >/dev/null
+  printf '%s' "$c" | jq -se --arg me "$me" --arg d "$d" "$KIT_ANSWER_JQ"' add | any(.[]; kit_answer($me) and .created_at > $d)' >/dev/null
 }
 read_file() { # <path>: print contents or exit 1
   [ -f "$1" ] && [ -r "$1" ] || { echo "no se puede leer el fichero: $1" >&2; exit 1; }
