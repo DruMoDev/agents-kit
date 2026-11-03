@@ -4,14 +4,14 @@
 #   - --no-verify anywhere, or a prefix of it of 6 characters or more (--no-v, --no-ve...) as a whole option;
 #   - -n in git commit, git merge or git am, also grouped with other short flags (-an, -nm), in the same command of
 #     a chain (split on ;, &&, ||, | and newlines);
-#   - core.hooksPath without case, in any form (git -c, git config, GIT_CONFIG_PARAMETERS, GIT_CONFIG_KEY_*), also
-#     when it only reads it;
+#   - setting core.hooksPath, without case: git -c core.hooksPath=, git config that writes or unsets it (reading it
+#     with --get, --get-all, --get-regexp, --list or get passes), GIT_CONFIG_PARAMETERS and GIT_CONFIG_KEY_*;
 #   - HUSKY=0, LEFTHOOK=0 (or false, also quoted), HUSKY_SKIP_HOOKS and SKIP=<hooks> (pre-commit).
 # It is a speed bump, not a barrier: it does not parse the shell (quotes, variables, eval, scripts it runs), so a
 # command can hide it and a commit message can trip it; the guarantee is kit-pr.sh fusionar and the CI.
-# Inert (exit 0, no output) without .agents-kit.json in the repo of the cwd (or in the nearest marked repo that
-# contains it), with "reglas": false, outside git or when the input is not usable. It does not need "lint": the rule
-# against skipping hooks is in rules/core.md for every repo with rules.
+# Inert (exit 0, no output) like the other rule hooks: without .agents-kit.json in the repo of the cwd (or in the
+# nearest marked repo that contains it), with "reglas": false, without "lint", outside git or when the input is not
+# usable.
 # The kit scripts that commit without hooks (kit-ship-pr.sh) do it inside the script: this hook only sees the
 # command the agent runs, so they are not blocked.
 # Cost: a bash pattern over the raw input, without case, before anything else; only when it matches, one jq and one
@@ -30,18 +30,25 @@ cwd=""; cmd=""; ok=""
 salta=""
 re='--no-verify|--no-v(e(r(i(f)?)?)?)?([^[:alnum:]_-]|$)|(^|[^[:alnum:]_])(HUSKY|LEFTHOOK)=["'"'"']?(0|false)|HUSKY_SKIP_HOOKS|(^|[^[:alnum:]_])SKIP='
 [[ "$cmd" =~ $re ]] && salta=1
-case "$(printf '%s' "$cmd" | tr 'A-Z' 'a-z')" in *core.hookspath*) salta=1 ;; esac
 if [ -z "$salta" ]; then
   git_re='(^|[^[:alnum:]_.-])git[[:space:]](.*[[:space:]])?(commit|merge|am)([[:space:]]|$)'
   n_re='[[:space:]]-[[:alpha:]]*n[[:alpha:]]*([[:space:]]|$)'
+  conf_re='(^|[^[:alnum:]_.-])git[[:space:]](.*[[:space:]])?config[[:space:]]'
+  lee_re='[[:space:]](--get|--get-all|--get-regexp|--list|-l|get)[[:space:]]'
+  c_re="-c[[:space:]]*[\"']?core\\.hookspath="
   segs="${cmd//&&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//;/$'\n'}"; segs="${segs//|/$'\n'}"
   while IFS= read -r seg; do
     [[ "$seg" =~ $git_re ]] && [[ "$seg" =~ $n_re ]] && { salta=1; break; }
+    lc="$(printf '%s' "$seg" | tr 'A-Z' 'a-z')"
+    case "$lc" in *core.hookspath*) ;; *) continue ;; esac
+    case "$lc" in *git_config*) salta=1; break ;; esac
+    [[ "$lc" =~ $c_re ]] && { salta=1; break; }
+    [[ "$lc" =~ $conf_re ]] && ! [[ "$lc " =~ $lee_re ]] && { salta=1; break; }
   done <<< "$segs"
 fi
 [ -n "$salta" ] || exit 0
 KR_CWD="$(cd "$cwd" 2>/dev/null && pwd -P)" && [ -n "$KR_CWD" ] || exit 0
 kr_root || exit 0
-[ "$(jq -r '.reglas != false' "$KR_ROOT/.agents-kit.json" 2>/dev/null)" = true ] || exit 0
+[ "$(jq -r '.reglas != false and (.lint | type) == "object"' "$KR_ROOT/.agents-kit.json" 2>/dev/null)" = true ] || exit 0
 echo "No te saltes los hooks de git (--no-verify, -n en commit/merge/am, HUSKY=0, LEFTHOOK=0, SKIP=, core.hooksPath): arregla lo que fallan. Si un hook está mal, propón el cambio (kit-reglas)." >&2
 exit 2
