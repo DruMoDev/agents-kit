@@ -274,6 +274,11 @@ for bad in "--lint-fichero" "--lint-fichero ts" "--lint-fichero =eslint" "--lint
   bash "$S" "$l2" $bad >/dev/null 2>&1; [ $? -eq 1 ] || fail "'$bad' debe salir 1"
 done
 bash "$S" "$l2" --lint-turno '' >/dev/null 2>&1; [ $? -eq 1 ] || fail "--lint-turno vacío debe salir 1"
+for bad in '.ts=eslint' 'ts,=eslint' 'ts, tsx=eslint' '*=eslint' 'ts;rm=eslint' ',ts=eslint'; do
+  err="$(bash "$S" "$l2" --lint-fichero "$bad" 2>&1 >/dev/null)"; rc=$?
+  [ $rc -eq 1 ] && grep -q 'extensiones' <<<"$err" || fail "--lint-fichero '$bad' debe salir 1 con el motivo (rc=$rc: $err)"
+done
+[ "$(jq -c '.lint' "$l2/.agents-kit.json")" = '{"turno":"sh .agents-kit/turno.sh"}' ] || fail "extensiones inválidas no deben tocar el marcador"
 grep -q -- '--lint-fichero <exts>=<comando>' "$S" && grep -q -- '--lint-turno <comando>' "$S" \
   || fail "la cabecera de uso debe documentar --lint-fichero y --lint-turno"
 

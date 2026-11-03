@@ -3,12 +3,13 @@
 # End-of-turn check of agents-kit (the "lint.turno" of .agents-kit.json; the Stop hook runs it from the repo root with
 # the changed files that exist, each with ./ in front). Copied from templates/reglas/turno.sh by the kit-reglas skill.
 #   - Types: node .agents-kit/tsc-base.mjs comprobar --cambiados <the files with a TSC_EXT extension>: no new tsc errors
-#     against .agents-kit/tsc-base.json, and the changed files left at zero.
+#     against .agents-kit/tsc-base.json, and the changed files left at zero. A changed *tsconfig*.json (name without
+#     case) also runs it, with --cambiados only if there are such files. Without .agents-kit/tsc-base.mjs, exit 1.
 #   - Lint: typed ESLint, with cache, over the files with a LINT_EXT extension (compared without case).
-# Nothing runs when no file has either extension. Local binaries only (never a download): without them, exit 127,
+# Nothing runs when no file has either extension and no tsconfig changed. Local binaries only (never a download): without them, exit 127,
 # which the hook does not block on (the guarantee is kit-pr.sh fusionar and the CI).
 # Env: KIT_TSC (tsc command, default node_modules/.bin/tsc), KIT_ESLINT (default node_modules/.bin/eslint).
-# Exit: 0 ok (FIN: ok, or FIN: nada que comprobar), 1 errors (printed), 127 missing tools.
+# Exit: 0 ok (FIN: ok, or FIN: nada que comprobar), 1 errors (printed) or no .agents-kit/tsc-base.mjs, 127 missing tools.
 set -u
 
 # Extensions of this repo (kit-reglas adjusts them; space separated, lower case).
@@ -16,17 +17,22 @@ TSC_EXT="ts tsx mts cts"
 LINT_EXT="ts tsx mts cts js jsx mjs cjs"
 CACHE="node_modules/.cache/agents-kit/eslint-tipos"
 
-tipos=(); lint=()
+tipos=(); lint=(); tsconfig=false
 for f in "$@"; do
   base="${f##*/}"
+  case "$(printf '%s' "$base" | tr 'A-Z' 'a-z')" in *tsconfig*.json) tsconfig=true ;; esac
   case "$base" in ?*.*) ext="${base##*.}" ;; *) continue ;; esac
   ext="$(printf '%s' "$ext" | tr 'A-Z' 'a-z')"
   case " $TSC_EXT " in *" $ext "*) tipos+=("$f") ;; esac
   case " $LINT_EXT " in *" $ext "*) lint+=("$f") ;; esac
 done
-if [ ${#tipos[@]} -eq 0 ] && [ ${#lint[@]} -eq 0 ]; then
+if [ ${#tipos[@]} -eq 0 ] && [ ${#lint[@]} -eq 0 ] && [ "$tsconfig" = false ]; then
   echo "FIN: nada que comprobar"
   exit 0
+fi
+if [ ! -f .agents-kit/tsc-base.mjs ]; then
+  echo "falta .agents-kit/tsc-base.mjs: cópialo con kit-reglas" >&2
+  exit 1
 fi
 
 falta=()

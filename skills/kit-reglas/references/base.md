@@ -101,7 +101,9 @@ Los scripts `lint*` y `typecheck*` están blindados (cambiarlos pide la aprobaci
 
 - Lint: `node_modules/.bin/eslint . --suppress-all` escribe `eslint-suppressions.json` (supresiones nativas de ESLint; comprueba en su documentación que la versión que instalas las tiene), que ESLint aplica solo. Se versiona. Cuando un fichero se limpia, `node_modules/.bin/eslint . --prune-suppressions` quita las entradas que sobran.
 - Tipos: `KIT_TSC=node_modules/.bin/tsc node .agents-kit/tsc-base.mjs generar` escribe `.agents-kit/tsc-base.json` (`{"<ruta>": <nº de errores>}`). `comprobar` falla con errores nuevos, y con `--cambiados` exige cero en esos ficheros.
-- Las dos solo pueden encoger: `kit-pr.sh fusionar` rechaza la PR que las haga crecer o que toque un fichero con deuda sin dejarlo a cero (`kit-reglas.sh trinquete`).
+- Las dos solo encogen con el trabajo normal (`kit-reglas.sh trinquete` en `kit-pr.sh fusionar`):
+  - una PR que toca un fichero con deuda lo deja a cero, siempre, también con la aprobación de Dru;
+  - una PR que las hace crecer (una regla nueva que congela con `--suppress-rule` lo que rompe en ficheros que no toca) solo se fusiona con la aprobación de Dru de esa regla (`kit-regla-aprobada`).
 
 ## `knip`: código muerto
 

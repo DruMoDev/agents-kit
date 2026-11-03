@@ -10,7 +10,7 @@
 # CI/CD; reviews run on the local diff with kit-review-all.sh --local). --contenido and --protegido (repeatable) replace
 # that list in the marker. --verificar-rapido/--verificar-completo set verificar.rapido/.completo:
 # the repo's quick checks (format, strict lint, tests of what changed: seconds) and full suite (kit-verify.sh).
-# --lint-fichero (repeatable; <exts> comma separated, split at the first =) adds or replaces that key of lint.fichero,
+# --lint-fichero (repeatable; <exts> ^[A-Za-z0-9]+(,[A-Za-z0-9]+)*$, split at the first =) adds or replaces that key of lint.fichero,
 # keeping the others; --lint-turno sets lint.turno. They are what the hooks run (hooks/post-edit, hooks/stop-check).
 # While the marker has no "contenido", prints "sugerencia contenido: <dir> (...)" for each directory that the history of
 # HEAD (last 300 commits) mostly changes in direct commits (subject without "(#N)"): kit-on proposes them to Dru.
@@ -61,6 +61,8 @@ while [ $# -gt 0 ]; do
         ?*=?*) ;;
         *) echo "valor de --lint-fichero inválido: '$2' (<exts>=<comando>, por ejemplo ts,tsx=node_modules/.bin/eslint --cache)" >&2; exit 1 ;;
       esac
+      [[ ${2%%=*} =~ ^[A-Za-z0-9]+(,[A-Za-z0-9]+)*$ ]] \
+        || { echo "extensiones de --lint-fichero inválidas: '${2%%=*}' (letras y números separados por comas, sin punto ni espacios: ts,tsx)" >&2; exit 1; }
       command -v jq >/dev/null 2>&1 || { echo "error: falta 'jq' en el PATH" >&2; exit 2; }
       lint_f="$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$lint_f")" || exit 2
       shift 2 ;;

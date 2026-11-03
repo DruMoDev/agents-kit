@@ -19,7 +19,7 @@ Es una valoración, no una venta: si al escribirla ves que la regla es ruidosa o
 <el código que la dispara, en un bloque de código>
 <el mensaje exacto que verá el agente, en otro bloque de código>
 
-**Qué rompe y cómo queda:** <nº de errores y ficheros en el código de hoy>. <cómo se arreglan (uno o dos ejemplos de antes y después) y si se arreglan en este mismo cambio>. La deuda no puede crecer: lo que la regla rompe se arregla aquí, o la regla se acota.
+**Qué rompe y cómo queda:** <nº de errores y ficheros en el código de hoy>. <cómo se arreglan (uno o dos ejemplos de antes y después) y si se arreglan en este mismo cambio>. Lo que rompe en ficheros que este cambio toca se arregla aquí. <si se congela deuda en los demás con `--suppress-rule`: cuántas entradas y en qué ficheros; al aprobar la regla, Dru aprueba también esa deuda>.
 
 **Valoración crítica:**
 - Falsos positivos posibles: <casos legítimos que la regla marcaría, y cómo los evita (selector, `files`, `ignores`) o por qué no los hay>.

@@ -64,6 +64,29 @@ grep -q 'no-floating-promises' <<<"$out" || fail "sin la salida de eslint: $out"
 reset; run ./src/e.mjs
 [ "$rc" = 0 ] && [ -s "$d/tsc-calls" ] && grep -qx './src/e.mjs' "$d/eslint-args" || fail ".mjs: rc=$rc $out"
 
+# a changed tsconfig runs tsc even without .ts files (no eslint), and a new error then fails
+reset; run ./tsconfig.json ./README.md
+[ "$rc" = 0 ] && [ -s "$d/tsc-calls" ] && [ ! -e "$d/eslint-args" ] || fail "tsconfig.json: rc=$rc tsc=$(cat "$d/tsc-calls" 2>/dev/null) $out"
+reset; echo 'src/n.ts(1,1): error TS1: nuevo' > "$d/tsc-out"
+run ./config/TSConfig.base.json
+[ "$rc" = 1 ] && grep -q 'src/n.ts' <<<"$out" || fail "tsconfig con error nuevo debe dar 1 (rc=$rc): $out"
+
+# names with spaces and shell metacharacters reach tsc-base and eslint as they are, and nothing is run
+reset; raro='./src/a b;$(touch PWNED) `x` "q" *.ts'
+run "$raro"
+[ "$rc" = 0 ] || fail "nombre raro rc=$rc: $out"
+[ "$(grep -c '' "$d/eslint-args")" -gt 0 ] && grep -qxF -- "$raro" "$d/eslint-args" || fail "eslint no recibe el nombre tal cual: $(cat "$d/eslint-args")"
+[ ! -e PWNED ] && [ ! -e src/PWNED ] || fail "un nombre de fichero ejecutó código"
+reset; echo "src/a b;\$(touch PWNED) \`x\` \"q\" *.ts(1,1): error TS1: x" > "$d/tsc-out"
+run "$raro"
+[ "$rc" = 1 ] || fail "el nombre raro debe ir en --cambiados (rc=$rc): $out"
+
+# without .agents-kit/tsc-base.mjs: exit 1 saying how to fix it
+reset; mv .agents-kit/tsc-base.mjs "$d/tsc-base.mjs"
+run ./src/b.ts
+[ "$rc" = 1 ] && grep -qF 'falta .agents-kit/tsc-base.mjs: cópialo con kit-reglas' <<<"$out" || fail "sin tsc-base.mjs: rc=$rc $out"
+mv "$d/tsc-base.mjs" .agents-kit/tsc-base.mjs
+
 # worktree without node_modules: 127 (the Stop hook does not block) and never a download
 reset
 out="$(bash .agents-kit/turno.sh ./src/b.ts 2>&1)"; rc=$?
