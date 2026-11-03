@@ -613,7 +613,9 @@ buenos=('git commit -m x' 'git push origin main' 'NOSKIP=1 make' 'echo HUSKY=1' 
   'git commit -m "no verify del todo"' 'ls -n' 'git log -n 3' 'git commit --amend -m x' 'git commit --no-edit'
   'git merge --no-ff topic' 'git config --get core.hooksPath' 'git config --local --get-all core.hooksPath'
   'git config get core.hooksPath' 'git config --local --get core.hooksPath' 'git config --file .gitconfig --get core.hooksPath'
-  'git config --global --get-all core.hooksPath')
+  'git config --global --get-all core.hooksPath'
+  'git commit -m "x" && git log -n 3' 'sed -n 1,5p a.ts && git commit -m x'
+  'git commit -m x && git show --stat | head -n 20' 'git log --oneline | grep -n merge' 'curl --no-verify-ssl x')
 for m in "" '{"reglas": false}' '{}' '{"lint": "no es objeto"}'; do
   if [ -z "$m" ]; then rm -f "$r/.agents-kit.json"; else marker "$m"; fi
   for k in "${malos[@]}"; do

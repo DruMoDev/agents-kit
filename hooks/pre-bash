@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse hook (Bash; Codex's exec_command also arrives as tool_name "Bash", and OpenCode's bash tool through the
 # plugin). Exit 2 with the remedy on stderr when tool_input.command skips git hooks:
-#   - --no-verify anywhere, or a prefix of it of 6 characters or more (--no-v, --no-ve...) as a whole option;
+#   - --no-verify, or a prefix of it of 6 characters or more (--no-v, --no-ve...), as a whole option (up to a
+#     separator: --no-verify-ssl passes);
 #   - -n in git commit, git merge or git am, also grouped with other short flags (-an, -nm), in the same command of
 #     a chain (split on ;, &&, &, ||, | and newlines);
 #   - core.hooksPath, without case, in any command of the chain (git -c, --config-env, quotes, GIT_CONFIG_*...), unless
@@ -30,7 +31,7 @@ cwd=""; cmd=""; ok=""
     "ok", "\u0000", (.cwd | s), "\u0000", (.tool_input | objects | .command // .cmd | s), "\u0000"' 2>/dev/null)
 [ "$ok" = ok ] && [ -n "$cwd" ] && [ -n "$cmd" ] || exit 0
 salta=""
-re='--no-verify|--no-v(e(r(i(f)?)?)?)?([^[:alnum:]_-]|$)|(^|[^[:alnum:]_])(HUSKY|LEFTHOOK)=["'"'"']?(0|false)|HUSKY_SKIP_HOOKS|(^|[^[:alnum:]_])SKIP='
+re='--no-v(e(r(i(fy?)?)?)?)?([^[:alnum:]_-]|$)|(^|[^[:alnum:]_])(HUSKY|LEFTHOOK)=["'"'"']?(0|false)|HUSKY_SKIP_HOOKS|(^|[^[:alnum:]_])SKIP='
 [[ "$cmd" =~ $re ]] && salta=1
 if [ -z "$salta" ]; then
   git_re='(^|[^[:alnum:]_.-])git[[:space:]](.*[[:space:]])?(commit|merge|am)([[:space:]]|$)'
@@ -39,8 +40,6 @@ if [ -z "$salta" ]; then
   # a read is never trusted when the command expands or redirects anything
   libra=1
   case "$cmd" in *'$('*|*'`'*|*'${'*|*'<'*|*'>'*) libra="" ;; esac
-  # a git commit -n anywhere in the command, also across segments (a safety net for the split)
-  [[ "$cmd" =~ $git_re ]] && [[ "$cmd" =~ $n_re ]] && salta=1
   # redirections (2>&1, >&2, &>, <&) are not chain separators: blank them before splitting on a lone &
   segs="$(printf '%s' "$cmd" | sed -E 's/[0-9]*>&[0-9-]*/ /g; s/&>/ /g; s/<&/ /g')"
   segs="${segs//&&/$'\n'}"; segs="${segs//&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//;/$'\n'}"; segs="${segs//|/$'\n'}"
