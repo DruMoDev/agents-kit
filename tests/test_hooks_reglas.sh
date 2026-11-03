@@ -151,6 +151,18 @@ hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file
 blind='Fichero de reglas: solo se cambia con la aprobación de Dru (skill kit-reglas, o en kit-run un commit propio y kit-pr.sh regla).'
 hook pre-edit "$(edit_json eslint.config.mjs 'export default []')"
 [ $rc -eq 2 ] && [[ "$out" == *"$blind"* ]] || fail "eslint.config.mjs debe bloquear: $rc $out"
+# the message carries the session_id of the input and the exact command to open it (Codex and OpenCode too)
+top="$(git -C "$r" rev-parse --show-toplevel)"
+abrir_cmd="$(printf '%q/scripts/kit-reglas.sh abrir %q s1' "$REPO_ROOT" "$top")"
+[[ "$out" == *"$abrir_cmd"* ]] || fail "el bloqueo de un blindado da el comando de abrir con el session_id: $out"
+hook pre-edit "$(inp --arg c "$r" '{cwd: $c, tool_input: {file_path: "eslint.config.mjs", content: "x"}}')"
+[ $rc -eq 2 ] && [[ "$out" == *"sin id de sesión"* ]] || fail "sin session_id dice que no se puede abrir: $rc $out"
+hook pre-edit "$(edit_json eslint.config.mjs 'export default []' 'ses con espacio')"
+cmd="${out##*con: }"; cmd="${cmd%%$'\n'*}"
+eval "$cmd" >/dev/null || fail "el comando del mensaje se ejecuta tal cual: $cmd"
+hook pre-edit "$(edit_json eslint.config.mjs 'export default []' 'ses con espacio')"
+[ $rc -eq 0 ] || fail "tras el comando del mensaje la sesión puede editar: $rc $out"
+bash "$REPO_ROOT/scripts/kit-reglas.sh" cerrar "$r" >/dev/null || fail "cerrar tras el comando del mensaje"
 hook pre-edit "$(edit_json "$r/.github/workflows/ci.yml" 'on: push')"
 [ $rc -eq 2 ] || fail "ruta absoluta blindada (prefijo) debe bloquear: $rc $out"
 hook pre-edit "$(edit_json "$r/src/../tsconfig.json" '{}')"

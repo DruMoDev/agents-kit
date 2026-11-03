@@ -9,7 +9,8 @@
 #     whose old_string is not in the file, or a NotebookEdit cell, blocks with any match in its new text, and a check
 #     that cannot run (jq error, unreadable file) blocks too; or
 #   - touches a shielded file (.blindado) without <git-common-dir>/agents-kit/reglas-abiertas holding this session_id
-#     (kit-reglas.sh abrir). package.json is not checked here: kit-pr.sh fusionar does it.
+#     (kit-reglas.sh abrir; the message gives that command with the session_id of the input, so any tool can copy
+#     it). package.json is not checked here: kit-pr.sh fusionar does it.
 # Each path is normalized ('.' and '..') and checked against the rules of ITS repo (kr_item), which may not be the
 # cwd's; a path inside a marked repo that cannot be resolved blocks. Paths and globs are compared without case on
 # macOS; a symlink is checked by its target, and a target outside its repo does nothing. Inert (exit 0, no output)
@@ -61,6 +62,12 @@ while [ $i -lt ${#KR_ITEMS[@]} ]; do
     [ ! -f "$KR_COMMON/agents-kit/reglas-abiertas" ] || IFS= read -r abierta < "$KR_COMMON/agents-kit/reglas-abiertas"
     if [ -z "$KR_SID" ] || [ "$abierta" != "$KR_SID" ]; then
       echo "${en}Fichero de reglas: solo se cambia con la aprobación de Dru (skill kit-reglas, o en kit-run un commit propio y kit-pr.sh regla)." >&2
+      if [ -n "$KR_SID" ]; then
+        printf 'Con el OK de Dru, ábrelo para esta sesión con: %q/scripts/kit-reglas.sh abrir %q %q\n' \
+          "$KR_PLUGIN" "$KR_ROOT" "$KR_SID" >&2
+      else
+        echo "Esta herramienta llega sin id de sesión: no se puede abrir con kit-reglas.sh abrir." >&2
+      fi
       exit 2
     fi
   fi

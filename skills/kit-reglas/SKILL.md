@@ -31,7 +31,7 @@ Todo lo que hace esta skill pasa en un directorio `<wt>`, que no tiene por qué 
 
 Sin `<wt>/.agents-kit.json`, di `kit no activado: ejecuta kit-on` y para.
 
-`<sesión>` es `${CLAUDE_SESSION_ID}` (Claude Code lo sustituye al cargar la skill; es el `session_id` que ve el hook). Si ves ese texto sin sustituir, estás en Codex u OpenCode, donde no corre el hook de antes de editar: sáltate `abrir` y `cerrar`.
+`<sesión>` es el `session_id` que ve el hook de antes de editar, en cualquier herramienta (Claude Code, Codex u OpenCode). Cuando bloquea un fichero de reglas, su mensaje lo trae ya en el comando exacto (`.../kit-reglas.sh abrir <raíz> <session_id>`): úsalo tal cual. En Claude Code también es `${CLAUDE_SESSION_ID}` (lo sustituye al cargar la skill). Si no lo tienes, intenta editar el fichero de reglas: el bloqueo te lo da.
 
 ## Instalar la base
 
