@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse hook (Edit|Write|MultiEdit|NotebookEdit). Runs `<comando> <ruta>` from the repo root, where <comando>
 # is the .lint.fichero entry whose comma-separated keys include the file's extension and <ruta> is relative to the
-# root. Exit 2 with the lint output on stderr when it fails; 0 when it passes, when another lint holds the lock, when
+# root (with ./ in front, so a name starting with - is not an option). Exit 2 with the lint output on stderr when it fails; 0 when it passes, when another lint holds the lock, when
 # the tool is missing (126/127) or after KIT_LINT_TIMEOUT (10 s). Inert as described in hooks/lib-reglas.sh, and for
 # paths outside the repo, files that do not exist or extensions without a command.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
@@ -9,4 +9,4 @@ kr_input && [ -n "$KR_FILE" ] && kr_root && kr_resolve && [ -f "$KR_ROOT/$KR_REL
 base="${KR_REL##*/}"
 case "$base" in ?*.*) ;; *) exit 0 ;; esac
 kr_config "${base##*.}" && [ -n "$KR_CMD" ] || exit 0
-kr_lint "$(kr_tope "${KIT_LINT_TIMEOUT:-}" 10)" "$KR_REL" "$KR_CMD" "$KR_REL"
+kr_lint "$(kr_tope "${KIT_LINT_TIMEOUT:-}" 10)" "$KR_REL" "$KR_CMD" "./$KR_REL"

@@ -71,6 +71,20 @@ for t in 'const x = any' 'y as anything' 'z as any_t' 'w as any$' 'has any'; do
 done
 hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/b.ts", content: "let a = b as any"}}')"
 [ $rc -eq 2 ] || fail "Write con content debe bloquear: $rc $out"
+printf 'let a = b as any;\n' > "$r/src/heredado.ts"
+wjson() { inp --arg c "$r" --arg t "$1" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/heredado.ts", content: $t}}'; }
+hook pre-edit "$(wjson 'let a = b as any; // otro cambio')"; [ $rc -eq 0 ] || fail "Write con as any heredado no bloquea: $rc $out"
+hook pre-edit "$(wjson 'let a = b as any; let c = d as any;')"; [ $rc -eq 2 ] || fail "Write que añade un as any bloquea: $rc"
+ejson() { inp --arg c "$r" --arg o "$1" --arg n "$2" '{session_id: "s1", cwd: $c,
+  tool_input: {file_path: "src/a.ts", old_string: $o, new_string: $n}}'; }
+hook pre-edit "$(ejson 'x as any; y' 'x as any; z')"; [ $rc -eq 0 ] || fail "Edit con as any heredado no bloquea: $rc $out"
+hook pre-edit "$(ejson 'x as any; y' 'x as any; y as any')"; [ $rc -eq 2 ] || fail "Edit que añade un as any bloquea: $rc"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/a.ts",
+  edits: [{old_string: "// @ts-ignore\na", new_string: "a"}, {old_string: "b", new_string: "// @ts-ignore\nb"}]}}')"
+[ $rc -eq 0 ] || fail "MultiEdit que mueve un @ts-ignore no bloquea: $rc $out"
+hook pre-edit "$(edit_json docs/regla.md 'No uses eslint-disable ni as any.')"
+[ $rc -eq 0 ] && [ -z "$out" ] || fail "un .md que explica la regla no bloquea: $rc $out"
+hook pre-edit "$(edit_json src/c.vue 'x as any')"; [ $rc -eq 2 ] || fail ".vue es código aunque no esté en .lint.fichero: $rc"
 hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/b.ts",
   edits: [{old_string: "a", new_string: "ok"}, {old_string: "b", new_string: "// @ts-ignore"}]}}')"
 [ $rc -eq 2 ] || fail "MultiEdit debe bloquear: $rc $out"
@@ -85,6 +99,14 @@ hook pre-edit "$(edit_json "$r/src/../tsconfig.json" '{}')"
 [ $rc -eq 2 ] || fail "ruta con .. blindada debe bloquear: $rc $out"
 hook pre-edit "$(edit_json package.json '{"scripts": {"lint": "true"}}')"
 [ $rc -eq 0 ] || fail "package.json no se bloquea en pre-edit: $rc $out"
+if [ "$(uname)" = Darwin ]; then
+  hook pre-edit "$(edit_json ESLINT.CONFIG.MJS 'x')"; [ $rc -eq 2 ] || fail "en macOS, ESLINT.CONFIG.MJS bloquea: $rc $out"
+fi
+echo 'export default []' > "$r/eslint.config.mjs"; ln -s ../eslint.config.mjs "$r/src/l.ts"
+hook pre-edit "$(edit_json src/l.ts 'x')"; [ $rc -eq 2 ] || fail "un enlace a un fichero blindado bloquea: $rc $out"
+fuera_l="$(mktemp -d)"; echo 'x' > "$fuera_l/t.ts"; ln -s "$fuera_l/t.ts" "$r/src/fuera.ts"
+hook pre-edit "$(edit_json src/fuera.ts 'x as any')"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "un enlace fuera del repo no hace nada: $rc $out"
+rm "$r/src/l.ts" "$r/src/fuera.ts" "$r/eslint.config.mjs"
 bash "$REPO_ROOT/scripts/kit-reglas.sh" abrir "$r" sesion-ok >/dev/null || fail "abrir"
 hook pre-edit "$(edit_json eslint.config.mjs 'export default []' sesion-ok)"
 [ $rc -eq 0 ] && [ -z "$out" ] || fail "con abrir para la sesión debe pasar: $rc $out"
@@ -108,17 +130,20 @@ hook pre-edit "$(edit_json "../$(basename "$fuera")/eslint.config.mjs" 'x as any
 # --- post-edit
 : > "$LOG"
 hook post-edit "$(post_json src/a.ts)"
-[ $rc -eq 0 ] && [ "$(cat "$LOG")" = "$(printf -- '--rapido\nsrc/a.ts')" ] || fail "post-edit ok: $rc $out / $(cat "$LOG")"
+[ $rc -eq 0 ] && [ "$(cat "$LOG")" = "$(printf -- '--rapido\n./src/a.ts')" ] || fail "post-edit ok: $rc $out / $(cat "$LOG")"
 [ ! -d "$lock" ] || fail "el candado debe liberarse"
 : > "$LOG"; mkdir -p "$r/src/con espacios"; echo x > "$r/src/con espacios/b c.tsx"
 hook post-edit "$(post_json "$r/src/con espacios/b c.tsx" "$r/src")"
-[ $rc -eq 0 ] && [ "$(sed -n 2p "$LOG")" = "src/con espacios/b c.tsx" ] || fail "ruta con espacios: $rc $out / $(cat "$LOG")"
+[ $rc -eq 0 ] && [ "$(sed -n 2p "$LOG")" = "./src/con espacios/b c.tsx" ] || fail "ruta con espacios: $rc $out / $(cat "$LOG")"
 : > "$LOG"
 hook post-edit "$(post_json "con espacios/b c.tsx" "$r/src")"
-[ "$(sed -n 2p "$LOG")" = "src/con espacios/b c.tsx" ] || fail "ruta relativa al cwd: $(cat "$LOG")"
-: > "$LOG"
+[ "$(sed -n 2p "$LOG")" = "./src/con espacios/b c.tsx" ] || fail "ruta relativa al cwd: $(cat "$LOG")"
+: > "$LOG"; echo x > "$r/--fix.ts"
+hook post-edit "$(post_json --fix.ts)"
+[ "$(sed -n 2p "$LOG")" = "./--fix.ts" ] || fail "un nombre con - va con ./ delante: $(cat "$LOG")"
+rm "$r/--fix.ts"; : > "$LOG"
 FAKE_RC=1 hook post-edit "$(post_json src/a.ts)"
-[ $rc -eq 2 ] && [[ "$out" == *"error de lint en --rapido src/a.ts"* ]] || fail "lint con exit 1: $rc $out"
+[ $rc -eq 2 ] && [[ "$out" == *"error de lint en --rapido ./src/a.ts"* ]] || fail "lint con exit 1: $rc $out"
 FAKE_RC=127 hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] || fail "exit 127 no bloquea: $rc $out"
 FAKE_RC=126 hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] || fail "exit 126 no bloquea: $rc $out"
 : > "$LOG"; echo x > "$r/README.md"
@@ -126,12 +151,38 @@ hook post-edit "$(post_json README.md)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fai
 echo x > "$fuera/a.ts"
 hook post-edit "$(post_json "$fuera/a.ts")"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "fuera del repo no lanza nada"
 hook post-edit "$(post_json src/no-existe.ts)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un fichero que no existe no lanza nada"
+# old <dir> <s>: set the mtime of <dir> <s> seconds in the past.
+old() { touch -t "$(date -r $(( $(date +%s) - $2 )) +%Y%m%d%H%M.%S)" "$1"; }
+ahora=$(date +%s)
 mkdir -p "$lock"
 hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "candado tomado: no lanza nada"
 [ -d "$lock" ] || fail "no debe soltar un candado ajeno"
-touch -t "$(date -r $(( $(date +%s) - 30 )) +%Y%m%d%H%M.%S)" "$lock"
-hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] && [ -s "$LOG" ] || fail "candado viejo se recupera: $rc $out"
+old "$lock" 30
+hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "sin dueño y con menos de 125 s no se roba"
+old "$lock" 200
+hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] && [ -s "$LOG" ] || fail "sin dueño y con más de 125 s se recupera: $rc $out"
 [ ! -d "$lock" ] || fail "el candado recuperado debe liberarse"
+sleep 60 & vivo=$!
+mkdir -p "$lock"; echo "$vivo $((ahora + 100))" > "$lock/dueño"; old "$lock" 30; : > "$LOG"
+hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un dueño vivo en plazo no se roba"
+[ "$(cat "$lock/dueño")" = "$vivo $((ahora + 100))" ] || fail "el candado de un dueño vivo no se toca"
+echo "$vivo $((ahora - 1))" > "$lock/dueño"
+hook post-edit "$(post_json src/a.ts)"; [ -s "$LOG" ] || fail "un dueño fuera de plazo se recupera: $rc $out"
+[ ! -d "$lock" ] || fail "el candado de plazo vencido debe liberarse"
+kill "$vivo"; wait "$vivo" 2>/dev/null
+mkdir -p "$lock"; echo "$vivo $((ahora + 100))" > "$lock/dueño"; : > "$LOG"
+hook post-edit "$(post_json src/a.ts)"; [ -s "$LOG" ] || fail "un dueño muerto se recupera: $rc $out"
+[ ! -d "$lock" ] || fail "el candado de un dueño muerto debe liberarse"
+cat > "$bin/robalint" <<EOF
+#!/usr/bin/env bash
+echo "1 9999999999" > "$lock/dueño"
+EOF
+chmod +x "$bin/robalint"
+marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/robalint\"}}}"
+hook post-edit "$(post_json src/a.ts)"
+[ "$(cat "$lock/dueño" 2>/dev/null)" = "1 9999999999" ] || fail "el trap no debe soltar el candado de otro"
+rm "$lock/dueño"; rmdir "$lock"
+marker "$LINT"; : > "$LOG"
 : > "$LOG"
 marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/slowlint\"}}}"
 t0=$(date +%s)
@@ -162,12 +213,12 @@ marker "$LINT"
 (cd "$r" && git add -A && git commit -q -m base) || fail "commit base"
 : > "$LOG"
 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "sin cambios no lanza nada: $rc $(cat "$LOG")"
-rm "$r/README.md"; echo y >> "$r/src/a.ts"; echo z > "$r/src/nuevo.ts"; echo i > "$r/ignorado.log"; echo '*.log' > "$r/.gitignore"
+rm "$r/README.md"; echo y >> "$r/src/a.ts"; echo z > "$r/src/nuevo.ts"; echo f > "$r/--fix.ts"; echo i > "$r/ignorado.log"; echo '*.log' > "$r/.gitignore"
 hook stop-check "$(stop_json)"
 [ $rc -eq 0 ] || fail "stop-check ok: $rc $out"
 [ "$(sed -n 1p "$LOG")" = "--turno" ] || fail "stop-check sin --turno: $(cat "$LOG")"
 got="$(sed -n '2,$p' "$LOG" | sort | tr '\n' ' ')"
-[ "$got" = ".gitignore src/a.ts src/nuevo.ts " ] || fail "stop-check pasa '$got'"
+[ "$got" = "./--fix.ts ./.gitignore ./src/a.ts ./src/nuevo.ts " ] || fail "stop-check pasa '$got'"
 FAKE_RC=1 hook stop-check "$(stop_json)"
 [ $rc -eq 2 ] && [[ "$out" == *"error de lint en --turno"* ]] || fail "stop-check con exit 1: $rc $out"
 FAKE_RC=127 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] || fail "stop-check exit 127 no bloquea: $rc"

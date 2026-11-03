@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Stop hook. Passes the changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as
-# arguments to .lint.turno, run from the repo root. Exit 2 with its output on stderr when it fails; 0 with nothing
-# changed, when the lock is busy, when the tool is missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks
-# again even with stop_hook_active (Claude Code already limits consecutive blocks). Inert as in hooks/lib-reglas.sh.
+# arguments to .lint.turno (with ./ in front, so a name starting with - is not an option), run from the repo root.
+# Exit 2 with its output on stderr when it fails; 0 with nothing changed, when the lock is busy, when the tool is
+# missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks again even with stop_hook_active: it relies on
+# Claude Code's cap on consecutive Stop blocks (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP, 8 by default; not verified here).
+# Inert as in hooks/lib-reglas.sh.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input && kr_root && kr_config && [ -n "$KR_TURNO" ] || exit 0
 files=()
 while IFS= read -r -d '' f; do
-  [ -f "$KR_ROOT/$f" ] && files+=("$f")
+  [ -f "$KR_ROOT/$f" ] && files+=("./$f")
 done < <(git -C "$KR_ROOT" diff --name-only --no-renames -z HEAD -- 2>/dev/null
          git -C "$KR_ROOT" ls-files --others --exclude-standard -z 2>/dev/null)
 [ ${#files[@]} -gt 0 ] || exit 0
