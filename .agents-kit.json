@@ -1,0 +1,7 @@
+{
+  "changelog": true,
+  "verificar": {
+    "rapido": "claude plugin validate . && scripts/kit-skills-check.sh .",
+    "completo": "tests/run.sh && claude plugin validate ."
+  }
+}
