@@ -169,6 +169,9 @@ grep -q 'pasaron a `necesita-respuesta` o `bloqueado` en esta ejecución' "$run"
   || fail "kit-run summary trigger must be limited to this run"
 # no inline bash in the skill: under zsh it broke (bad substitution); the launcher is a script
 grep -q 'pids' "$run" && fail "kit-run keeps the inline reviewer launcher"
+grep -q 'tipo `info` y título' "$run" && grep -q 'tipo `accion` y título' "$run" \
+  || fail "kit-run must send info when nothing waits and accion when an issue waits"
+grep -qF 'kit-notify.sh" <wt> info' "$on" || fail "kit-on activation notice must be info"
 grep -q 'ntfy' "$on" || fail "kit-on must mention ntfy"
 grep -q 'scripts/kit-notify.sh' "$on" || fail "kit-on must send the activation notice"
 grep -qF 'cat ~/.agents-kit/ntfy-topic' "$on" || fail "kit-on must show the ntfy topic"

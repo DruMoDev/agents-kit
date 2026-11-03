@@ -84,9 +84,16 @@ Con `"changelog": false` en el marcador (el repo no lleva el changelog del kit, 
 
 ### Avisos
 
-Te llegan al móvil cuando un issue pasa a `necesita-respuesta` o `bloqueado` y al terminar cada `kit-run` (si fusionó algo o hay issues esperándote). Canal en `notify` de la configuración global `~/.agents-kit/config.json` (un repo no puede cambiarlo):
+Te llegan al móvil cuando un issue pasa a `necesita-respuesta` o `bloqueado` y al terminar cada `kit-run` (si fusionó algo o hay issues esperándote). El emoji del título dice si tienes que hacer algo:
 
-- `ntfy` (por defecto): instala la app ntfy y suscríbete al tema que te da `kit-on` (o `cat ~/.agents-kit/ntfy-topic`). El tema se genera una vez en tu máquina y sirve para todos tus repos; para usar otro, define `KIT_NTFY_TOPIC`. Un repo nunca elige el tema. El tema es el único secreto: los avisos pasan por ntfy.sh y quien lo conozca puede leerlos (llevan el nombre del repo y el título del issue).
+- ✋ **Te necesita** (prioridad alta en ntfy): un issue espera tu respuesta o está bloqueado, o `kit-run` terminó con issues esperándote. El aviso trae el título del issue, el principio de la pregunta o del motivo y cómo desbloquearlo; al tocarlo abre el comentario con la pregunta (o, al terminar `kit-run`, el issue que espera si es solo uno).
+- ✅ **Solo info** (prioridad baja, sin sonido): `kit-run` terminó y todo se fusionó, o el aviso de prueba de `kit-on`. Trae una línea por PR fusionada; al tocarlo abre el resumen del issue "📦 Changelog".
+
+Para desbloquear un issue no hace falta volver a la sesión que lo dejó: responde en el issue y quita la etiqueta; el siguiente `kit-run`, desde cualquier sesión, lo retoma con tu respuesta.
+
+Canal en `notify` de la configuración global `~/.agents-kit/config.json` (un repo no puede cambiarlo):
+
+- `ntfy` (por defecto): instala la app ntfy y suscríbete al tema que te da `kit-on` (o `cat ~/.agents-kit/ntfy-topic`). El tema se genera una vez en tu máquina y sirve para todos tus repos; para usar otro, define `KIT_NTFY_TOPIC`. Un repo nunca elige el tema. El tema es el único secreto: los avisos pasan por ntfy.sh y quien lo conozca puede leerlos (llevan el nombre del repo, el título del issue y el principio de la pregunta o del motivo).
 - `claude-push`: notificación de Claude Code al móvil. Solo funciona dentro de una sesión de Claude Code con Remote Control conectado; no en Codex, OpenCode ni `claude -p`.
 - `none`: sin avisos; todo queda en GitHub.
 
