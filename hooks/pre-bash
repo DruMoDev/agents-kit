@@ -39,7 +39,11 @@ if [ -z "$salta" ]; then
   # a read is never trusted when the command expands or redirects anything
   libra=1
   case "$cmd" in *'$('*|*'`'*|*'${'*|*'<'*|*'>'*) libra="" ;; esac
-  segs="${cmd//&&/$'\n'}"; segs="${segs//&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//;/$'\n'}"; segs="${segs//|/$'\n'}"
+  # a git commit -n anywhere in the command, also across segments (a safety net for the split)
+  [[ "$cmd" =~ $git_re ]] && [[ "$cmd" =~ $n_re ]] && salta=1
+  # redirections (2>&1, >&2, &>, <&) are not chain separators: blank them before splitting on a lone &
+  segs="$(printf '%s' "$cmd" | sed -E 's/[0-9]*>&[0-9-]*/ /g; s/&>/ /g; s/<&/ /g')"
+  segs="${segs//&&/$'\n'}"; segs="${segs//&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//;/$'\n'}"; segs="${segs//|/$'\n'}"
   while IFS= read -r seg; do
     [[ "$seg" =~ $git_re ]] && [[ "$seg" =~ $n_re ]] && { salta=1; break; }
     lc="$(printf '%s' "$seg" | tr 'A-Z' 'a-z')"
