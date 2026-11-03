@@ -241,6 +241,35 @@ pj '.scripts.b = "npm run nuevo" | .scripts.nuevo = "z"'
 run blindado "$r" origin/main
 grep -qxF "package.json (scripts.b)" <<<"$out" && grep -qxF "package.json (scripts.nuevo)" <<<"$out" || fail "cierre del árbol: $out"
 limpia
+# package.json anidados: la misma comparación, con su ruta delante; fuera de node_modules
+mkdir -p "$r/web"
+echo '{"scripts": {"lint": "eslint ."}, "devDependencies": {"eslint": "9"}}' > "$r/web/package.json"
+run blindado "$r" origin/main
+grep -qxF "web/package.json (scripts.lint)" <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] || fail "package.json anidado nuevo: $out"
+mkdir -p "$r/app"; cp "$r/web/package.json" "$r/app/package.json"
+push_main anidado
+pjw() { jq "$1" "$r/web/package.json" > "$r/p" && mv "$r/p" "$r/web/package.json" || fail "pjw $1"; }
+pjw '.scripts.lint = "true"'
+run blindado "$r" origin/main
+grep -qxF "web/package.json (scripts.lint)" <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] || fail "scripts.lint anidado: $out"
+h1="$(sed -n 's/^hash: //p' <<<"$out")"; [ ${#h1} -eq 64 ] || fail "hash del anidado: $out"
+run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" = "$h1" ] || fail "hash del anidado no determinista: $out"
+git -C "$r" checkout -q -- web/package.json
+jq '.scripts.lint = "true"' "$r/app/package.json" > "$r/p" && mv "$r/p" "$r/app/package.json"
+run blindado "$r" origin/main; h2="$(sed -n 's/^hash: //p' <<<"$out")"
+grep -qxF "app/package.json (scripts.lint)" <<<"$out" && [ -n "$h2" ] && [ "$h2" != "$h1" ] || fail "la ruta debe entrar en el hash: $out"
+limpia
+pjw '.dependencies.left = "1"'
+run blindado "$r" origin/main; [ "$(last_line "$out")" = "FIN: 0" ] || fail "dependencia normal en el anidado no cuenta: $out"
+limpia
+rm "$r/web/package.json"
+run blindado "$r" origin/main
+grep -qxF "web/package.json (scripts.lint)" <<<"$out" && grep -qxF "web/package.json (quitada eslint)" <<<"$out" \
+  && [ "$(last_line "$out")" = "FIN: 2" ] || fail "package.json anidado borrado: $out"
+limpia
+mkdir -p "$r/node_modules/x"; echo '{"scripts": {"lint": "true"}}' > "$r/node_modules/x/package.json"
+run blindado "$r" origin/main; [ "$(last_line "$out")" = "FIN: 0" ] || fail "node_modules no cuenta: $out"
+limpia
 
 # --- globs: * cruza /, prefijos y rutas con espacios
 mkdir -p "$r/config" "$r/.github/workflows"

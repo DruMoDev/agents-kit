@@ -25,7 +25,10 @@
 #     in any directory goes as the pair x and */x (eslint.config.*, */eslint.config.*; .npmrc, */.npmrc), never *x,
 #     which would also match any name ending in it (src/myknip.ts for *knip.*, foo.eslintignore for *.eslintignore).
 #     A change that only shrinks eslint-suppressions.json or .agents-kit/tsc-base.json does not count. Lint
-#     dependencies are those whose name contains eslint, typescript, knip or dependency-cruiser. package.json lines:
+#     dependencies are those whose name contains eslint, typescript, knip or dependency-cruiser. Every package.json
+#     of the repo outside node_modules (the root one and nested ones, versioned or new; a deleted or new file compares
+#     against {}) gets the same comparison, and its lines start with its path: "package.json (...)" for the root one,
+#     "web/package.json (...)" for a nested one. package.json lines:
 #       "package.json (scripts.<x>)": a script of the shielded set changed. The set is the transitive closure, in the
 #         base and in the tree (then joined), of the lint*/typecheck* scripts: each name brings its npm lifecycle
 #         hooks pre<x>/post<x>, and every npm run <x>, pnpm [run] <x>, yarn [run] <x> or bun run <x> in the body of
@@ -37,7 +40,8 @@
 #       "package.json (<clave>)": any change in eslintConfig, eslintIgnore, knip, pnpm (the whole object:
 #         overrides, patchedDependencies, packageExtensions...), the top-level patchedDependencies or packageManager.
 #     Then "hash: <sha256>" of the diff of those files (fixed options, without the user's git config) plus the
-#     normalized package.json fragment, and FIN: <n>; FIN: 0 without hash if none.
+#     normalized fragment of each package.json that counts ("<ruta>TAB<json>", in path order), and FIN: <n>; FIN: 0
+#     without hash if none.
 #   abrir/cerrar: create (with <session_id>) or delete <git-common-dir>/agents-kit/reglas-abiertas, which lets the
 #     pre-edit hook pass edits to shielded files. FIN: abierto / FIN: cerrado.
 # Exit: 0 ok, 1 usage or rejected, 2 environment error.
@@ -64,6 +68,36 @@ SUP=eslint-suppressions.json
 TSB=.agents-kit/tsc-base.json
 FLAGS="strict noUncheckedIndexedAccess exactOptionalPropertyTypes verbatimModuleSyntax noImplicitOverride noFallthroughCasesInSwitch"
 LINT_DEP='eslint|typescript|knip|dependency-cruiser'
+# PKG_JQ (jq -n, $b/$h = package.json of the base/tree, $re = LINT_DEP): the package.json changes that count, as
+# {scripts, quitadas, cambiadas, overrides, claves}; each map part is {<clave>: {antes, ahora}} with only what differs
+# (a missing value is null). Empty output when nothing counts.
+PKG_JQ='
+  def diffmap($x; $y): [($x + $y) | keys[] | select($x[.] != $y[.]) | {key: ., value: {antes: $x[.], ahora: $y[.]}}]
+    | from_entries;
+  def sobj: .scripts | if type == "object" then . else {} end;
+  def hooks: map(., "pre" + ., "post" + .) | unique;
+  # Names (without their hooks) reached from the lint*/typecheck* scripts; it only grows with names found in
+  # script bodies, a finite set, so it always ends (also with cycles).
+  def reach($s): (hooks | map($s[.] | strings | scan("(?:^|[\\s;&|(])(?:npm\\s+run(?:-script)?|pnpm(?:\\s+run)?|yarn(?:\\s+run)?|bun\\s+run)\\s+(?:-\\S+\\s+)*([^\\s;&|()]+)")[0])) as $c
+    | ((. + $c) | unique) as $n | if $n == . then . else ($n | reach($s)) end;
+  def closure: sobj as $s | [$s | keys[] | select(test("^(lint|typecheck)"))] | reach($s) | hooks;
+  def deps: [.dependencies, .devDependencies, .peerDependencies, .optionalDependencies | objects | to_entries[]]
+    | group_by(.key) | map({key: .[0].key, value: map(.value)}) | from_entries
+    | with_entries(select(.key | test($re)));
+  def ovr: [{s: "overrides", v: .overrides}, {s: "resolutions", v: .resolutions}]
+    | map(.s as $s | .v | objects | paths(scalars) as $p | {key: ($p | map(tostring) | join(">")), value: {($s): getpath($p)}})
+    | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries
+    | with_entries(select(.key | test($re)));
+  (($b | closure) + ($h | closure) | unique) as $ks |
+  ($b | sobj) as $sb | ($h | sobj) as $sh |
+  ($b | deps) as $db | ($h | deps) as $dh |
+  {scripts: diffmap($sb | with_entries(select(.key | IN($ks[]))); $sh | with_entries(select(.key | IN($ks[])))),
+   quitadas: [$db | keys[] | select($dh[.] == null)],
+   cambiadas: diffmap($db | with_entries(select(.key | IN($dh | keys[]))); $dh | with_entries(select(.key | IN($db | keys[])))),
+   overrides: diffmap($b | ovr; $h | ovr),
+   claves: diffmap($b | {eslintConfig, eslintIgnore, knip, pnpm, patchedDependencies, packageManager};
+    $h | {eslintConfig, eslintIgnore, knip, pnpm, patchedDependencies, packageManager})}
+  | if [.[] | length] | add == 0 then empty else . end'
 
 # json_tree <fichero>: print the file of the tree as a JSON object ({} if missing); return 2 if it is not one.
 json_tree() {
@@ -184,46 +218,22 @@ case "$sub" in
         nuevos+=("$f")
       fi
     done < "$lst"
+    # Each package.json changed (or deleted, or new) outside node_modules, in path order; its fragment line is
+    # "<ruta>TAB<json>" so the path is in the hash.
     frag=""
-    if ! git --literal-pathspecs diff --quiet "$mb" -- package.json 2>/dev/null \
-        || [ -n "$(git --literal-pathspecs ls-files --others --exclude-standard -- package.json)" ]; then
-      pb="$(json_base package.json)" || exit 2; ph="$(json_tree package.json)" || exit 2
-      # Each part is {<clave>: {antes, ahora}} with only what differs; a missing value is null.
-      frag="$(jq -cnS --argjson b "$pb" --argjson h "$ph" --arg re "$LINT_DEP" '
-        def diffmap($x; $y): [($x + $y) | keys[] | select($x[.] != $y[.]) | {key: ., value: {antes: $x[.], ahora: $y[.]}}]
-          | from_entries;
-        def sobj: .scripts | if type == "object" then . else {} end;
-        def hooks: map(., "pre" + ., "post" + .) | unique;
-        # Names (without their hooks) reached from the lint*/typecheck* scripts; it only grows with names found in
-        # script bodies, a finite set, so it always ends (also with cycles).
-        def reach($s): (hooks | map($s[.] | strings | scan("(?:^|[\\s;&|(])(?:npm\\s+run(?:-script)?|pnpm(?:\\s+run)?|yarn(?:\\s+run)?|bun\\s+run)\\s+(?:-\\S+\\s+)*([^\\s;&|()]+)")[0])) as $c
-          | ((. + $c) | unique) as $n | if $n == . then . else ($n | reach($s)) end;
-        def closure: sobj as $s | [$s | keys[] | select(test("^(lint|typecheck)"))] | reach($s) | hooks;
-        def deps: [.dependencies, .devDependencies, .peerDependencies, .optionalDependencies | objects | to_entries[]]
-          | group_by(.key) | map({key: .[0].key, value: map(.value)}) | from_entries
-          | with_entries(select(.key | test($re)));
-        def ovr: [{s: "overrides", v: .overrides}, {s: "resolutions", v: .resolutions}]
-          | map(.s as $s | .v | objects | paths(scalars) as $p | {key: ($p | map(tostring) | join(">")), value: {($s): getpath($p)}})
-          | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries
-          | with_entries(select(.key | test($re)));
-        (($b | closure) + ($h | closure) | unique) as $ks |
-        ($b | sobj) as $sb | ($h | sobj) as $sh |
-        ($b | deps) as $db | ($h | deps) as $dh |
-        {scripts: diffmap($sb | with_entries(select(.key | IN($ks[]))); $sh | with_entries(select(.key | IN($ks[])))),
-         quitadas: [$db | keys[] | select($dh[.] == null)],
-         cambiadas: diffmap($db | with_entries(select(.key | IN($dh | keys[]))); $dh | with_entries(select(.key | IN($db | keys[])))),
-         overrides: diffmap($b | ovr; $h | ovr),
-         claves: diffmap($b | {eslintConfig, eslintIgnore, knip, pnpm, patchedDependencies, packageManager};
-          $h | {eslintConfig, eslintIgnore, knip, pnpm, patchedDependencies, packageManager})}
-        | if [.[] | length] | add == 0 then empty else . end')" \
-        || { echo "error: no pude comparar package.json" >&2; exit 2; }
-      if [ -n "$frag" ]; then
-        jq -r '(.scripts | keys[] | "package.json (scripts.\(.))"), (.quitadas[] | "package.json (quitada \(.))"),
-          (.cambiadas | keys[] | "package.json (cambiada \(.))"), (.overrides | keys[] | "package.json (overrides \(.))"),
-          (.claves | keys[] | "package.json (\(.))")' <<<"$frag"
-        total=$((total + $(jq '[.[] | length] | add' <<<"$frag")))
-      fi
-    fi
+    while IFS= read -r -d '' f; do
+      case "$f" in package.json|*/package.json) ;; *) continue ;; esac
+      case "/$f" in */node_modules/*) continue ;; esac
+      pb="$(json_base "$f")" || exit 2; ph="$(json_tree "$f")" || exit 2
+      pf="$(jq -cnS --argjson b "$pb" --argjson h "$ph" --arg re "$LINT_DEP" "$PKG_JQ")" \
+        || { echo "error: no pude comparar $f" >&2; exit 2; }
+      [ -n "$pf" ] || continue
+      jq -r --arg p "$f" '(.scripts | keys[] | "\($p) (scripts.\(.))"), (.quitadas[] | "\($p) (quitada \(.))"),
+        (.cambiadas | keys[] | "\($p) (cambiada \(.))"), (.overrides | keys[] | "\($p) (overrides \(.))"),
+        (.claves | keys[] | "\($p) (\(.))")' <<<"$pf"
+      total=$((total + $(jq '[.[] | length] | add' <<<"$pf")))
+      frag="$frag$f"$'\t'"$pf"$'\n'
+    done < <(LC_ALL=C sort -zu "$lst")
     if [ $total -gt 0 ]; then
       # Fixed diff options, without global or system git config, so the hash does not depend on the user's setup.
       # -O/dev/null overrides a repo diff.orderFile (an empty diff.orderFile= makes git fail).
