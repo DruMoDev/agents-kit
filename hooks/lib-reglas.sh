@@ -2,8 +2,8 @@
 # Sourced by hooks/pre-edit, hooks/post-edit and hooks/stop-check (Claude Code PreToolUse, PostToolUse and Stop).
 # They read the marker of the session's worktree (speed; the guarantee is kit-pr.sh fusionar) and stay inert (exit 0,
 # no output) without .agents-kit.json, with "reglas": false, without "lint", or when the input has no usable path.
-# Cost before the lint: one jq over the input, one git, one jq over the marker (pre-edit: one more over the current
-# file for a Write that adds disabling text).
+# Cost before the lint: one jq over the input, one git, one jq over the marker (pre-edit: one more over the input and
+# the current file, for code files).
 # Env: KIT_LINT_TIMEOUT (s, default 10, post-edit), KIT_TURNO_TIMEOUT (s, default 120, stop-check).
 
 KR_PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,27 +14,47 @@ KR_PROHIBIDO='eslint-disable|@ts-ignore|@ts-nocheck|\bas\s+any(?![\w$])'
 # Code extensions always checked for that text, besides the keys of .lint.fichero.
 KR_CODIGO=',ts,tsx,js,jsx,mjs,cjs,mts,cts,astro,vue,svelte,'
 
-# kr_input: parse the hook input on stdin into KR_CWD (physical), KR_FILE (tool_input.file_path or notebook_path),
-# KR_SID (session_id), KR_NUEVO and KR_VIEJO (matches of KR_PROHIBIDO in the new text and in the replaced text:
-# new_string/old_string, summed over edits[]; for a Write, KR_VIEJO is -1 and the current file is the old text).
-# Return 1 if unusable.
+# kr_input: parse the hook input on stdin (kept in KR_JSON) into KR_CWD (physical), KR_FILE (tool_input.file_path or
+# notebook_path) and KR_SID (session_id). Return 1 if unusable.
 kr_input() {
   local cwd ok
   [ ! -t 0 ] || return 1
-  KR_CWD=""; KR_FILE=""; KR_SID=""; KR_NUEVO=0; KR_VIEJO=0; ok=""
-  { IFS= read -r -d '' cwd; IFS= read -r -d '' KR_FILE; IFS= read -r -d '' KR_SID; IFS= read -r -d '' KR_NUEVO
-    IFS= read -r -d '' KR_VIEJO; IFS= read -r -d '' ok; } < <(jq -j --arg re "$KR_PROHIBIDO" '
+  KR_JSON="$(cat)"; KR_CWD=""; KR_FILE=""; KR_SID=""; ok=""
+  { IFS= read -r -d '' cwd; IFS= read -r -d '' KR_FILE; IFS= read -r -d '' KR_SID; IFS= read -r -d '' ok; } < <(
+    printf '%s' "$KR_JSON" | jq -j '
       def s: if type == "string" then . else "" end;
-      def n: map(strings | [match($re; "g")] | length) | add // 0;
       (.tool_input | if type == "object" then . else {} end) as $i |
-      ($i.edits | if type == "array" then map(objects) else [] end) as $e |
       (.cwd | s), "\u0000", ($i.file_path // $i.notebook_path | s), "\u0000", (.session_id | s), "\u0000",
-      if ($i.content | type) == "string" then ([$i.content] | n | tostring), "\u0000", "-1"
-      else ([$i.new_string, $i.new_source] + ($e | map(.new_string)) | n | tostring), "\u0000",
-        ([$i.old_string] + ($e | map(.old_string)) | n | tostring) end,
-      "\u0000", "ok", "\u0000"' 2>/dev/null)
+      "ok", "\u0000"' 2>/dev/null)
   [ "$ok" = ok ] && [ -n "$cwd" ] || return 1
   KR_CWD="$(cd "$cwd" 2>/dev/null && pwd -P)" && [ -n "$KR_CWD" ]
+}
+
+# kr_ext: KR_EXT, the extension of KR_REL in lower case (empty without one).
+kr_ext() {
+  local base="${KR_REL##*/}"
+  KR_EXT=""
+  case "$base" in ?*.*) KR_EXT="${base##*.}" ;; esac
+  case "$KR_EXT" in *[A-Z]*) KR_EXT="$(printf '%s' "$KR_EXT" | tr 'A-Z' 'a-z')" ;; esac
+}
+
+# kr_sube_prohibido: return 0 when the edit in KR_JSON raises the number of KR_PROHIBIDO matches in the file
+# KR_ROOT/KR_REL. The file after the edit is computed as the tool would: Write = content; Edit and each edit of a
+# MultiEdit, in order, replace the first literal occurrence of old_string (all of them with replace_all: true). A file
+# that does not exist counts as empty. An input with another shape (NotebookEdit) changes nothing.
+kr_sube_prohibido() {
+  local f="$KR_ROOT/$KR_REL"
+  [ -f "$f" ] || f=/dev/null
+  [ "$(printf '%s' "$KR_JSON" | jq -r --arg re "$KR_PROHIBIDO" --rawfile cur "$f" '
+    def cnt: [match($re; "g")] | length;
+    def rep($o; $n; $all): if $o == "" then . else split($o) as $p
+      | if $all then $p | join($n) elif ($p | length) < 2 then . else $p[0] + $n + ($p[1:] | join($o)) end end;
+    (.tool_input | if type == "object" then . else {} end) as $i |
+    (if ($i.content | type) == "string" then $i.content
+     else reduce ((if ($i.edits | type) == "array" then $i.edits[] else $i end) | objects
+         | select((.old_string | type) == "string" and (.new_string | type) == "string")) as $e
+       ($cur; rep($e.old_string; $e.new_string; $e.replace_all == true)) end) as $despues |
+    if ($despues | cnt) > ($cur | cnt) then "sube" else "no" end' 2>/dev/null)" = sube ]
 }
 
 # kr_root: KR_ROOT and KR_COMMON (git common dir, absolute) of KR_CWD. Return 1 outside git or without the marker.
@@ -78,7 +98,8 @@ kr_codigo() {
   [ -n "$KR_CMD" ] || case "$KR_CODIGO" in *",$1,"*) [ -n "$1" ] ;; *) false ;; esac
 }
 
-# kr_config [<ext>]: KR_CMD (the .lint.fichero command whose comma-separated keys include <ext>, or empty), KR_TURNO
+# kr_config [<ext>]: KR_CMD (the .lint.fichero command whose comma-separated keys, without case, include <ext>, which
+# is lower case (kr_ext); or empty), KR_TURNO
 # (.lint.turno) and KR_GLOBS (.blindado, one per line: marker < global < plugin, arrays replace as in kit_config).
 # Return 1 when inert: "reglas": false, no "lint" object, or a config that is not valid JSON.
 kr_config() {
@@ -90,7 +111,7 @@ kr_config() {
       if .reglas != false and (.lint | type) == "object" then
         "1", "\u0000",
         ([.lint.fichero | objects | to_entries[]
-          | select($ext != "" and (.key | split(",") | map(gsub("^\\s+|\\s+$"; "") | ltrimstr(".")) | index([$ext])))
+          | select($ext != "" and (.key | ascii_downcase | split(",") | map(gsub("^\\s+|\\s+$"; "") | ltrimstr(".")) | index([$ext])))
           | .value | strings][0] // ""), "\u0000",
         (.lint.turno | s), "\u0000",
         ((.blindado // ($g[0] | objects | .blindado) // $t[0].blindado) | if type == "array" then map(strings)

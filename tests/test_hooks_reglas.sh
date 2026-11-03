@@ -76,15 +76,37 @@ wjson() { inp --arg c "$r" --arg t "$1" '{session_id: "s1", cwd: $c, tool_input:
 hook pre-edit "$(wjson 'let a = b as any; // otro cambio')"; [ $rc -eq 0 ] || fail "Write con as any heredado no bloquea: $rc $out"
 hook pre-edit "$(wjson 'let a = b as any; let c = d as any;')"; [ $rc -eq 2 ] || fail "Write que añade un as any bloquea: $rc"
 ejson() { inp --arg c "$r" --arg o "$1" --arg n "$2" '{session_id: "s1", cwd: $c,
-  tool_input: {file_path: "src/a.ts", old_string: $o, new_string: $n}}'; }
+  tool_input: {file_path: "src/e.ts", old_string: $o, new_string: $n}}'; }
+printf 'x as any; y\n' > "$r/src/e.ts"
 hook pre-edit "$(ejson 'x as any; y' 'x as any; z')"; [ $rc -eq 0 ] || fail "Edit con as any heredado no bloquea: $rc $out"
 hook pre-edit "$(ejson 'x as any; y' 'x as any; y as any')"; [ $rc -eq 2 ] || fail "Edit que añade un as any bloquea: $rc"
-hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/a.ts",
+printf '// @ts-ignore\na\nb\n' > "$r/src/m.ts"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/m.ts",
   edits: [{old_string: "// @ts-ignore\na", new_string: "a"}, {old_string: "b", new_string: "// @ts-ignore\nb"}]}}')"
 [ $rc -eq 0 ] || fail "MultiEdit que mueve un @ts-ignore no bloquea: $rc $out"
+# a fragment that matches inside the file text (as any inside as anything) must not hide a real addition
+printf 'let v = w as anything;\n' > "$r/src/f.ts"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
+  old_string: "as any", new_string: "as any thing"}}')"
+[ $rc -eq 2 ] || fail "un as any real creado al sustituir dentro de as anything bloquea: $rc $out"
+# only the second Z makes a real as any: the first replacement alone does not, replace_all does
+printf 'Z\nlet q = r as Z;\n' > "$r/src/g.ts"
+gjson() { inp --arg c "$r" --argjson a "$1" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/g.ts",
+  old_string: "Z", new_string: "any ", replace_all: $a}}'; }
+hook pre-edit "$(gjson false)"; [ $rc -eq 0 ] || fail "sin replace_all solo cambia la primera Z: $rc $out"
+hook pre-edit "$(gjson true)"; [ $rc -eq 2 ] || fail "replace_all que crea as any bloquea: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
+  old_string: "no está", new_string: "x as any"}}')"
+[ $rc -eq 0 ] || fail "un old_string que no está no cambia el fichero: $rc $out"
+printf 'x\n' > "$r/src/MAY.TS"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/MAY.TS",
+  old_string: "x", new_string: "x as any"}}')"
+[ $rc -eq 2 ] || fail "un .TS con as any añadido bloquea: $rc $out"
 hook pre-edit "$(edit_json docs/regla.md 'No uses eslint-disable ni as any.')"
 [ $rc -eq 0 ] && [ -z "$out" ] || fail "un .md que explica la regla no bloquea: $rc $out"
+echo x > "$r/src/c.vue"
 hook pre-edit "$(edit_json src/c.vue 'x as any')"; [ $rc -eq 2 ] || fail ".vue es código aunque no esté en .lint.fichero: $rc"
+printf 'a\nb\n' > "$r/src/b.ts"
 hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/b.ts",
   edits: [{old_string: "a", new_string: "ok"}, {old_string: "b", new_string: "// @ts-ignore"}]}}')"
 [ $rc -eq 2 ] || fail "MultiEdit debe bloquear: $rc $out"
@@ -112,8 +134,9 @@ hook pre-edit "$(edit_json eslint.config.mjs 'export default []' sesion-ok)"
 [ $rc -eq 0 ] && [ -z "$out" ] || fail "con abrir para la sesión debe pasar: $rc $out"
 hook pre-edit "$(edit_json eslint.config.mjs 'export default []' otra-sesion)"
 [ $rc -eq 2 ] || fail "con abrir para otra sesión debe bloquear: $rc $out"
-hook pre-edit "$(edit_json eslint.config.mjs '/* eslint-disable */' sesion-ok)"
+echo x > "$r/eslint.config.mjs"; hook pre-edit "$(edit_json eslint.config.mjs '/* eslint-disable */' sesion-ok)"
 [ $rc -eq 2 ] || fail "abrir no permite eslint-disable: $rc $out"
+rm "$r/eslint.config.mjs"
 bash "$REPO_ROOT/scripts/kit-reglas.sh" cerrar "$r" >/dev/null || fail "cerrar"
 marker "$(jq -c '.blindado = ["reglas/"]' <<<"$LINT")"
 hook pre-edit "$(edit_json eslint.config.mjs 'x')"; [ $rc -eq 0 ] || fail "el blindado del marcador manda: $rc $out"

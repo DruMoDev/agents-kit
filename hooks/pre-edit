@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse hook (Edit|Write|MultiEdit|NotebookEdit). Exit 2 with the remedy on stderr when the edit
 #   - raises the number of eslint-disable, @ts-ignore, @ts-nocheck or `as any` (KR_PROHIBIDO) in a code file
-#     (extension in the keys of .lint.fichero or KR_CODIGO): new_string against old_string, summed over the edits of a
-#     MultiEdit; for a Write, content against the current file. Inherited occurrences kept as they are do not count; or
+#     (extension, without case, in the keys of .lint.fichero or KR_CODIGO): the whole file before and after the edit
+#     (kr_sube_prohibido), so inherited occurrences kept as they are do not count; or
 #   - touches a shielded file (.blindado) without <git-common-dir>/agents-kit/reglas-abiertas holding this session_id
 #     (kit-reglas.sh abrir). package.json is not checked here: kit-pr.sh fusionar does it.
 # Paths and globs are compared without case on macOS; a symlink is checked by its target, and a target outside the
@@ -10,19 +10,12 @@
 # the input's cwd.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input && [ -n "$KR_FILE" ] && kr_root && kr_resolve || exit 0
-base="${KR_REL##*/}"; ext=""
-case "$base" in ?*.*) ext="${base##*.}" ;; esac
-kr_config "$ext" || exit 0
+kr_ext
+kr_config "$KR_EXT" || exit 0
 
-if [ "$KR_NUEVO" -gt 0 ] && kr_codigo "$ext"; then
-  if [ "$KR_VIEJO" -lt 0 ]; then
-    KR_VIEJO=0
-    [ ! -f "$KR_ROOT/$KR_REL" ] || KR_VIEJO="$(jq -Rrs --arg re "$KR_PROHIBIDO" '[match($re; "g")] | length' \
-      "$KR_ROOT/$KR_REL" 2>/dev/null)" || KR_VIEJO=0
-  fi
-  [ "$KR_NUEVO" -le "${KR_VIEJO:-0}" ] || {
-    echo "No desactives reglas ni tipos: arregla la causa. Si la regla está mal, propón el cambio (kit-reglas)." >&2
-    exit 2; }
+if kr_codigo "$KR_EXT" && kr_sube_prohibido; then
+  echo "No desactives reglas ni tipos: arregla la causa. Si la regla está mal, propón el cambio (kit-reglas)." >&2
+  exit 2
 fi
 source "$KR_PLUGIN/scripts/lib/blindado.sh"
 nocase=""
