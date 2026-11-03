@@ -6,14 +6,16 @@
 //   generar:   writes .agents-kit/tsc-base.json ({"<ruta>": <nº de errores>}, keys sorted); FIN: <n> ficheros con deuda.
 //   comprobar: exit 1 if a file has more errors than its baseline, a file without baseline has errors, or a file of
 //     --cambiados has any error (even if it is in the baseline). Prints every error that counts; FIN: ok otherwise.
-//     Without tsc-base.json the baseline is empty: no errors allowed.
-// Exit: 0 ok, 1 usage or rejected, 2 environment error (tsc does not start, or fails with no errors in its output).
+//     A global error line (`error TS5083: ...`, no file) always fails. Without tsc-base.json the baseline is empty: no errors allowed.
+// Exit: 0 ok, 1 usage or rejected, 2 environment error (tsc does not start, or exits non-zero with no recognizable
+// error in its output; generar also exits 2 if tsc gives global errors).
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const BASE = path.join(".agents-kit", "tsc-base.json");
 const RE = /^(.+?)\(\d+,\d+\): error TS\d+/;
+const RE_GLOBAL = /^error TS\d+:/;
 
 const norm = (p) => {
   let r = path.normalize(p);
@@ -42,14 +44,16 @@ function correrTsc() {
   if (r.error) salir(2, `No se pudo lanzar tsc (${partes.join(" ")}): ${r.error.message}`);
   const lineas = `${r.stdout || ""}\n${r.stderr || ""}`.split(/\r?\n/);
   const errores = [];
+  const globales = [];
   for (const linea of lineas) {
     const m = RE.exec(linea);
     if (m) errores.push({ fichero: norm(m[1]), linea });
+    else if (RE_GLOBAL.test(linea)) globales.push(linea);
   }
-  if (errores.length === 0 && r.status !== 0 && r.status !== 2) {
-    salir(2, `tsc terminó con código ${r.status} sin errores reconocibles:\n${(r.stdout || "") + (r.stderr || "")}`);
+  if (errores.length === 0 && globales.length === 0 && r.status !== 0) {
+    salir(2, `tsc terminó con código ${r.status} sin errores reconocibles en su salida:\n${(r.stdout || "") + (r.stderr || "")}`);
   }
-  return errores;
+  return { errores, globales };
 }
 
 const cuentas = (errores) => {
@@ -61,7 +65,9 @@ const cuentas = (errores) => {
 const [cmd, ...args] = process.argv.slice(2);
 
 if (cmd === "generar") {
-  const c = cuentas(correrTsc());
+  const { errores, globales } = correrTsc();
+  if (globales.length) salir(2, `tsc da errores globales, sin fichero; arréglalos antes de generar la línea base:\n${globales.join("\n")}`);
+  const c = cuentas(errores);
   const ordenado = Object.fromEntries(Object.keys(c).sort().map((k) => [k, c[k]]));
   mkdirSync(path.dirname(BASE), { recursive: true });
   writeFileSync(BASE, JSON.stringify(ordenado, null, 2) + "\n");
@@ -80,7 +86,7 @@ if (cmd === "generar") {
       salir(2, `${BASE} no es JSON válido: ${e.message}`);
     }
   }
-  const errores = correrTsc();
+  const { errores, globales } = correrTsc();
   const c = cuentas(errores);
   const malos = new Set();
   const motivo = {};
@@ -96,7 +102,8 @@ if (cmd === "generar") {
         : `${n} errores de tipos, la línea base permite ${permitido}`;
     }
   }
-  if (malos.size) {
+  if (globales.length) console.error(`Errores globales de tsc (sin fichero, nunca permitidos):\n${globales.join("\n")}`);
+  if (malos.size || globales.length) {
     for (const f of [...malos].sort()) {
       console.error(`${f}: ${motivo[f]}`);
       for (const e of errores) if (e.fichero === f) console.error(`  ${e.linea}`);

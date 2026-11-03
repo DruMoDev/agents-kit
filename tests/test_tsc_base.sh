@@ -7,6 +7,7 @@ d="$(mktemp -d)"
 tsc_out="$d/tsc-out.txt"
 cat > "$d/fake-tsc" <<EOS
 #!/usr/bin/env bash
+printf '%s\n' "\$*" > "$d/args"
 cat "$tsc_out"
 [ -s "$tsc_out" ] && exit 2
 exit 0
@@ -63,6 +64,25 @@ run comprobar; [ "$rc" = 0 ] || fail "sin base y sin errores rc=$rc: $out"
 printf '#!/usr/bin/env bash\necho "boom"\nexit 1\n' > "$d/bad-tsc"; chmod +x "$d/bad-tsc"
 KIT_TSC="$d/bad-tsc" run comprobar; [ "$rc" = 2 ] || fail "tsc roto deberia dar 2 (rc=$rc)"
 KIT_TSC="$d/no-existe" run comprobar; [ "$rc" = 2 ] || fail "tsc inexistente deberia dar 2 (rc=$rc)"
+# KIT_TSC con argumentos: los recibe antes de las banderas fijas
+: > "$tsc_out"
+KIT_TSC="$d/fake-tsc --foo" run comprobar; [ "$rc" = 0 ] || fail "KIT_TSC con argumentos rc=$rc: $out"
+[ "$(cat "$d/args")" = "--foo --noEmit --incremental --pretty false" ] || fail "args de tsc: $(cat "$d/args")"
+
+# exit 2 de tsc sin ninguna linea reconocible: entorno, no "sin errores"
+printf '%s\n' 'error rarisimo' > "$tsc_out"
+run comprobar; [ "$rc" = 2 ] || fail "salida irreconocible (comprobar) deberia dar 2 (rc=$rc)"
+grep -q 'error rarisimo' <<<"$out" || fail "no muestra la salida de tsc: $out"
+run generar; [ "$rc" = 2 ] || fail "salida irreconocible (generar) deberia dar 2 (rc=$rc)"
+
+# error global sin fichero junto a errores con fichero: comprobar 1, generar 2
+printf '%s\n' "error TS5083: Cannot read file 'tsconfig.json'." 'src/a.ts(1,1): error TS1: x' > "$tsc_out"
+run comprobar; [ "$rc" = 1 ] || fail "error global (comprobar) deberia dar 1 (rc=$rc)"
+grep -q 'TS5083' <<<"$out" || fail "no muestra el error global: $out"
+run generar; [ "$rc" = 2 ] || fail "error global (generar) deberia dar 2 (rc=$rc)"
+printf '%s\n' "error TS2688: Cannot find type definition file for 'x'." > "$tsc_out"
+run comprobar; [ "$rc" = 1 ] || fail "solo error global deberia dar 1 (rc=$rc)"
+
 run foo; [ "$rc" = 1 ] || fail "subcomando desconocido deberia dar 1 (rc=$rc)"
 
 echo ok
