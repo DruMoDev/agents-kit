@@ -16,7 +16,9 @@
   "autoMerge": true,
   "maxReviewRounds": 10,
   "blindado": [
-    "eslint.config.*", "*tsconfig*.json", "knip.*", ".dependency-cruiser.*", "sgconfig.yml", "eslint-suppressions.json",
+    "eslint.config.*", "*/eslint.config.*", "*.eslintrc*", "*.eslintignore", "*tsconfig*.json", "*jsconfig*.json",
+    "knip.*", "*/knip.*", "*.dependency-cruiser.*", "sgconfig.yml", "eslint-suppressions.json",
+    ".npmrc", "pnpm-workspace.yaml", ".yarnrc.yml",
     ".agents-kit/", ".agents-kit.json", "lefthook.yml", ".husky/", ".github/workflows/", "reglas/"
   ]
 }

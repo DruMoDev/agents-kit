@@ -180,6 +180,19 @@ for x in "package.json (scripts.check)" "package.json (scripts.fmt)" "package.js
 done
 [ "$(last_line "$out")" = "FIN: 3" ] || fail "FIN scripts llamados: $out"
 limpia
+pj '.scripts.prelint = "x" | .scripts.postcheck = "y" | .scripts["prelint:base"] = "z" | .scripts.preotro = "w"'
+run blindado "$r" origin/main
+for x in "package.json (scripts.prelint)" "package.json (scripts.postcheck)" "package.json (scripts.prelint:base)"; do
+  grep -qxF "$x" <<<"$out" || fail "pre/post sin '$x': $out"
+done
+[ "$(last_line "$out")" = "FIN: 3" ] || fail "preotro no cuenta: $out"
+h1="$(sed -n 's/^hash: //p' <<<"$out")"
+pj '.scripts.prelint = "x2"'
+run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" != "$h1" ] || fail "pre/post deben entrar en el hash"
+limpia
+pj '.dependencies.eslint = .devDependencies.eslint | del(.devDependencies.eslint)'
+run blindado "$r" origin/main; [ "$(last_line "$out")" = "FIN: 0" ] || fail "mover eslint de sección no cuenta: $out"
+limpia
 pj '.overrides = {"foo": {"eslint": "8"}, "react": "19"} | .resolutions = {"**/typescript": "5"} | .pnpm.overrides = {"knip@<5": "5"}'
 run blindado "$r" origin/main
 for x in "package.json (overrides foo>eslint)" "package.json (overrides **/typescript)" "package.json (overrides knip@<5)"; do
@@ -202,6 +215,14 @@ echo 'on: pull_request' > "$r/.github/workflows/c i.yml"
 run blindado "$r" origin/main
 grep -qxF ".github/workflows/c i.yml" <<<"$out" && grep -q '^hash: ' <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] \
   || fail "workflow versionado con espacios en el hash: $out"
+limpia
+
+mkdir -p "$r/packages/web" "$r/packages/a" "$r/src"
+echo 'export default [];' > "$r/packages/web/eslint.config.mjs"; echo '{}' > "$r/packages/a/knip.json"
+echo 'registry=x' > "$r/.npmrc"; echo x > "$r/src/myknip.ts"; echo x > "$r/src/noteslint.config.js"
+run blindado "$r" origin/main
+for x in "packages/web/eslint.config.mjs" "packages/a/knip.json" ".npmrc"; do grep -qxF "$x" <<<"$out" || fail "glob sin '$x': $out"; done
+[ "$(last_line "$out")" = "FIN: 3" ] || fail "myknip.ts y noteslint.config.js no son blindados: $out"
 limpia
 
 # --- abrir y cerrar

@@ -20,11 +20,14 @@
 #     file adds a key or raises a count against the merge base ("la deuda crece: <ruta> <regla>|tipos"). FIN: ok.
 #   blindado: one line per changed shielded file and per package.json change that counts. The globs of .blindado come
 #     from the marker of <ref>, never of the tree, and match the whole path as bash patterns ([[ == ]]: * crosses /,
-#     so *tsconfig*.json also matches config/tsconfig.base.json); an entry ending in / is a prefix. A change that only
+#     so *tsconfig*.json also matches config/tsconfig.base.json); an entry ending in / is a prefix. A name without a
+#     leading dot goes as the pair x and */x (eslint.config.*, */eslint.config.*), never *x, which would also match
+#     any name ending in it (src/myknip.ts for *knip.*); with a leading dot, *.x is safe (*.eslintrc*). A change that only
 #     shrinks eslint-suppressions.json or .agents-kit/tsc-base.json does not count. Lint dependencies are those whose
 #     name contains eslint, typescript, knip or dependency-cruiser. package.json lines:
 #       "package.json (scripts.<x>)": a lint*/typecheck* script changed, or a script one of them calls (one level:
-#         npm run <x>, pnpm [run] <x>, yarn [run] <x>, bun run <x>, in the base or the tree);
+#         npm run <x>, pnpm [run] <x>, yarn [run] <x>, bun run <x>, in the base or the tree), or the npm lifecycle
+#         pre<x>/post<x> of any of those;
 #       "package.json (quitada <dep>)" / "package.json (cambiada <dep>)": a lint dependency removed or with another
 #         value (dependencies, devDependencies, peerDependencies, optionalDependencies);
 #       "package.json (overrides <clave>)": overrides, resolutions or pnpm.overrides changed for a key (nested keys
@@ -200,7 +203,7 @@ case "$sub" in
           | map(.s as $s | .v | objects | paths(scalars) as $p | {key: ($p | map(tostring) | join(">")), value: {($s): getpath($p)}})
           | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries
           | with_entries(select(.key | test($re)));
-        ([$b, $h] | map(lkeys, calls) | unique) as $ks |
+        ([$b, $h] | map(lkeys, calls) | map(., "pre" + ., "post" + .) | unique) as $ks |
         def sobj: .scripts | if type == "object" then . else {} end;
         ($b | sobj) as $sb | ($h | sobj) as $sh |
         ($b | deps) as $db | ($h | deps) as $dh |
