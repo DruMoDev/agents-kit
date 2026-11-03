@@ -540,18 +540,37 @@ marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/fakelint\"}, \"turno\": \"$bin/
 export TMPDIR="$(mktemp -d)"
 sesj() { inp --arg c "$r" --arg s "$1" --arg f "$2" --arg e "$3" '{session_id: $s, cwd: $c, hook_event_name: $e,
   tool_name: "Write", tool_input: {file_path: $f, content: "x"}}'; }
-# sb deja b.ts a medias; luego sa edita a.ts (su línea base ya tiene b.ts) y sc, después, c.ts
-echo 'export const b = 2;' > "$r/src/b.ts"; hook post-edit "$(sesj sb src/b.ts PostToolUse)"
+# ini <sesión> [source]: SessionStart, que escribe la línea base de la sesión
+ini() { hook session-start "$(inp --arg c "$r" --arg s "$1" --arg o "${2:-startup}" '{session_id: $s, cwd: $c, source: $o}')"
+  [ $rc -eq 0 ] || fail "session-start $1: $rc $out"; }
+# el caso reproducido: sr escribe x.ts por shell y luego edita y.ts con la herramienta; el turno revisa los dos
+ini sr; echo 'export const x = 1;' > "$r/src/x.ts"
+echo 'export const y = 1;' > "$r/src/y.ts"; hook post-edit "$(sesj sr src/y.ts PostToolUse)"
+: > "$LOG"; hook stop-check "$(sjson sr false)"
+[ "$(sort "$LOG" | tr '\n' ' ')" = "./src/x.ts ./src/y.ts " ] || fail "lo escrito por shell antes de la primera edición se revisa: $(cat "$LOG")"
+ini sr resume; echo 'export const z = 1;' > "$r/src/z.ts"
+: > "$LOG"; hook stop-check "$(sjson sr false)"
+[ "$(sort "$LOG" | tr '\n' ' ')" = "./src/x.ts ./src/y.ts ./src/z.ts " ] || fail "resume no rehace la línea base: $(cat "$LOG")"
+rm -f "$r/src/x.ts" "$r/src/y.ts" "$r/src/z.ts"
+# sb deja b.ts a medias; luego empieza sa (su línea base ya tiene b.ts) y edita a.ts; después sc, c.ts
+ini sb; echo 'export const b = 2;' > "$r/src/b.ts"; hook post-edit "$(sesj sb src/b.ts PostToolUse)"
+ini sa
 hook pre-edit "$(sesj sa src/a.ts PreToolUse)"; [ $rc -eq 0 ] || fail "pre-edit de a.ts: $rc $out"
 echo 'export const a = 2;' > "$r/src/a.ts"; hook post-edit "$(sesj sa src/a.ts PostToolUse)"
-hook pre-edit "$(sesj sc src/c.ts PreToolUse)"; [ $rc -eq 0 ] || fail "pre-edit de c.ts: $rc $out"
+ini sc; hook pre-edit "$(sesj sc src/c.ts PreToolUse)"; [ $rc -eq 0 ] || fail "pre-edit de c.ts: $rc $out"
 echo 'export const c = 2;' > "$r/src/c.ts"
 : > "$LOG"; hook stop-check "$(sjson sa false)"
 [ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/a.ts ] || fail "sa solo revisa lo suyo (b.ts en su línea base, c.ts de sc): $rc $out / $(cat "$LOG")"
 : > "$LOG"; hook stop-check "$(sjson sb false)"
-[ $rc -eq 2 ] && [ "$(cat "$LOG")" = ./src/b.ts ] || fail "sb revisa su b.ts (a.ts y c.ts son de otras): $rc $out / $(cat "$LOG")"
+[ $rc -eq 2 ] && [ "$(sort "$LOG" | tr '\n' ' ')" = "./src/b.ts " ] || fail "sb revisa su b.ts (a.ts y c.ts son de otras): $rc $out / $(cat "$LOG")"
 : > "$LOG"; hook stop-check "$(sjson sc false)"
 [ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/c.ts ] || fail "lo anotado por pre-edit cuenta: $rc $out / $(cat "$LOG")"
+# las anotaciones de una sesión muerta (más de 24 h sin tocarse) no cuentan
+hsc="$(printf '%s' sc | shasum -a 256)"; fsc="$TMPDIR/agents-kit-$(id -u)/sesion-${hsc%% *}"
+old "$fsc" 90000
+: > "$LOG"; hook stop-check "$(sjson sa false)"
+grep -qx ./src/c.ts "$LOG" || fail "c.ts de una sesión muerta se revisa: $(cat "$LOG")"
+touch "$fsc"
 # lo que sa cambia por shell tras su primera edición sí se revisa: un fichero nuevo y b.ts si cambia desde su base
 echo 'export const d = 1;' > "$r/src/d.ts"
 : > "$LOG"; hook stop-check "$(sjson sa false)"
@@ -572,10 +591,14 @@ rm -f "$r/src/c.ts"
 # el filtro es por raíz: una raíz sin anotaciones de la sesión se revisa entera
 rw="$(mktemp -d)/wt2"; git -C "$r" worktree add -q -b wt2 "$rw" || fail "worktree wt2"
 echo 'export const w = 1;' > "$rw/src/w.ts"
+# raíz sin línea base (worktree creado a mitad): lo anterior al inicio de la sesión no se mira, lo nuevo sí
+echo 'export const v = 1;' > "$rw/src/viejo.ts"; old "$rw/src/viejo.ts" 3600
+echo 'export const n = 1;' > "$rw/src/nuevo2.ts"
 hook post-edit "$(inp --arg c "$r" --arg f "$rw/src/w.ts" '{session_id: "sa", cwd: $c, tool_name: "Write", tool_input: {file_path: $f, content: "x"}}')"
 echo 'export const e = 1;' > "$r/src/e2.ts"
 : > "$LOG"; hook stop-check "$(sjson sa false)"
 grep -qx ./src/w.ts "$LOG" && grep -qx ./src/e2.ts "$LOG" && ! grep -qx ./src/b.ts "$LOG" \
+  && grep -qx ./src/nuevo2.ts "$LOG" && ! grep -qx ./src/viejo.ts "$LOG" \
   || fail "cada raíz filtra con sus propias anotaciones: $rc $(cat "$LOG")"
 rm -f "$r/src/e2.ts"; git -C "$r" worktree remove --force "$rw"
 if [ "$(uname)" = Darwin ]; then

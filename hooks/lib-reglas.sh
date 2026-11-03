@@ -244,8 +244,10 @@ kr_apunta() {
 }
 
 # Session file lines (kr_sesion_fichero sesion): "<root>" (kr_apunta), "<root><tab>f<tab><ruta>" (a file the session
-# edited through a tool, kr_anota) and "<root><tab>b<tab><hash>  <ruta>" (the baseline: a file that was already
-# changed when the session first edited in <root>, with its git hash-object).
+# edited through a tool, kr_anota), "<root><tab>base" and "<root><tab>b<tab><hash>  <ruta>" (the baseline of the cwd's
+# root, written by hooks/session-start: it exists, and a file that was already changed when the session started,
+# with its git hash-object). The file
+# kr_sesion_fichero inicio (mtime = when the session started) is touched by hooks/session-start too.
 
 # kr_sucios: KR_SUC, the changed files of KR_ROOT that exist (git diff --name-only HEAD plus untracked files not
 # ignored), and KR_HASH, the git hash-object of each of them, in the same order (one git hash-object --stdin-paths;
@@ -271,29 +273,37 @@ kr_sucios() {
 }
 
 # kr_anota: note the file KR_REL of KR_ROOT for this session ("f" line), so stop-check checks what this session did
-# and not the half-done files of other sessions in the same clone. The first note of the session in a root also
-# writes its baseline ("b" lines, kr_sucios), so stop-check still checks what the session changes by shell. A name
-# with a tab or a newline is noted as "*" (all the changed files of that repo). Nothing without a session_id; the
-# caller checks the trust first (kr_confianza), and stop-check checks it again for every noted root.
+# and not the half-done files of other sessions in the same clone. A name with a tab or a newline is noted as "*"
+# (all the changed files of that repo). Nothing without a session_id; the caller checks the trust first
+# (kr_confianza), and stop-check checks it again for every noted root.
 kr_anota() {
-  local f l rel="$KR_REL" nuevo="" hay="" x
+  local f l rel="$KR_REL" nuevo=""
   [ -n "$KR_SID" ] && f="$(kr_sesion_fichero sesion)" || return 0
   case "$rel" in *$'\t'*|*$'\n'*) rel='*' ;; esac
   l="$KR_ROOT"$'\t'"f"$'\t'"$rel"
-  if [ -e "$f" ]; then
-    grep -qxF -- "$l" "$f" 2>/dev/null && return 0
-    while IFS= read -r x; do case "$x" in "$KR_ROOT"$'\t'*) hay=1; break ;; esac; done < "$f"
-  else nuevo=1; fi
-  if [ -z "$hay" ]; then
-    kr_sucios
-    x=0
-    while [ $x -lt ${#KR_SUC[@]} ]; do
-      [ -z "${KR_HASH[$x]}" ] || printf '%s\tb\t%s  %s\n' "$KR_ROOT" "${KR_HASH[$x]}" "${KR_SUC[$x]}"
-      x=$((x + 1))
-    done >> "$f"
-  fi
-  printf '%s\n' "$l" >> "$f"
+  [ -e "$f" ] || nuevo=1
+  grep -qxF -- "$l" "$f" 2>/dev/null || printf '%s\n' "$l" >> "$f"
   [ -z "$nuevo" ] || kr_sesion_limpia
+}
+
+# kr_base: at the start of a session (hooks/session-start, with KR_SID and KR_ROOT set), touch the session's
+# "inicio" file and write the baseline of KR_ROOT (kr_sucios), each only when it does not exist yet for this session
+# (resume, clear, compact and fork start it again with the same session_id).
+kr_base() {
+  local f i x
+  [ -n "$KR_SID" ] && f="$(kr_sesion_fichero sesion)" && i="$(kr_sesion_fichero inicio)" || return 0
+  [ -e "$i" ] || : > "$i"
+  if [ -e "$f" ]; then
+    grep -qxF -- "$KR_ROOT"$'\t'base "$f" 2>/dev/null && return 0
+  fi
+  kr_sucios
+  printf '%s\tbase\n' "$KR_ROOT" >> "$f"
+  x=0
+  while [ $x -lt ${#KR_SUC[@]} ]; do
+    [ -z "${KR_HASH[$x]}" ] || printf '%s\tb\t%s  %s\n' "$KR_ROOT" "${KR_HASH[$x]}" "${KR_SUC[$x]}"
+    x=$((x + 1))
+  done >> "$f"
+  kr_sesion_limpia
 }
 
 # kr_sesion_dir: print ${TMPDIR:-/tmp}/agents-kit-<uid>, created with mode 0700. Return 1 (nothing that depends on it

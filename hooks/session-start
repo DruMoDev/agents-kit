@@ -2,6 +2,7 @@
 # SessionStart hook (Claude Code and Codex; the OpenCode plugin runs it too). Injects rules/core.md plus the flow
 # section (rules/flujo.md, or rules/sin-flujo.md with "flujo": false) only when the session's repo has .agents-kit.json
 # at its root and it does not set "reglas": false; otherwise silent, exit 0. An unreadable marker counts as defaults.
+# In such a repo with "lint", it also writes the session's baseline for stop-check (kr_base in hooks/lib-reglas.sh).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -20,6 +21,13 @@ root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -f "$PLUGIN_ROOT/rules/core.md" ] || exit 0
 flags="$(jq -r '"\(.reglas != false) \(.flujo != false)"' "$root/.agents-kit.json" 2>/dev/null)" || flags="true true"
 [ "${flags% *}" != false ] || exit 0
+# Rule hooks: with a session_id and a "lint" object, note when the session started and the files already changed in
+# its root (kr_base, once per session), so stop-check can tell this session's shell edits from older work.
+sid="$(printf '%s' "${input:-}" | jq -r '.session_id // empty | strings' 2>/dev/null)" || sid=""
+if [ -n "$sid" ] && [ "$(jq -r '(.lint | type) == "object"' "$root/.agents-kit.json" 2>/dev/null)" = true ] \
+  && source "$SCRIPT_DIR/lib-reglas.sh" 2>/dev/null; then
+  KR_SID="$sid"; KR_ROOT="$root"; kr_base >/dev/null 2>&1
+fi
 flow="$PLUGIN_ROOT/rules/flujo.md"
 [ "${flags#* }" != false ] || flow="$PLUGIN_ROOT/rules/sin-flujo.md"
 

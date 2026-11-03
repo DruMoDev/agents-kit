@@ -4,10 +4,10 @@
 # passes its changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as arguments to
 # .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root. In a repo
 # where the session noted the files it edited (kr_anota, lines in hooks/lib-reglas.sh), it passes those that are
-# still changed plus any changed file that is not in the session's baseline (unless another session noted it) or
-# whose hash changed since (an edit by shell); so the half-done files of other sessions in the same clone do not
-# block this one. A repo with no noted file (the session edited nothing there through the tools) gets all its
-# changed files.
+# still changed plus any other changed file that was not there when the session started (an edit by shell): not in
+# the baseline that hooks/session-start writes for the cwd's root, or with another hash since; in a root without a
+# baseline, newer than the session's start. Files another live session noted are left out, so the half-done files
+# of other sessions in the same clone do not block this one. A repo with no noted file gets all its changed files.
 # Exit 2 with the output on stderr when any fails; 0 with nothing changed, when a lock is busy, when the tool is
 # missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks again with stop_hook_active, up to
 # KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in kr_sesion_fichero turno-bloqueos, one file per
@@ -37,14 +37,17 @@ if [ -n "$ses" ] && [ -f "$ses" ]; then
     [ "$r" = "$l" ] || propio="$propio$l"$'\n'
     [ -d "$r" ] && _kr_git "$r" && [ "$KR_ROOT" = "$r" ] && kr_confianza && add_root
   done < "$ses"
-  # files that other sessions noted as theirs ("f" lines of their session files)
-  for o in "${ses%/*}"/sesion-*; do
+  # files that other live sessions noted as theirs ("f" lines of session files touched in the last 24 h)
+  while IFS= read -r o; do
     [ "$o" != "$ses" ] && [ -f "$o" ] && [ ! -L "$o" ] || continue
     while IFS= read -r l; do
       case "$l" in /*$'\t'f$'\t'*) ajeno="$ajeno$l"$'\n' ;; esac
     done < "$o"
-  done
+  done < <(find "${ses%/*}" -maxdepth 1 -type f -name 'sesion-*' -mmin -1440 2>/dev/null)
 fi
+inicio=""
+[ -z "$ses" ] || inicio="$(kr_sesion_fichero inicio)" || inicio=""
+[ -z "$inicio" ] || [ -f "$inicio" ] || inicio=""
 [ ${#roots[@]} -gt 0 ] || exit 0
 cuenta="$(kr_sesion_fichero turno-bloqueos)" || cuenta=""
 n=0; prev=""
@@ -63,19 +66,22 @@ while [ $j -lt ${#roots[@]} ]; do
   kr_config && [ -n "$KR_TURNO" ] || continue
   files=(); kr_sucios
   # Only a root this session noted files in is filtered (paths without case on macOS, like kr_resolve). A changed
-  # file this session did not note is skipped when it is in its baseline with the same hash, or when it is not in
-  # the baseline and another session noted it (that session started it after this one's first edit). Anything else
-  # (an edit by shell, a baseline file whose hash changed) goes. A root without notes gets all its changed files.
+  # file this session did not note is skipped when it was already there when the session started: in the baseline
+  # with the same hash, or, in a root without a baseline (a worktree created later), older than the session's start;
+  # or when it is not in the baseline and a live session noted it. Anything else (an edit by shell, a baseline file
+  # whose hash changed) goes. A root without notes gets all its changed files.
   case "$OSTYPE" in darwin*) shopt -s nocasematch ;; esac
-  filtra=""
+  filtra=""; base=""
   case "$propio" in *$'\n'"$KR_ROOT"$'\t'f$'\t'*) filtra=1 ;; esac
+  case "$propio" in *$'\n'"$KR_ROOT"$'\t'base$'\n'*) base=1 ;; esac
   k=0
   while [ $k -lt ${#KR_SUC[@]} ]; do
     f="${KR_SUC[$k]}"; h="${KR_HASH[$k]}"; k=$((k + 1))
     if [ -n "$filtra" ]; then
       case "$propio" in
         *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*|*$'\n'"$KR_ROOT"$'\tf\t*\n'*) ;;
-        *) [ -z "$h" ] || case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'"$h  $f"$'\n'*) continue ;; esac
+        *) [ -n "$base" ] || [ -z "$inicio" ] || ! [ "$inicio" -nt "$KR_ROOT/$f" ] || continue
+           [ -z "$h" ] || case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'"$h  $f"$'\n'*) continue ;; esac
            case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'*"  $f"$'\n'*) ;; *)
              case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac ;;
            esac ;;
