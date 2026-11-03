@@ -124,32 +124,36 @@ kr_sube_prohibido() {
     if $celda or $escrito or $editado then "sube" else "no" end' 2>/dev/null
 }
 
-# kr_root: KR_ROOT and KR_COMMON (git common dir, physical) of KR_CWD. Return 1 outside git or without the marker.
-kr_root() { _kr_git "$KR_CWD"; }
+# kr_root: KR_ROOT and KR_COMMON (git common dir, physical) of the marked repo of KR_CWD (its own, or the nearest
+# marked one that contains it: _kr_marcado). Return non-zero outside git or without a marked repo.
+kr_root() { _kr_marcado "$KR_CWD"; }
 
 # _kr_git <dir>: KR_ROOT and KR_COMMON (physical) of the repo of <dir> (cached for the last <dir>). Return 0 when that
-# repo has .agents-kit.json, 3 when it has not, 1 outside git.
+# repo has .agents-kit.json, 3 when it has not, 1 outside git, 2 when its git common dir cannot be entered (KR_ROOT is
+# set, KR_COMMON empty: pre-edit blocks if that repo has rules, nothing runs).
 _kr_git() {
-  local out
+  local out top common
   if [ "$1" != "${_KR_GIT_DIR-}" ]; then
-    _KR_GIT_DIR="$1"; _KR_GIT_OUT=""
+    _KR_GIT_DIR="$1"; _KR_GIT_OUT=""; _KR_GIT_RC=1
     out="$(git -C "$1" rev-parse --show-toplevel --git-common-dir 2>/dev/null)" || out=""
-    if [ -n "$out" ]; then
-      KR_COMMON="${out#*$'\n'}"
-      case "$KR_COMMON" in /*) ;; *) KR_COMMON="$1/$KR_COMMON" ;; esac
-      KR_COMMON="$(cd "$KR_COMMON" 2>/dev/null && pwd -P)" && _KR_GIT_OUT="${out%%$'\n'*}"$'\n'"$KR_COMMON"
+    top="${out%%$'\n'*}"; common="${out#*$'\n'}"
+    if [ -n "$out" ] && [ -n "$top" ]; then
+      case "$common" in /*) ;; *) common="$1/$common" ;; esac
+      if common="$(cd "$common" 2>/dev/null && pwd -P)" && [ -n "$common" ]; then _KR_GIT_RC=0
+      else common=""; _KR_GIT_RC=2; fi
+      _KR_GIT_OUT="$top"$'\n'"$common"
     fi
   fi
+  [ $_KR_GIT_RC -ne 1 ] || return 1
   out="$_KR_GIT_OUT"
-  [ -n "$out" ] || return 1
   KR_ROOT="${out%%$'\n'*}"; KR_COMMON="${out#*$'\n'}"
-  [ -n "$KR_ROOT" ] || return 1
+  [ $_KR_GIT_RC -eq 0 ] || return 2
   [ -f "$KR_ROOT/.agents-kit.json" ] || return 3
 }
 
 # _kr_marcado <dir>: like _kr_git, but when the repo of <dir> has no marker it climbs to the repos that contain it (the
 # toplevel of the parent of each toplevel: a nested repo or a submodule) and keeps the nearest marked one. Return 0
-# with KR_ROOT/KR_COMMON of that repo, 1 when there is none.
+# with KR_ROOT/KR_COMMON of that repo, 1 when there is none, 2 as _kr_git.
 _kr_marcado() {
   local rc prev
   _kr_git "$1"; rc=$?
@@ -159,25 +163,35 @@ _kr_marcado() {
     _kr_git "${prev%/*}"; rc=$?
     [ $rc -ne 3 ] || [ "$KR_ROOT" != "$prev" ] || return 1
   done
-  [ $rc -eq 0 ]
+  return $rc
 }
 
-# kr_confianza: return 0 when KR_COMMON is the git common dir of the cwd's repo (KR_CWD_COMMON, looked up once): the
-# same clone, so its worktrees (kit-run) count and foreign repos do not. Only trusted repos get their lint commands
+# kr_confianza: return 0 when KR_COMMON is the git common dir of the cwd's repo (kr_cwd_common) and KR_ROOT is its
+# toplevel or one of the worktrees `git worktree list` registers for it: the same clone, so its worktrees (kit-run)
+# count, and foreign repos or a directory with a .git file pointing at the clone's git dir do not. Only trusted repos get their lint commands
 # run (post-edit, stop-check) or noted for the session (kr_apunta). Outside git, nothing is trusted.
 kr_confianza() {
-  kr_cwd_common && [ "$KR_COMMON" = "$KR_CWD_COMMON" ]
+  local p
+  kr_cwd_common && [ -n "$KR_COMMON" ] && [ "$KR_COMMON" = "$KR_CWD_COMMON" ] || return 1
+  [ "$KR_ROOT" != "$KR_CWD_ROOT" ] || return 0
+  while IFS= read -r p; do
+    case "$p" in "worktree "/*) p="${p#worktree }" ;; *) continue ;; esac
+    [ "$p" = "$KR_ROOT" ] && return 0
+    [ "$(cd "$p" 2>/dev/null && pwd -P)" = "$KR_ROOT" ] && return 0
+  done < <(git -C "$KR_CWD_ROOT" worktree list --porcelain 2>/dev/null)
+  return 1
 }
 
-# kr_cwd_common: KR_CWD_COMMON, the physical git common dir of KR_CWD (looked up once). Return 1 outside git.
+# kr_cwd_common: KR_CWD_ROOT and KR_CWD_COMMON (physical), the toplevel and git common dir of the repo of KR_CWD, or
+# of the nearest marked repo that contains it when that one has no marker (looked up once). Return 1 outside git.
 kr_cwd_common() {
-  local out
+  local root="${KR_ROOT-}" common="${KR_COMMON-}" rc
   if [ -z "${KR_CWD_COMMON+x}" ]; then
-    KR_CWD_COMMON=""
-    if out="$(git -C "$KR_CWD" rev-parse --git-common-dir 2>/dev/null)"; then
-      case "$out" in /*) ;; *) out="$KR_CWD/$out" ;; esac
-      KR_CWD_COMMON="$(cd "$out" 2>/dev/null && pwd -P)" || KR_CWD_COMMON=""
-    fi
+    KR_CWD_COMMON=""; KR_CWD_ROOT=""
+    _kr_git "$KR_CWD"; rc=$?
+    [ $rc -ne 3 ] || { _kr_marcado "$KR_CWD" || _kr_git "$KR_CWD"; rc=$?; }
+    if [ $rc -eq 0 ] || [ $rc -eq 3 ]; then KR_CWD_ROOT="$KR_ROOT"; KR_CWD_COMMON="$KR_COMMON"; fi
+    KR_ROOT="$root"; KR_COMMON="$common"
   fi
   [ -n "$KR_CWD_COMMON" ]
 }
@@ -201,17 +215,20 @@ kr_abs() {
 # repo); 2 when its path inside a marked repo cannot be resolved, also when its nearest existing directory cannot be
 # entered (the caller blocks if that repo has rules).
 kr_item() {
-  local d f
+  local d f rc
   KR_FILE="$1"
   kr_abs || return 1
   d="${KR_ABS%/*}"
   while [ -n "$d" ] && [ ! -d "$d" ]; do d="${d%/*}"; done
   if ! f="$(cd "${d:-/}" 2>/dev/null && pwd -P)"; then
     while [ -n "$d" ] && ! f="$(cd "$d" 2>/dev/null && pwd -P)"; do d="${d%/*}"; done
-    _kr_marcado "${f:-/}" && return 2
+    _kr_marcado "${f:-/}"; rc=$?
+    [ $rc -eq 1 ] || [ $rc -eq 3 ] || return 2
     return 1
   fi
-  _kr_marcado "$f" || return 1
+  _kr_marcado "$f"; rc=$?
+  [ $rc -ne 2 ] || return 2
+  [ $rc -eq 0 ] || return 1
   kr_resolve
 }
 
@@ -229,12 +246,11 @@ kr_apunta() {
 # kr_sesion_dir: print ${TMPDIR:-/tmp}/agents-kit-<uid>, created with mode 0700. Return 1 (nothing that depends on it
 # may run) when it exists but is a symlink, is not ours or has another mode.
 kr_sesion_dir() {
-  local d="${TMPDIR:-/tmp}" m
+  local d="${TMPDIR:-/tmp}"
   d="${d%/}/agents-kit-$(id -u)"
   [ -e "$d" ] || [ -L "$d" ] || mkdir -m 700 "$d" 2>/dev/null
   [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ] || return 1
-  m="$(stat -f %Lp "$d" 2>/dev/null || stat -c %a "$d" 2>/dev/null)"
-  [ "$m" = 700 ] || return 1
+  [ -n "$(find "$d" -maxdepth 0 -perm 700 2>/dev/null)" ] || return 1
   printf '%s\n' "$d"
 }
 

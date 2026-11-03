@@ -156,9 +156,13 @@ Verificado el 2026-11-03 con codex-cli 0.165.0, opencode 2.1.4 (`run --standalon
 - La raíz es la del repo de cada fichero, no la del `cwd` (`kr_item`): `kit-run` edita en worktrees fuera del `cwd` de la sesión.
   - Si el repo del fichero no tiene marcador (repo anidado, submódulo), se sube al repo marcado más cercano que lo contenga.
   - `pre-edit` aplica las reglas de cualquier repo con marcador, porque solo lee JSON.
-  - `post-edit`, `stop-check` y el apunte de sesión solo ejecutan el lint de repos con el mismo `git-common-dir` (con `pwd -P`) que el del `cwd`. Así cuentan los worktrees del mismo clon y no los repos ajenos. Con el `cwd` fuera de git no se ejecuta nada.
+  - `post-edit`, `stop-check` y el apunte de sesión solo ejecutan el lint de repos de confianza. Lo son los que cumplen dos cosas:
+    - tienen el mismo `git-common-dir` (con `pwd -P`) que el repo del `cwd`, o que el repo marcado que lo contiene si el `cwd` está en un repo anidado o submódulo sin marcador;
+    - son su toplevel o uno de los worktrees de `git worktree list --porcelain`.
+  - Así cuentan los worktrees del mismo clon y no los repos ajenos ni un directorio con un `.git` que apunte al gitdir del clon.
+  - Con el `cwd` fuera de git, o con un `git-common-dir` en el que no se puede entrar, no se ejecuta nada (y `pre-edit` bloquea si ese repo tiene reglas).
   - Una edición permitida en un worktree de confianza que no contiene el `cwd` se apunta en `${TMPDIR}/agents-kit-<uid>/sesion-<sha256 del session_id>`, y `stop-check` revisa ese repo además del del `cwd`.
-  - Ese directorio se crea con modo 0700. Si no es nuestro, es un enlace o tiene otro modo, no se usa: ni se apunta ni se lleva la cuenta del tope, y `Stop` bloquea sin tope. Los ficheros de más de 7 días se borran al crear uno nuevo.
+  - Ese directorio se crea con modo 0700 (el modo se comprueba con `find -maxdepth 0 -perm 700`, igual en macOS y Linux; `stat -f` de GNU es otra cosa). Si no es nuestro, es un enlace o tiene otro modo, no se usa: ni se apunta ni se lleva la cuenta del tope, y `Stop` bloquea sin tope. Los ficheros de más de 7 días se borran al crear uno nuevo.
 - OpenCode V2 (2.1.4): `setup(ctx)` tiene `ctx.tool.hook("execute.before" | "execute.after", cb)`. Lo vi en el binario y lo usé de verdad.
   - Lanzar un error en `execute.before` bloquea la herramienta, y el mensaje llega al modelo como su error.
   - `execute.after` recibe `{tool, sessionID, input, status, result: {content, output, metadata}}`. Al añadir texto a `result.content`, el modelo lo lee con el resultado.
@@ -173,6 +177,7 @@ Verificado el 2026-11-03 con codex-cli 0.165.0, opencode 2.1.4 (`run --standalon
   - un modelo de verdad que corrige tras el bloqueo: el falso no razona;
   - `multiedit` de V1 en uso real;
   - la cifra del tope de bloqueos de `Stop` en Claude Code (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`).
+- `tests/test_hooks_reglas.sh` pasa también en Linux: verificado el 2026-11-03 en docker con `debian:stable-slim` (bash 5, GNU coreutils 9.7).
 - Límite conocido: las ediciones hechas por shell no pasan por `pre-edit` ni `post-edit`, igual que el `Bash` de Claude Code. En Codex se vio con un `exec_command` que escribió un fichero. En OpenCode serían `bash`/`shell`, pero no lo probé. Solo las ve `stop-check`, en Codex y Claude Code.
 
 #### Flujo de issues (fase 2)

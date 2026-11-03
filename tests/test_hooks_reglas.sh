@@ -302,8 +302,8 @@ FAKE_RC=1 hook post-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_n
   || fail "post-edit de apply_patch con lint roto en los dos comandos: $rc $out"
 [ ! -d "$lock" ] || fail "el candado debe liberarse tras apply_patch"
 rm -f "$r/src/q1.ts" "$r/src/q2.tsx"; marker "$LINT"; : > "$LOG"
-# old <dir> <s>: set the mtime of <dir> <s> seconds in the past.
-old() { touch -t "$(date -r $(( $(date +%s) - $2 )) +%Y%m%d%H%M.%S)" "$1"; }
+# old <dir> <s>: set the mtime of <dir> <s> seconds in the past (perl: the same on macOS and Linux).
+old() { perl -e 'my $t = time - $ARGV[1]; utime $t, $t, $ARGV[0] or exit 1' "$1" "$2"; }
 ahora=$(date +%s)
 mkdir -p "$lock"
 hook post-edit "$(post_json src/a.ts)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "candado tomado: no lanza nada"
@@ -425,6 +425,53 @@ for mal in modo enlace; do
   FAKE_RC=1 hook stop-check "$(inp --arg c "$ra" --arg s s-$mal '{session_id: $s, cwd: $c, stop_hook_active: false}')"
   [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "sin directorio de sesión fiable no se revisa B ($mal): $rc $out"
 done
+export TMPDIR="$(mktemp -d)"
+# stat de GNU (stat -f muestra el sistema de ficheros y sale con 1): el directorio de sesión sigue valiendo
+gnubin="$(mktemp -d)"
+printf '#!/bin/sh\n[ "$1" = -f ] && { echo "  File: \\"$3\\""; echo "    ID: 0 Namelen: 255 Type: apfs"; exit 1; }\n[ "$1" = -c ] && [ "$2" = %%a ] && { echo 700; exit 0; }\nexit 1\n' > "$gnubin/stat"
+chmod +x "$gnubin/stat"
+echo "export const y = 1;" > "$rb/src/y.ts"
+echo "export const y = 1;" > "$rb/src/y.ts"
+PATH="$gnubin:$PATH" hook post-edit "$(xjson "$rb/src/y.ts" 'x' PostToolUse "$ra" s-gnu)"
+h="$(printf '%s' s-gnu | shasum -a 256)"
+grep -qxF "$(cd "$rb" && pwd -P)" "$TMPDIR/agents-kit-$(id -u)/sesion-${h%% *}" 2>/dev/null \
+  || fail "con un stat de GNU se apunta igual el worktree: $(ls -la "$TMPDIR/agents-kit-$(id -u)/" 2>&1)"
+# un directorio con un .git que apunta al gitdir del clon pero no está en git worktree list: no es de confianza
+falso="$(mktemp -d)"; printf 'gitdir: %s/.git\n' "$ra" > "$falso/.git"; mkdir -p "$falso/src"
+printf '{"lint": {"fichero": {"ts": "touch testigo"}, "turno": "touch testigo-turno"}}\n' > "$falso/.agents-kit.json"
+echo x > "$falso/src/z.ts"
+[ "$(cd "$(git -C "$falso" rev-parse --git-common-dir)" && pwd -P)" = "$(cd "$ra/.git" && pwd -P)" ] \
+  || fail "el .git falso debería compartir el gitdir de A"
+hook post-edit "$(xjson "$falso/src/z.ts" 'x' PostToolUse)"
+[ ! -e "$falso/testigo" ] || fail "post-edit no ejecuta el lint de un directorio con un .git hacia el clon fuera de worktree list"
+h="$(printf '%s' cruz | shasum -a 256)"; printf '%s\n' "$(cd "$falso" && pwd -P)" >> "$TMPDIR/agents-kit-$(id -u)/sesion-${h%% *}"
+hook stop-check "$(inp --arg c "$ra" '{session_id: "cruz", cwd: $c, stop_hook_active: false}')"
+[ ! -e "$falso/testigo-turno" ] || fail "stop-check no ejecuta el turno del directorio falso apuntado"
+# cwd en un repo anidado sin marcador dentro de B: se usa B (respaldo del parche ilegible, stop-check y confianza)
+mkdir -p "$rb/sub" && git -C "$rb/sub" init -q && echo 'x' > "$rb/sub/n.ts"
+hook pre-edit "$(inp --arg c "$rb/sub" '{session_id: "an", cwd: $c, tool_name: "apply_patch", tool_input: {command: "basura"}}')"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo leer el parche"* ]] || fail "parche ilegible con el cwd anidado en B bloquea: $rc $out"
+echo 'export const y = 1;' > "$rb/src/y.ts"; : > "$LOG"
+hook post-edit "$(xjson "$rb/src/y.ts" 'x' PostToolUse "$rb/sub" an)"
+[ "$(sed -n 2p "$LOG")" = "./src/y.ts" ] || fail "post-edit con el cwd anidado en B pasa el lint de B: $(cat "$LOG")"
+: > "$LOG"
+FAKE_RC=1 hook stop-check "$(inp --arg c "$rb/sub" '{session_id: "an2", cwd: $c, stop_hook_active: false}')"
+[ $rc -eq 2 ] && [ "$(sed -n 1p "$LOG")" = "--turno" ] || fail "stop-check con el cwd anidado revisa B: $rc $out / $(cat "$LOG")"
+rm -rf "$rb/sub"; : > "$LOG"
+# git-common-dir en el que no se puede entrar: pre-edit bloquea si el repo tiene reglas; post-edit no ejecuta nada
+gitbin="$(mktemp -d)"; realgit="$(command -v git)"
+cat > "$gitbin/git" <<EOF
+#!/bin/sh
+if [ "\$1" = -C ] && [ "\$3" = rev-parse ] && [ "\$4" = --show-toplevel ]; then
+  case "\$2" in "$(cd "$rb" && pwd -P)"*) printf '%s\n/no/existe/common\n' "$(cd "$rb" && pwd -P)"; exit 0 ;; esac
+fi
+exec "$realgit" "\$@"
+EOF
+chmod +x "$gitbin/git"
+PATH="$gitbin:$PATH" hook pre-edit "$(xjson "$rb/src/y.ts" 'x' PreToolUse)"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo resolver la ruta"* ]] || fail "un git-common-dir inaccesible bloquea en pre-edit: $rc $out"
+: > "$LOG"; PATH="$gitbin:$PATH" hook post-edit "$(xjson "$rb/src/y.ts" 'x' PostToolUse)"
+[ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un git-common-dir inaccesible no ejecuta lint: $rc $(cat "$LOG")"
 export TMPDIR="$(mktemp -d)"
 rm -f "$rb/src/y.ts"; : > "$LOG"
 
