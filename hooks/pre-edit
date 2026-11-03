@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# PreToolUse hook (Edit|Write|MultiEdit|NotebookEdit). Exit 2 with the remedy on stderr when the edit
+#   - adds eslint-disable, @ts-ignore, @ts-nocheck or `as any` (followed by a non-identifier character), in any file, or
+#   - touches a shielded file (.blindado) without <git-common-dir>/agents-kit/reglas-abiertas holding this session_id
+#     (kit-reglas.sh abrir). package.json is not checked here: kit-pr.sh fusionar does it.
+# Inert (exit 0, no output) as described in hooks/lib-reglas.sh, and for paths outside the repo of the input's cwd.
+source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
+kr_input && [ -n "$KR_FILE" ] && kr_root && kr_resolve || exit 0
+kr_config || exit 0
+
+if [ "$KR_FORBID" = 1 ]; then
+  echo "No desactives reglas ni tipos: arregla la causa. Si la regla está mal, propón el cambio (kit-reglas)." >&2
+  exit 2
+fi
+source "$KR_PLUGIN/scripts/lib/blindado.sh"
+if kit_blindado_match "$KR_REL" "$KR_GLOBS"; then
+  abierta=""
+  [ ! -f "$KR_COMMON/agents-kit/reglas-abiertas" ] || IFS= read -r abierta < "$KR_COMMON/agents-kit/reglas-abiertas"
+  if [ -z "$KR_SID" ] || [ "$abierta" != "$KR_SID" ]; then
+    echo "Fichero de reglas: solo se cambia con la aprobación de Dru (skill kit-reglas, o en kit-run un commit propio y kit-pr.sh regla)." >&2
+    exit 2
+  fi
+fi
+exit 0

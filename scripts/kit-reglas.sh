@@ -44,6 +44,7 @@
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/config.sh"
+source "$here/lib/blindado.sh"
 
 usage() { echo "uso: $0 estado <wt> | trinquete <wt> <ref> | blindado <wt> <ref> | abrir <wt> <session_id> | cerrar <wt>" >&2; exit 1; }
 [ $# -ge 2 ] && [ -n "$2" ] || usage
@@ -173,13 +174,7 @@ case "$sub" in
     list_changed
     lista=(); nuevos=(); total=0
     while IFS= read -r -d '' f; do
-      hit=0
-      while IFS= read -r g; do
-        [ -n "$g" ] || continue
-        case "$g" in */) [[ "$f" == "$g"* ]] && hit=1 ;; *) [[ "$f" == $g ]] && hit=1 ;; esac
-        [ $hit -eq 1 ] && break
-      done <<<"$globs"
-      [ $hit -eq 1 ] || continue
+      kit_blindado_match "$f" "$globs" || continue
       if [ "$f" = "$SUP" ]; then c="$(grows_sup)" || exit 2; [ -n "$c" ] || continue; fi
       if [ "$f" = "$TSB" ]; then c="$(grows_tsb)" || exit 2; [ -n "$c" ] || continue; fi
       echo "$f"; total=$((total + 1))
