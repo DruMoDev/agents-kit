@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-activate.sh <repo_root> [--changelog true|false] [--reglas true|false] [--flujo true|false] [--setup <ruta>]
 #   [--contenido <ruta>]... [--protegido <ruta>]... [--verificar-rapido <comando>] [--verificar-completo <comando>]
+#   [--lint-fichero <exts>=<comando>]... [--lint-turno <comando>]
 # Local, file-only, idempotent activation of the kit in a repo (kit-on runs it in a temporary worktree). Does not commit.
 # Also creates the global config (~/.agents-kit/config.json or KIT_CONFIG) if missing, appends "## Reglas del proyecto"
 # to an existing AGENTS.md that lacks it, and warns about versioned git hooks when the marker declares no "setup".
@@ -9,6 +10,8 @@
 # CI/CD; reviews run on the local diff with kit-review-all.sh --local). --contenido and --protegido (repeatable) replace
 # that list in the marker. --verificar-rapido/--verificar-completo set verificar.rapido/.completo:
 # the repo's quick checks (format, strict lint, tests of what changed: seconds) and full suite (kit-verify.sh).
+# --lint-fichero (repeatable; <exts> comma separated, split at the first =) adds or replaces that key of lint.fichero,
+# keeping the others; --lint-turno sets lint.turno. They are what the hooks run (hooks/post-edit, hooks/stop-check).
 # While the marker has no "contenido", prints "sugerencia contenido: <dir> (...)" for each directory that the history of
 # HEAD (last 300 commits) mostly changes in direct commits (subject without "(#N)"): kit-on proposes them to Dru.
 # v2 keys of an existing marker (reviewers, implementer, notify) are dropped, each with a "nota: ..." line saying where it
@@ -21,12 +24,14 @@ source "$here/lib/repo-hook.sh"
 
 usage() {
   echo "uso: $0 <repo_root> [--changelog true|false] [--reglas true|false] [--flujo true|false] [--setup <ruta>]" \
-    "[--contenido <ruta>]... [--protegido <ruta>]... [--verificar-rapido <comando>] [--verificar-completo <comando>]" >&2
+    "[--contenido <ruta>]... [--protegido <ruta>]... [--verificar-rapido <comando>] [--verificar-completo <comando>]" \
+    "[--lint-fichero <exts>=<comando>]... [--lint-turno <comando>]" >&2
   exit 1
 }
 [ $# -ge 1 ] && [ -n "$1" ] || usage
 arg_repo="$1"; shift
 opt_changelog=""; opt_reglas=""; opt_flujo=""; opt_setup=""; has_setup=false; contenido=(); protegido=(); ver_r=""; ver_c=""
+lint_f='{}'; lint_t=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --changelog)
@@ -50,6 +55,18 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] && [ -n "$2" ] || usage
       if [ "$1" = --verificar-rapido ]; then ver_r="$2"; else ver_c="$2"; fi
       shift 2 ;;
+    --lint-fichero)
+      [ $# -ge 2 ] || usage
+      case "$2" in
+        ?*=?*) ;;
+        *) echo "valor de --lint-fichero inválido: '$2' (<exts>=<comando>, por ejemplo ts,tsx=node_modules/.bin/eslint --cache)" >&2; exit 1 ;;
+      esac
+      command -v jq >/dev/null 2>&1 || { echo "error: falta 'jq' en el PATH" >&2; exit 2; }
+      lint_f="$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$lint_f")" || exit 2
+      shift 2 ;;
+    --lint-turno)
+      [ $# -ge 2 ] && [ -n "$2" ] || usage
+      lint_t="$2"; shift 2 ;;
     *) echo "opción no reconocida: $1" >&2; usage ;;
   esac
 done
@@ -108,13 +125,15 @@ jq -r --arg g "$g" --arg q "'" '
 lists="$(jq -cn --args '$ARGS.positional' -- ${contenido[@]+"${contenido[@]}"})" || exit 2
 listp="$(jq -cn --args '$ARGS.positional' -- ${protegido[@]+"${protegido[@]}"})" || exit 2
 want="$(jq -c --arg c "$opt_changelog" --arg r "$opt_reglas" --arg f "$opt_flujo" --arg s "$opt_setup" --argjson hs "$has_setup" --argjson lc "$lists" --argjson lp "$listp" \
-    --arg vr "$ver_r" --arg vc "$ver_c" '
+    --arg vr "$ver_r" --arg vc "$ver_c" --argjson lf "$lint_f" --arg lt "$lint_t" '
   del(.reviewers, .implementer, .notify)
   | (if $c == "" then . else .changelog = ($c == "true") end)
   | (if $r == "" then . else .reglas = ($r == "true") end) | (if $f == "" then . else .flujo = ($f == "true") end)
   | (if $hs then .setup = $s else . end)
   | (if ($lc | length) > 0 then .contenido = $lc else . end) | (if ($lp | length) > 0 then .protegido = $lp else . end)
-  | (if $vr != "" then .verificar.rapido = $vr else . end) | (if $vc != "" then .verificar.completo = $vc else . end)' "$marker")" || exit 2
+  | (if $vr != "" then .verificar.rapido = $vr else . end) | (if $vc != "" then .verificar.completo = $vc else . end)
+  | (if ($lf | length) > 0 then .lint.fichero = ((.lint.fichero | objects) // {}) + $lf else . end)
+  | (if $lt != "" then .lint.turno = $lt else . end)' "$marker")" || exit 2
 if [ "$want" != "$(jq -c . "$marker")" ]; then
   # mktemp opens with O_EXCL (never follows a planted symlink); mv replaces the marker itself, not a link target
   tmpm="$(mktemp "$repo/.agents-kit.json.XXXXXX")" || exit 2

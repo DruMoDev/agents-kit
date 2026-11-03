@@ -251,6 +251,32 @@ out="$(bash "$S" "$fl" --flujo false 2>/dev/null)"
 out="$(bash "$S" "$fl" --flujo true 2>/dev/null)" && [ "$(jq .flujo "$fl/.agents-kit.json")" = true ] || fail "flujo true"
 bash "$S" "$fl" --reglas si >/dev/null 2>&1; [ $? -eq 1 ] || fail "--reglas si should exit 1"
 
+# --lint-fichero/--lint-turno: write .lint; each --lint-fichero adds or replaces its key, the rest stays
+li="$(new_repo)"
+echo '{"verificar": {"rapido": "make q"}, "lint": {"fichero": {"py": "ruff check"}}}' > "$li/.agents-kit.json"
+out="$(bash "$S" "$li" --lint-fichero 'ts,tsx=KIT_LINT_RAPIDO=1 node_modules/.bin/eslint --cache' \
+  --lint-turno 'sh .agents-kit/turno.sh' --verificar-completo 'npm run lint && npm test' 2>/dev/null)" || fail "--lint: exit $?"
+[ "$(jq -c '.lint' "$li/.agents-kit.json")" = '{"fichero":{"py":"ruff check","ts,tsx":"KIT_LINT_RAPIDO=1 node_modules/.bin/eslint --cache"},"turno":"sh .agents-kit/turno.sh"}' ] \
+  || fail "--lint: $(cat "$li/.agents-kit.json")"
+[ "$(jq -c '.verificar' "$li/.agents-kit.json")" = '{"rapido":"make q","completo":"npm run lint && npm test"}' ] \
+  || fail "--verificar-completo junto a --lint: $(cat "$li/.agents-kit.json")"
+grep -q '^cambiado: .agents-kit.json' <<<"$out" || fail "--lint debe contar el marcador como cambiado ('$out')"
+bash "$S" "$li" --lint-fichero 'py=ruff check --fix' --lint-fichero 'sh=shellcheck' >/dev/null 2>&1 || fail "--lint-fichero repetido: exit $?"
+[ "$(jq -c '.lint.fichero' "$li/.agents-kit.json")" = '{"py":"ruff check --fix","ts,tsx":"KIT_LINT_RAPIDO=1 node_modules/.bin/eslint --cache","sh":"shellcheck"}' ] \
+  || fail "--lint-fichero sustituye su clave y añade otra: $(cat "$li/.agents-kit.json")"
+[ "$(jq -r '.lint.turno' "$li/.agents-kit.json")" = 'sh .agents-kit/turno.sh' ] || fail "--lint-fichero no debe tocar lint.turno"
+out="$(bash "$S" "$li" --lint-fichero 'sh=shellcheck' 2>/dev/null)"
+[ "$(last_line "$out")" = "FIN: 0" ] || fail "--lint idempotente: $(last_line "$out")"
+l2="$(new_repo)"
+bash "$S" "$l2" --lint-turno 'sh .agents-kit/turno.sh' >/dev/null 2>&1 || fail "--lint-turno solo: exit $?"
+[ "$(jq -c '.lint' "$l2/.agents-kit.json")" = '{"turno":"sh .agents-kit/turno.sh"}' ] || fail "--lint-turno solo: $(cat "$l2/.agents-kit.json")"
+for bad in "--lint-fichero" "--lint-fichero ts" "--lint-fichero =eslint" "--lint-fichero ts=" "--lint-turno"; do
+  bash "$S" "$l2" $bad >/dev/null 2>&1; [ $? -eq 1 ] || fail "'$bad' debe salir 1"
+done
+bash "$S" "$l2" --lint-turno '' >/dev/null 2>&1; [ $? -eq 1 ] || fail "--lint-turno vacío debe salir 1"
+grep -q -- '--lint-fichero <exts>=<comando>' "$S" && grep -q -- '--lint-turno <comando>' "$S" \
+  || fail "la cabecera de uso debe documentar --lint-fichero y --lint-turno"
+
 bash "$S" "/nonexistent-dir-xyz" >/dev/null 2>&1; [ $? -eq 2 ] || fail "missing dir should exit 2"
 nd="$(mktemp -d)"; dirs+=("$nd")
 bash "$S" "$nd" >/dev/null 2>&1; [ $? -eq 2 ] || fail "non-git dir should exit 2"

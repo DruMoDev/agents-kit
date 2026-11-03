@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Tests for templates/reglas/turno.sh (lint.turno: tsc baseline of the changed files plus typed ESLint), with fake
+# tsc and eslint passed in KIT_TSC and KIT_ESLINT.
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
+command -v node >/dev/null 2>&1 || fail "falta node"
+T="$REPO_ROOT/templates/reglas/turno.sh"
+[ -f "$T" ] || fail "missing templates/reglas/turno.sh"
+
+d="$(mktemp -d)"
+trap 'rm -rf "$d" "$repo"' EXIT
+cat > "$d/fake-tsc" <<EOS
+#!/usr/bin/env bash
+echo x >> "$d/tsc-calls"
+cat "$d/tsc-out" 2>/dev/null
+[ -s "$d/tsc-out" ] && exit 2
+exit 0
+EOS
+cat > "$d/fake-eslint" <<EOS
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$d/eslint-args"
+[ -f "$d/eslint-falla" ] && { echo "src/a.ts: 1:1 error no-floating-promises"; exit 1; }
+exit 0
+EOS
+chmod +x "$d/fake-tsc" "$d/fake-eslint"
+
+repo="$(mk_repo)"
+mkdir -p "$repo/.agents-kit" "$repo/src"
+cp "$REPO_ROOT/templates/reglas/tsc-base.mjs" "$repo/.agents-kit/tsc-base.mjs"
+cp "$T" "$repo/.agents-kit/turno.sh"
+echo '{"src/a.ts": 1}' > "$repo/.agents-kit/tsc-base.json"
+cd "$repo" || fail "cd"
+reset() { rm -f "$d/tsc-calls" "$d/eslint-args" "$d/eslint-falla" "$d/tsc-out"; }
+run() { out="$(KIT_TSC="$d/fake-tsc" KIT_ESLINT="$d/fake-eslint" bash .agents-kit/turno.sh "$@" 2>&1)"; rc=$?; }
+
+# nothing of code changed: neither tsc nor eslint run
+reset; run ./README.md ./docs/x.md
+[ "$rc" = 0 ] || fail "sin código rc=$rc: $out"
+[ ! -e "$d/tsc-calls" ] && [ ! -e "$d/eslint-args" ] || fail "sin código no debe lanzar tsc ni eslint"
+[ "$(tail -n 1 <<<"$out")" = "FIN: nada que comprobar" ] || fail "FIN sin código: $out"
+
+# debt of a.ts is in the baseline: a change in b.ts passes; eslint gets only the lint extensions, with cache
+reset; echo 'src/a.ts(1,1): error TS1: x' > "$d/tsc-out"
+run ./src/b.ts ./README.md ./src/c.TSX ./src/d.css
+[ "$rc" = 0 ] || fail "deuda de otro fichero rc=$rc: $out"
+[ -s "$d/tsc-calls" ] || fail "debe lanzar tsc"
+[ "$(tail -n 1 <<<"$out")" = "FIN: ok" ] || fail "FIN ok: $out"
+grep -qx -- '--cache' "$d/eslint-args" || fail "eslint sin --cache: $(cat "$d/eslint-args")"
+grep -qx './src/b.ts' "$d/eslint-args" && grep -qx './src/c.TSX' "$d/eslint-args" || fail "eslint no recibe los .ts/.tsx: $(cat "$d/eslint-args")"
+grep -q 'README.md\|d.css' "$d/eslint-args" && fail "eslint recibe ficheros sin extensión de lint: $(cat "$d/eslint-args")"
+
+# the changed file with debt (a.ts) goes in --cambiados: it must be left at zero
+reset; echo 'src/a.ts(1,1): error TS1: x' > "$d/tsc-out"
+run ./src/a.ts
+[ "$rc" = 1 ] || fail "fichero cambiado con deuda debe dar 1 (rc=$rc): $out"
+grep -q 'src/a.ts' <<<"$out" || fail "no nombra src/a.ts: $out"
+
+# eslint fails: exit 1 with its output
+reset; touch "$d/eslint-falla"
+run ./src/b.ts
+[ "$rc" = 1 ] || fail "eslint falla debe dar 1 (rc=$rc)"
+grep -q 'no-floating-promises' <<<"$out" || fail "sin la salida de eslint: $out"
+
+# only a .js changed: eslint runs, tsc too (types of the project), without --cambiados .js
+reset; run ./src/e.mjs
+[ "$rc" = 0 ] && [ -s "$d/tsc-calls" ] && grep -qx './src/e.mjs' "$d/eslint-args" || fail ".mjs: rc=$rc $out"
+
+# worktree without node_modules: 127 (the Stop hook does not block) and never a download
+reset
+out="$(bash .agents-kit/turno.sh ./src/b.ts 2>&1)"; rc=$?
+[ "$rc" = 127 ] || fail "sin node_modules debe salir 127 (rc=$rc): $out"
+grep -q 'node_modules' <<<"$out" || fail "sin node_modules debe decir qué falta: $out"
+[ ! -e "$d/tsc-calls" ] || fail "sin node_modules no debe lanzar tsc"
+grep -q 'npx' "$T" && ! grep -q 'npx --no-install' "$T" && fail "turno.sh no puede usar npx sin --no-install"
+echo "ok"

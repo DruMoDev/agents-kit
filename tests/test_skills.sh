@@ -4,7 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 # Value of a frontmatter key (first --- block) in a SKILL.md.
 fm() { awk -v k="$2" 'NR==1&&$0!="---"{exit} NR>1&&$0=="---"{exit} NR>1&&index($0,k": ")==1{print substr($0,length(k)+3); exit}' "$1"; }
 
-for s in kit-on kit-off kit-plan kit-run kit-scout kit-revisar; do
+for s in kit-on kit-off kit-plan kit-run kit-scout kit-revisar kit-reglas; do
   [ -f "$REPO_ROOT/skills/$s/SKILL.md" ] || fail "missing skills/$s/SKILL.md"
 done
 
@@ -186,6 +186,40 @@ grep -q 'kit-ship-pr.sh" abrir <raíz> kit-on con-marcador' "$on" || fail "kit-o
 grep -qi 'actualizar' "$on" || fail "kit-on must name the actualizar mode"
 grep -q '^nota:\|`nota:' "$on" || fail "kit-on must relay the v2 key notes"
 grep -q 'kit-changelog.sh" validar <wt>' "$on" || fail "kit-on must validate an existing CHANGELOG.md"
+# kit-reglas: installs the base with Dru's OK, the ratchet, and proposes rules with the critical template
+reg="$REPO_ROOT/skills/kit-reglas/SKILL.md"; regref="$REPO_ROOT/skills/kit-reglas/references"
+for f in base.md escalera.md propuesta.md; do [ -f "$regref/$f" ] || fail "missing skills/kit-reglas/references/$f"; done
+grep -q 'CLAUDE_PLUGIN_ROOT' "$reg" || fail "kit-reglas must resolve CLAUDE_PLUGIN_ROOT"
+grep -q 'scripts/kit-reglas.sh' "$reg" || fail "kit-reglas must use scripts/kit-reglas.sh"
+for sub in estado abrir cerrar trinquete blindado; do
+  grep -q "kit-reglas.sh\" $sub <wt>" "$reg" || fail "kit-reglas must call kit-reglas.sh $sub <wt>"
+done
+grep -q 'tsc-base.mjs' "$reg" || fail "kit-reglas must use tsc-base.mjs"
+grep -q 'tsc-base.mjs generar' "$reg" && grep -q 'tsc-base.mjs comprobar' "$reg" || fail "kit-reglas must generar and comprobar the tsc baseline"
+grep -q 'kit-pr.sh" regla' "$reg" || fail "kit-reglas must post the proposal with kit-pr.sh regla"
+grep -q 'kit-pr.sh" aprobar-regla' "$reg" || fail "kit-reglas must register the approval with aprobar-regla"
+grep -q -- '--chat' "$reg" || fail "kit-reglas must register a chat approval with --chat"
+grep -q 'kit-activate.sh" <wt> --lint-fichero' "$reg" && grep -q -- '--lint-turno' "$reg" && grep -q -- '--verificar-completo' "$reg" \
+  || fail "kit-reglas must write lint and verificar with kit-activate.sh"
+grep -q 'templates/reglas/turno.sh' "$reg" && grep -q 'templates/reglas/tsc-base.mjs' "$reg" || fail "kit-reglas must copy both templates"
+grep -q -- '--suppress-all' "$reg" || fail "kit-reglas must freeze the lint debt with --suppress-all"
+grep -q 'npm view <paquete> version' "$reg" || fail "kit-reglas must look versions up in the registry"
+grep -q -- '--no-install\|node_modules/.bin' "$reg" || fail "kit-reglas lint commands must never download"
+grep -q 'propuesta' "$reg" && grep -q 'knip' "$reg" || fail "kit-reglas must open the knip cleanup issue as propuesta"
+grep -q '"flujo": false' "$reg" || fail "kit-reglas must cover repos with flujo false"
+grep -qi 'etiqueta' "$reg" || fail "kit-reglas must say Dru approves by answering, never with labels"
+grep -q '<wt>' "$reg" && grep -q 'kit-on' "$reg" || fail "kit-reglas must work on a given <wt> (also kit-on's worktree)"
+for w in strictTypeChecked noInlineConfig reportUnusedDisableDirectives noUncheckedIndexedAccess exactOptionalPropertyTypes \
+    verbatimModuleSyntax noImplicitOverride noFallthroughCasesInSwitch knip ruff pyright shellcheck; do
+  grep -q "$w" "$regref/base.md" || fail "base.md must mention $w"
+done
+for w in no-restricted-syntax no-restricted-imports message ast-grep RuleTester dependency-cruiser; do
+  grep -q "$w" "$regref/escalera.md" || fail "escalera.md must mention $w"
+done
+for w in 'kit-regla' 'Qué prohíbe' 'Por qué' 'Ejemplo del error' 'Qué rompe' 'Falsos positivos' 'peldaño más barato'; do
+  grep -q "$w" "$regref/propuesta.md" || fail "propuesta.md must have '$w'"
+done
+grep -q 'npm view' "$regref/base.md" || fail "base.md must not fix versions from memory (npm view)"
 # every suite stops if lib.sh cannot be sourced, never falling back to the real repo
 for t in "$TESTS_DIR"/test_*.sh; do
   grep -qxF 'source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1' "$t" || fail "$(basename "$t") must guard its source of lib.sh"
