@@ -243,17 +243,56 @@ kr_apunta() {
   [ -z "$nuevo" ] || kr_sesion_limpia
 }
 
-# kr_anota: note "<KR_ROOT><tab><KR_REL>" in the session's file (kr_sesion_fichero sesion), so stop-check checks only
-# what this session edited and not the half-done files of other sessions in the same clone. A name with a tab or a
-# newline is noted as "*" (all the changed files of that repo). Nothing without a session_id; stop-check checks the
-# trust of every noted repo again.
+# Session file lines (kr_sesion_fichero sesion): "<root>" (kr_apunta), "<root><tab>f<tab><ruta>" (a file the session
+# edited through a tool, kr_anota) and "<root><tab>b<tab><hash>  <ruta>" (the baseline: a file that was already
+# changed when the session first edited in <root>, with its git hash-object).
+
+# kr_sucios: KR_SUC, the changed files of KR_ROOT that exist (git diff --name-only HEAD plus untracked files not
+# ignored), and KR_HASH, the git hash-object of each of them, in the same order (one git hash-object --stdin-paths;
+# empty for a name with a tab or a newline).
+kr_sucios() {
+  local p h i=0 j=0 lista=() hs=()
+  KR_SUC=(); KR_HASH=()
+  while IFS= read -r -d '' p; do
+    [ -f "$KR_ROOT/$p" ] || continue
+    KR_SUC+=("$p")
+    case "$p" in *$'\t'*|*$'\n'*) ;; *) lista+=("$p") ;; esac
+  done < <(git -C "$KR_ROOT" diff --name-only --no-renames -z HEAD -- 2>/dev/null
+           git -C "$KR_ROOT" ls-files --others --exclude-standard -z 2>/dev/null)
+  if [ ${#lista[@]} -gt 0 ]; then
+    while IFS= read -r h; do hs+=("$h"); done < <(printf '%s\n' "${lista[@]}" \
+      | git -C "$KR_ROOT" hash-object --stdin-paths 2>/dev/null)
+  fi
+  while [ $i -lt ${#KR_SUC[@]} ]; do
+    h=""
+    case "${KR_SUC[$i]}" in *$'\t'*|*$'\n'*) ;; *) h="${hs[$j]-}"; j=$((j + 1)) ;; esac
+    KR_HASH+=("$h"); i=$((i + 1))
+  done
+}
+
+# kr_anota: note the file KR_REL of KR_ROOT for this session ("f" line), so stop-check checks what this session did
+# and not the half-done files of other sessions in the same clone. The first note of the session in a root also
+# writes its baseline ("b" lines, kr_sucios), so stop-check still checks what the session changes by shell. A name
+# with a tab or a newline is noted as "*" (all the changed files of that repo). Nothing without a session_id; the
+# caller checks the trust first (kr_confianza), and stop-check checks it again for every noted root.
 kr_anota() {
-  local f nuevo="" l rel="$KR_REL"
+  local f l rel="$KR_REL" nuevo="" hay="" x
   [ -n "$KR_SID" ] && f="$(kr_sesion_fichero sesion)" || return 0
   case "$rel" in *$'\t'*|*$'\n'*) rel='*' ;; esac
-  l="$KR_ROOT"$'\t'"$rel"
-  [ -e "$f" ] || nuevo=1
-  grep -qxF -- "$l" "$f" 2>/dev/null || printf '%s\n' "$l" >> "$f"
+  l="$KR_ROOT"$'\t'"f"$'\t'"$rel"
+  if [ -e "$f" ]; then
+    grep -qxF -- "$l" "$f" 2>/dev/null && return 0
+    while IFS= read -r x; do case "$x" in "$KR_ROOT"$'\t'*) hay=1; break ;; esac; done < "$f"
+  else nuevo=1; fi
+  if [ -z "$hay" ]; then
+    kr_sucios
+    x=0
+    while [ $x -lt ${#KR_SUC[@]} ]; do
+      [ -z "${KR_HASH[$x]}" ] || printf '%s\tb\t%s  %s\n' "$KR_ROOT" "${KR_HASH[$x]}" "${KR_SUC[$x]}"
+      x=$((x + 1))
+    done >> "$f"
+  fi
+  printf '%s\n' "$l" >> "$f"
   [ -z "$nuevo" ] || kr_sesion_limpia
 }
 

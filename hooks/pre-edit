@@ -72,7 +72,7 @@ while [ $i -lt ${#KR_ITEMS[@]} ]; do
       exit 2
     fi
   fi
-  kr_anota
+  ! kr_confianza || kr_anota
   kr_apunta
 done
 if [ -n "$ilegible" ] && kr_root && kr_config; then echo "$ilegible_msg" >&2; exit 2; fi

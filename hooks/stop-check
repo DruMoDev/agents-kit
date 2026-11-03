@@ -2,10 +2,12 @@
 # Stop hook. For the repo of the cwd and for every repo noted for this session by pre-edit/post-edit (kr_apunta: edits
 # in a repo that does not contain the cwd, such as a kit-run worktree), when it has .agents-kit.json and .lint.turno:
 # passes its changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as arguments to
-# .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root. When the
-# session noted the files it edited (kr_anota, "<root><tab><ruta>" lines in its file), only those of them that are
-# still changed are passed, so the half-done files of other sessions in the same clone do not block this one; a
-# session with no noted file (it edited nothing through the tools: maybe by shell) gets all the changed files.
+# .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root. In a repo
+# where the session noted the files it edited (kr_anota, lines in hooks/lib-reglas.sh), it passes those that are
+# still changed plus any changed file that is not in the session's baseline (unless another session noted it) or
+# whose hash changed since (an edit by shell); so the half-done files of other sessions in the same clone do not
+# block this one. A repo with no noted file (the session edited nothing there through the tools) gets all its
+# changed files.
 # Exit 2 with the output on stderr when any fails; 0 with nothing changed, when a lock is busy, when the tool is
 # missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks again with stop_hook_active, up to
 # KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in kr_sesion_fichero turno-bloqueos, one file per
@@ -27,14 +29,21 @@ kr_cwd_common || exit 0
 ! kr_root || add_root
 ses=""
 [ -z "$KR_SID" ] || ses="$(kr_sesion_fichero sesion)" || ses=""
-anotados=$'\n'; registro=""
+propio=$'\n'; ajeno=$'\n'
 if [ -n "$ses" ] && [ -f "$ses" ]; then
   while IFS= read -r l; do
     r="${l%%$'\t'*}"
     case "$r" in /*) ;; *) continue ;; esac
-    [ "$r" = "$l" ] || { registro=1; anotados="$anotados$l"$'\n'; }
+    [ "$r" = "$l" ] || propio="$propio$l"$'\n'
     [ -d "$r" ] && _kr_git "$r" && [ "$KR_ROOT" = "$r" ] && kr_confianza && add_root
   done < "$ses"
+  # files that other sessions noted as theirs ("f" lines of their session files)
+  for o in "${ses%/*}"/sesion-*; do
+    [ "$o" != "$ses" ] && [ -f "$o" ] && [ ! -L "$o" ] || continue
+    while IFS= read -r l; do
+      case "$l" in /*$'\t'f$'\t'*) ajeno="$ajeno$l"$'\n' ;; esac
+    done < "$o"
+  done
 fi
 [ ${#roots[@]} -gt 0 ] || exit 0
 cuenta="$(kr_sesion_fichero turno-bloqueos)" || cuenta=""
@@ -52,15 +61,29 @@ final=0; j=0
 while [ $j -lt ${#roots[@]} ]; do
   KR_ROOT="${roots[$j]}"; KR_COMMON="${commons[$j]}"; j=$((j + 1))
   kr_config && [ -n "$KR_TURNO" ] || continue
-  files=()
-  while IFS= read -r -d '' f; do
-    [ -f "$KR_ROOT/$f" ] || continue
-    if [ -n "$registro" ]; then
-      case "$anotados" in *$'\n'"$KR_ROOT"$'\t'"$f"$'\n'*|*$'\n'"$KR_ROOT"$'\t*\n'*) ;; *) continue ;; esac
+  files=(); kr_sucios
+  # Only a root this session noted files in is filtered (paths without case on macOS, like kr_resolve). A changed
+  # file this session did not note is skipped when it is in its baseline with the same hash, or when it is not in
+  # the baseline and another session noted it (that session started it after this one's first edit). Anything else
+  # (an edit by shell, a baseline file whose hash changed) goes. A root without notes gets all its changed files.
+  case "$OSTYPE" in darwin*) shopt -s nocasematch ;; esac
+  filtra=""
+  case "$propio" in *$'\n'"$KR_ROOT"$'\t'f$'\t'*) filtra=1 ;; esac
+  k=0
+  while [ $k -lt ${#KR_SUC[@]} ]; do
+    f="${KR_SUC[$k]}"; h="${KR_HASH[$k]}"; k=$((k + 1))
+    if [ -n "$filtra" ]; then
+      case "$propio" in
+        *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*|*$'\n'"$KR_ROOT"$'\tf\t*\n'*) ;;
+        *) [ -z "$h" ] || case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'"$h  $f"$'\n'*) continue ;; esac
+           case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'*"  $f"$'\n'*) ;; *)
+             case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac ;;
+           esac ;;
+      esac
     fi
     files+=("./$f")
-  done < <(git -C "$KR_ROOT" diff --name-only --no-renames -z HEAD -- 2>/dev/null
-           git -C "$KR_ROOT" ls-files --others --exclude-standard -z 2>/dev/null)
+  done
+  shopt -u nocasematch
   [ ${#files[@]} -gt 0 ] || continue
   what="los ficheros cambiados"
   case "$KR_CWD/" in "$KR_ROOT"/*) ;; *) what="los ficheros cambiados de $KR_ROOT" ;; esac

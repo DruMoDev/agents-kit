@@ -540,25 +540,52 @@ marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/fakelint\"}, \"turno\": \"$bin/
 export TMPDIR="$(mktemp -d)"
 sesj() { inp --arg c "$r" --arg s "$1" --arg f "$2" --arg e "$3" '{session_id: $s, cwd: $c, hook_event_name: $e,
   tool_name: "Write", tool_input: {file_path: $f, content: "x"}}'; }
-echo 'export const a = 2;' > "$r/src/a.ts"; hook post-edit "$(sesj sa src/a.ts PostToolUse)"
+# sb deja b.ts a medias; luego sa edita a.ts (su línea base ya tiene b.ts) y sc, después, c.ts
 echo 'export const b = 2;' > "$r/src/b.ts"; hook post-edit "$(sesj sb src/b.ts PostToolUse)"
+hook pre-edit "$(sesj sa src/a.ts PreToolUse)"; [ $rc -eq 0 ] || fail "pre-edit de a.ts: $rc $out"
+echo 'export const a = 2;' > "$r/src/a.ts"; hook post-edit "$(sesj sa src/a.ts PostToolUse)"
 hook pre-edit "$(sesj sc src/c.ts PreToolUse)"; [ $rc -eq 0 ] || fail "pre-edit de c.ts: $rc $out"
 echo 'export const c = 2;' > "$r/src/c.ts"
 : > "$LOG"; hook stop-check "$(sjson sa false)"
-[ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/a.ts ] || fail "sa solo revisa lo suyo y b.ts de sb no la bloquea: $rc $out / $(cat "$LOG")"
+[ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/a.ts ] || fail "sa solo revisa lo suyo (b.ts en su línea base, c.ts de sc): $rc $out / $(cat "$LOG")"
 : > "$LOG"; hook stop-check "$(sjson sb false)"
-[ $rc -eq 2 ] && [ "$(cat "$LOG")" = ./src/b.ts ] || fail "sb revisa su b.ts: $rc $out / $(cat "$LOG")"
+[ $rc -eq 2 ] && [ "$(cat "$LOG")" = ./src/b.ts ] || fail "sb revisa su b.ts (a.ts y c.ts son de otras): $rc $out / $(cat "$LOG")"
 : > "$LOG"; hook stop-check "$(sjson sc false)"
 [ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/c.ts ] || fail "lo anotado por pre-edit cuenta: $rc $out / $(cat "$LOG")"
+# lo que sa cambia por shell tras su primera edición sí se revisa: un fichero nuevo y b.ts si cambia desde su base
+echo 'export const d = 1;' > "$r/src/d.ts"
+: > "$LOG"; hook stop-check "$(sjson sa false)"
+[ $rc -eq 0 ] && [ "$(sort "$LOG" | tr '\n' ' ')" = "./src/a.ts ./src/d.ts " ] || fail "una edición por shell de sa se revisa: $rc $(cat "$LOG")"
+echo 'export const b = 3;' > "$r/src/b.ts"
+: > "$LOG"; hook stop-check "$(sjson sa false)"
+[ $rc -eq 2 ] && grep -qx ./src/b.ts "$LOG" || fail "un fichero de la línea base que cambia se revisa: $rc $(cat "$LOG")"
+echo 'export const b = 2;' > "$r/src/b.ts"
 : > "$LOG"; hook stop-check "$(sjson sin-registro false)"
 got="$(sort "$LOG" | tr '\n' ' ')"
-[ $rc -eq 2 ] && [ "$got" = "./src/a.ts ./src/b.ts ./src/c.ts " ] || fail "sin registro, todo lo sucio: $rc $got"
-git -C "$r" checkout -q -- src/a.ts
+[ $rc -eq 2 ] && [ "$got" = "./src/a.ts ./src/b.ts ./src/c.ts ./src/d.ts " ] || fail "sin registro, todo lo sucio: $rc $got"
+rm -f "$r/src/d.ts"; git -C "$r" checkout -q -- src/a.ts
 : > "$LOG"; hook stop-check "$(sjson sa false)"
 [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un fichero anotado que ya no está cambiado no se pasa: $rc $(cat "$LOG")"
 rm -f "$r/src/c.ts"
 : > "$LOG"; hook stop-check "$(sjson sc false)"
 [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un fichero anotado que ya no existe no se pasa: $rc $(cat "$LOG")"
+# el filtro es por raíz: una raíz sin anotaciones de la sesión se revisa entera
+rw="$(mktemp -d)/wt2"; git -C "$r" worktree add -q -b wt2 "$rw" || fail "worktree wt2"
+echo 'export const w = 1;' > "$rw/src/w.ts"
+hook post-edit "$(inp --arg c "$r" --arg f "$rw/src/w.ts" '{session_id: "sa", cwd: $c, tool_name: "Write", tool_input: {file_path: $f, content: "x"}}')"
+echo 'export const e = 1;' > "$r/src/e2.ts"
+: > "$LOG"; hook stop-check "$(sjson sa false)"
+grep -qx ./src/w.ts "$LOG" && grep -qx ./src/e2.ts "$LOG" && ! grep -qx ./src/b.ts "$LOG" \
+  || fail "cada raíz filtra con sus propias anotaciones: $rc $(cat "$LOG")"
+rm -f "$r/src/e2.ts"; git -C "$r" worktree remove --force "$rw"
+if [ "$(uname)" = Darwin ]; then
+  echo 'export const m = 2;' > "$r/src/mayus.ts"
+  hook post-edit "$(sesj sm SRC/MAYUS.TS PostToolUse)"
+  echo 'export const n = 2;' > "$r/src/otra.ts"; hook post-edit "$(sesj sn src/otra.ts PostToolUse)"
+  : > "$LOG"; hook stop-check "$(sjson sm false)"
+  [ "$(cat "$LOG")" = ./src/mayus.ts ] || fail "en macOS, lo anotado se compara sin mayúsculas: $rc $(cat "$LOG")"
+  rm -f "$r/src/mayus.ts" "$r/src/otra.ts"
+fi
 git -C "$r" checkout -q -- src/b.ts
 
 # --- pre-bash: saltarse los hooks de git
