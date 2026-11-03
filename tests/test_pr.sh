@@ -837,5 +837,22 @@ case "$err" in *"la deuda crece"*|*"ficheros de reglas"*) fail "con aprobación 
 bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 7"
 out="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1)" || fail "deuda que crece con aprobación: $out"
 [ "$(pr_q '.state')" = MERGED ] || fail "deuda que crece con aprobación: no fusionó"
+# a base whose blindado leaves eslint-suppressions.json out: approving eslint.config.mjs never lets its growth through
+echo '{"revision":{"puestos":[]},"lint":{"fichero":{"ts":"true"}},"blindado":["eslint.config.*"]}' > "$rr/.agents-kit.json"
+(cd "$rr" && git add -A && git commit -q -m "blindado sin la deuda" && git push -q origin main) >/dev/null 2>&1 || fail "reglas: blindado sin la deuda"
+(cd "$w2" && git fetch -q origin && git reset -q --hard origin/main && echo 'export default [{rules: {x: 1}}];' > eslint.config.mjs \
+  && printf '{"src/a.ts":{"no-unused-vars":{"count":2}}}\n' > eslint-suppressions.json && git add -A \
+  && git commit -q -m "regla y deuda fuera del blindado" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 \
+  || fail "reglas: deuda fuera del blindado"
+st "(.prs[] | select(.number == $p2)) |= (.state = \"OPEN\" | del(.headRefOid))"
+bash "$pr" regla "$w2" "$p2" "$tmp/regla" >/dev/null 2>&1 || fail "regla con blindado sin la deuda"
+flow_add_comment 7 "Vale la regla."
+bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 7)" >/dev/null 2>&1 || fail "aprobar con blindado sin la deuda"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 8"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "deuda fuera del blindado: exit $rc ($err)"
+case "$err" in *"  - la deuda crece: src/a.ts no-unused-vars"*) ;; *) fail "deuda fuera del blindado: $err";; esac
+case "$err" in *"ficheros de reglas"*) fail "deuda fuera del blindado: la regla no quedó aprobada: $err";; esac
+[ "$(pr_q '.state')" = OPEN ] || fail "deuda fuera del blindado: fusionó"
 
 echo "OK test_pr"

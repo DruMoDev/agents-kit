@@ -23,7 +23,8 @@
 #   own kit-regla. fusionar requires an own kit-regla-aprobada with the current hash and a valid answer: when the
 #   shielded diff changes, another proposal and another answer. Same gh account for agent and Dru: a known limit.
 # fusionar also runs kit-reglas.sh trinquete when the marker of origin/<base> declares lint: debt in a touched file
-# always blocks; debt that grows blocks unless the PR has a valid kit-regla-aprobada (the debt files are shielded).
+# always blocks; debt that grows blocks unless the PR has a valid kit-regla-aprobada and its debt file
+# (eslint-suppressions.json or .agents-kit/tsc-base.json) is among the approved shielded files.
 # Env: KIT_CI_TIMEOUT (s; default: ciTimeoutMin of the config, else from the repo history, lib/ci.sh), KIT_CI_POLL (s, default 15),
 #   KIT_CI_GRACE (s, default 300: with workflows but no check run for the SHA after it, esperar-ci reports sin-ci).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
@@ -550,11 +551,17 @@ $cl_err") ;;
       tq="$("$here/kit-reglas.sh" trinquete "$wt" "origin/$base" 2>&1 >/dev/null)"; tq_rc=$?
       case $tq_rc in
         0) ;;
-        # debt that grows is in the shielded files (eslint-suppressions.json, .agents-kit/tsc-base.json), so in the
-        # approved hash: with a valid approval it merges. Debt in a touched file always blocks.
+        # debt that grows merges with a valid approval only when its debt file (eslint-suppressions.json for lint,
+        # .agents-kit/tsc-base.json for types) is among the approved shielded files, so the growth is in the approved
+        # hash (a repo may take them out of blindado). Debt in a touched file always blocks.
         1) while IFS= read -r line; do
              [ -n "$line" ] || continue
-             case "$line" in "la deuda crece: "*) [ "$approved" = true ] && continue ;; esac
+             if [ "$approved" = true ]; then
+               case "$line" in
+                 "la deuda crece: "*" tipos") case ", $sh_list, " in *", .agents-kit/tsc-base.json, "*) continue ;; esac ;;
+                 "la deuda crece: "*) case ", $sh_list, " in *", eslint-suppressions.json, "*) continue ;; esac ;;
+               esac
+             fi
              reasons+=("$line")
            done <<< "$tq" ;;
         *) echo "error: kit-reglas.sh trinquete falló (exit $tq_rc): $tq" >&2; exit 2 ;;
