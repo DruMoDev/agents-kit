@@ -14,5 +14,9 @@
   "implementador": { "familia": "claude", "nivel": "profundo" },
   "notify": "ntfy",
   "autoMerge": true,
-  "maxReviewRounds": 10
+  "maxReviewRounds": 10,
+  "blindado": [
+    "eslint.config.*", "tsconfig*.json", "knip.*", ".dependency-cruiser.*", "sgconfig.yml", "eslint-suppressions.json",
+    ".agents-kit/", ".agents-kit.json", "lefthook.yml", ".husky/", ".github/workflows/", "reglas/"
+  ]
 }
