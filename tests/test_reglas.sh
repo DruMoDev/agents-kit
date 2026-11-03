@@ -137,6 +137,73 @@ for x in ".agents-kit.json" "tsconfig.base.json" "reglas/r.mjs"; do grep -qxF "$
 [ "$(last_line "$out")" = "FIN: 3" ] || fail "FIN con marcador y no versionados: $out"
 limpia
 
+# --- estado con un fichero de deuda roto: error de entorno, nunca "ninguna"
+echo 'no json' > "$r/eslint-suppressions.json"
+run estado "$r"; [ $rc -eq 2 ] || fail "estado con supresiones rotas debe dar 2: $out"
+limpia
+echo '[1' > "$r/.agents-kit/tsc-base.json"
+run estado "$r"; [ $rc -eq 2 ] || fail "estado con tsc-base roto debe dar 2: $out"
+limpia
+
+# --- la puerta no falla abierta: si git diff falla, exit 2
+realgit="$(command -v git)"; sb="$(mktemp -d)"
+printf '#!/bin/sh\ncase " $* " in *" --name-only "*) echo "fallo simulado" >&2; exit 1 ;; esac\nexec "%s" "$@"\n' "$realgit" > "$sb/git"
+chmod +x "$sb/git"
+echo "// cambio" >> "$r/src/a.ts"
+out="$(PATH="$sb:$PATH" bash "$k" trinquete "$r" origin/main 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "trinquete con git diff roto debe dar 2: $rc $out"
+echo x > "$r/eslint.config.mjs"
+out="$(PATH="$sb:$PATH" bash "$k" blindado "$r" origin/main 2>&1)"; rc=$?
+[ $rc -eq 2 ] || fail "blindado con git diff roto debe dar 2: $rc $out"
+limpia
+
+# --- package.json: versiones, overrides y scripts llamados por los de lint
+pj() { jq "$1" "$r/package.json" > "$r/p" && mv "$r/p" "$r/package.json" || fail "pj $1"; }
+pj '.scripts.lint = "npm run -s lint:base && pnpm check && yarn run fmt" | .scripts.check = "tsc" | .scripts.fmt = "prettier"
+  | .scripts["lint:base"] = "eslint ." | .scripts.otro = "x" | .optionalDependencies = {"typescript": "5"}'
+push_main pj-base
+pj '.devDependencies.eslint = "10"'
+run blindado "$r" origin/main
+grep -qxF "package.json (cambiada eslint)" <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] || fail "versión de eslint cambiada: $out"
+h1="$(sed -n 's/^hash: //p' <<<"$out")"
+pj '.devDependencies.eslint = "11"'
+run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" != "$h1" ] || fail "la versión debe entrar en el hash"
+limpia
+pj '.devDependencies.vitest = "4" | .scripts.otro = "y" | del(.optionalDependencies.typescript)'
+run blindado "$r" origin/main
+grep -qxF "package.json (quitada typescript)" <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] || fail "quitada de optionalDependencies: $out"
+limpia
+pj '.scripts.check = "tsc -b" | .scripts.fmt = "prettier -w" | .scripts["lint:base"] = "eslint src"'
+run blindado "$r" origin/main
+for x in "package.json (scripts.check)" "package.json (scripts.fmt)" "package.json (scripts.lint:base)"; do
+  grep -qxF "$x" <<<"$out" || fail "script llamado desde lint sin '$x': $out"
+done
+[ "$(last_line "$out")" = "FIN: 3" ] || fail "FIN scripts llamados: $out"
+limpia
+pj '.overrides = {"foo": {"eslint": "8"}, "react": "19"} | .resolutions = {"**/typescript": "5"} | .pnpm.overrides = {"knip@<5": "5"}'
+run blindado "$r" origin/main
+for x in "package.json (overrides foo>eslint)" "package.json (overrides **/typescript)" "package.json (overrides knip@<5)"; do
+  grep -qxF "$x" <<<"$out" || fail "overrides sin '$x': $out"
+done
+[ "$(last_line "$out")" = "FIN: 3" ] || fail "overrides de react no cuenta: $out"
+h1="$(sed -n 's/^hash: //p' <<<"$out")"
+pj '.overrides.foo.eslint = "9"'
+run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" != "$h1" ] || fail "los overrides deben entrar en el hash"
+limpia
+
+# --- globs: * cruza /, prefijos y rutas con espacios
+mkdir -p "$r/config" "$r/.github/workflows"
+echo '{}' > "$r/config/tsconfig.base.json"; echo 'on: push' > "$r/.github/workflows/c i.yml"
+run blindado "$r" origin/main
+grep -qxF "config/tsconfig.base.json" <<<"$out" && grep -qxF ".github/workflows/c i.yml" <<<"$out" \
+  && [ "$(last_line "$out")" = "FIN: 2" ] || fail "tsconfig en subdirectorio y workflow con espacios: $out"
+push_main globs
+echo 'on: pull_request' > "$r/.github/workflows/c i.yml"
+run blindado "$r" origin/main
+grep -qxF ".github/workflows/c i.yml" <<<"$out" && grep -q '^hash: ' <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] \
+  || fail "workflow versionado con espacios en el hash: $out"
+limpia
+
 # --- abrir y cerrar
 w="$(mktemp -d)/wt"; git -C "$r" worktree add -q -b otra "$w" >/dev/null 2>&1 || fail "worktree"
 f="$r/.git/agents-kit/reglas-abiertas"

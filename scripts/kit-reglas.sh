@@ -18,11 +18,18 @@
 #   trinquete: exit 1 with one line per reason on stderr when a changed or deleted file still has entries in the
 #     suppressions or the tsc baseline of the tree ("deuda en fichero tocado: <ruta> (lint|tipos)"), or when either
 #     file adds a key or raises a count against the merge base ("la deuda crece: <ruta> <regla>|tipos"). FIN: ok.
-#   blindado: one line per changed shielded file (globs of .blindado from the marker of <ref>, never of the tree, as
-#     bash patterns; an entry ending in / is a prefix) and per package.json change that counts ("package.json
-#     (scripts.<clave>)" for lint*/typecheck* scripts, "package.json (quitada <dep>)" for a removed dependency whose
-#     name contains eslint, typescript, knip or dependency-cruiser). A change that only shrinks eslint-suppressions.json
-#     or .agents-kit/tsc-base.json does not count. Then "hash: <sha256>" of the diff of those files plus the
+#   blindado: one line per changed shielded file and per package.json change that counts. The globs of .blindado come
+#     from the marker of <ref>, never of the tree, and match the whole path as bash patterns ([[ == ]]: * crosses /,
+#     so *tsconfig*.json also matches config/tsconfig.base.json); an entry ending in / is a prefix. A change that only
+#     shrinks eslint-suppressions.json or .agents-kit/tsc-base.json does not count. Lint dependencies are those whose
+#     name contains eslint, typescript, knip or dependency-cruiser. package.json lines:
+#       "package.json (scripts.<x>)": a lint*/typecheck* script changed, or a script one of them calls (one level:
+#         npm run <x>, pnpm [run] <x>, yarn [run] <x>, bun run <x>, in the base or the tree);
+#       "package.json (quitada <dep>)" / "package.json (cambiada <dep>)": a lint dependency removed or with another
+#         value (dependencies, devDependencies, peerDependencies, optionalDependencies);
+#       "package.json (overrides <clave>)": overrides, resolutions or pnpm.overrides changed for a key (nested keys
+#         joined with >) that names a lint dependency.
+#     Then "hash: <sha256>" of the diff of those files (fixed options, without the user's git config) plus the
 #     normalized package.json fragment, and FIN: <n>; FIN: 0 without hash if none.
 #   abrir/cerrar: create (with <session_id>) or delete <git-common-dir>/agents-kit/reglas-abiertas, which lets the
 #     pre-edit hook pass edits to shielded files. FIN: abierto / FIN: cerrado.
@@ -70,8 +77,16 @@ set_base() {
 
 # changed_list: NUL-separated paths changed in the tree against $mb (deleted ones included) plus untracked ones.
 changed_list() {
-  git -c core.quotepath=false diff -z --name-only --no-renames "$mb" -- || return 2
-  git ls-files -z --others --exclude-standard || return 2
+  git --literal-pathspecs -c core.quotepath=false diff -z --name-only --no-renames "$mb" -- || return 2
+  git --literal-pathspecs ls-files -z --others --exclude-standard || return 2
+}
+
+# list_changed: write changed_list to a new temp file ($lst, removed on exit); exit 2 if git fails, so the gate never
+# fails open.
+list_changed() {
+  lst="$(mktemp)" || exit 2
+  trap 'rm -f "$lst"' EXIT
+  changed_list > "$lst" || { echo "error: no pude listar los ficheros cambiados (git falló)" >&2; exit 2; }
 }
 
 # grows_sup / grows_tsb: print "<ruta>TAB<regla>" for each key added or count raised against the merge base.
@@ -119,9 +134,11 @@ case "$sub" in
         echo "knip: $v"
         ;;
     esac
-    n="$(json_tree "$SUP" | jq '[.[] | objects | length] | add // 0')" || exit 2
+    j="$(json_tree "$SUP")" || exit 2
+    n="$(jq '[.[] | objects | length] | add // 0' <<<"$j")" || exit 2
     if [ "$n" -gt 0 ]; then echo "deuda-lint: $n entradas"; else echo "deuda-lint: ninguna"; fi
-    n="$(json_tree "$TSB" | jq 'length')" || exit 2
+    j="$(json_tree "$TSB")" || exit 2
+    n="$(jq 'length' <<<"$j")" || exit 2
     if [ "$n" -gt 0 ]; then echo "deuda-tsc: $n ficheros"; else echo "deuda-tsc: ninguna"; fi
     if [ $completa -eq 1 ]; then echo "FIN: base completa"; else echo "FIN: base incompleta"; fi
     ;;
@@ -129,11 +146,12 @@ case "$sub" in
   trinquete)
     set_base "$1"
     sup="$(json_tree "$SUP")" || exit 2; tsb="$(json_tree "$TSB")" || exit 2
+    list_changed
     motivos=""
     while IFS= read -r -d '' f; do
       jq -e --arg f "$f" 'has($f)' <<<"$sup" >/dev/null && motivos="$motivos"$'\n'"deuda en fichero tocado: $f (lint)"
       jq -e --arg f "$f" 'has($f)' <<<"$tsb" >/dev/null && motivos="$motivos"$'\n'"deuda en fichero tocado: $f (tipos)"
-    done < <(changed_list)
+    done < "$lst"
     crece="$(grows_sup)" || exit 2; c2="$(grows_tsb)" || exit 2
     crece="$(printf '%s\n%s' "$crece" "$c2" | sed '/^$/d' | tr '\t' ' ')"
     [ -z "$crece" ] || motivos="$motivos"$'\n'"$(sed 's/^/la deuda crece: /' <<<"$crece")"
@@ -145,6 +163,7 @@ case "$sub" in
     ref="$1"
     set_base "$ref"
     globs="$(kit_config_base "$wt" '.blindado // [] | .[]' "$ref")" || exit 2
+    list_changed
     lista=(); nuevos=(); total=0
     while IFS= read -r -d '' f; do
       hit=0
@@ -157,29 +176,54 @@ case "$sub" in
       if [ "$f" = "$SUP" ]; then c="$(grows_sup)" || exit 2; [ -n "$c" ] || continue; fi
       if [ "$f" = "$TSB" ]; then c="$(grows_tsb)" || exit 2; [ -n "$c" ] || continue; fi
       echo "$f"; total=$((total + 1))
-      if git cat-file -e "$mb:$f" 2>/dev/null || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then lista+=("$f"); else nuevos+=("$f"); fi
-    done < <(changed_list)
+      if git cat-file -e "$mb:$f" 2>/dev/null || git --literal-pathspecs ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+        lista+=("$f")
+      else
+        nuevos+=("$f")
+      fi
+    done < "$lst"
     frag=""
-    if ! git diff --quiet "$mb" -- package.json 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard -- package.json)" ]; then
+    if ! git --literal-pathspecs diff --quiet "$mb" -- package.json 2>/dev/null \
+        || [ -n "$(git --literal-pathspecs ls-files --others --exclude-standard -- package.json)" ]; then
       pb="$(json_base package.json)" || exit 2; ph="$(json_tree package.json)" || exit 2
+      # Each part is {<clave>: {antes, ahora}} with only what differs; a missing value is null.
       frag="$(jq -cnS --argjson b "$pb" --argjson h "$ph" --arg re "$LINT_DEP" '
-        def lscripts: (.scripts // {}) | with_entries(select(.key | test("^(lint|typecheck)")));
-        def deps: [.dependencies, .devDependencies, .peerDependencies | objects | keys[]] | unique;
-        ($b | lscripts) as $sb | ($h | lscripts) as $sh |
-        {scripts: [($sb + $sh) | keys[] | select($sb[.] != $sh[.]) | {key: ., value: {antes: $sb[.], ahora: $sh[.]}}] | from_entries,
-         quitadas: [($b | deps) - ($h | deps) | .[] | select(test($re))]}
-        | if (.scripts | length) == 0 and (.quitadas | length) == 0 then empty else . end')" || exit 2
+        def diffmap($x; $y): [($x + $y) | keys[] | select($x[.] != $y[.]) | {key: ., value: {antes: $x[.], ahora: $y[.]}}]
+          | from_entries;
+        def lkeys: (.scripts // {}) | objects | keys[] | select(test("^(lint|typecheck)"));
+        def calls: (.scripts // {}) as $s | lkeys | $s[.] | strings |
+          scan("(?:^|[\\s;&|(])(?:npm\\s+run(?:-script)?|pnpm(?:\\s+run)?|yarn(?:\\s+run)?|bun\\s+run)\\s+(?:-\\S+\\s+)*([^\\s;&|()]+)")[0];
+        def deps: [.dependencies, .devDependencies, .peerDependencies, .optionalDependencies | objects | to_entries[]]
+          | group_by(.key) | map({key: .[0].key, value: map(.value)}) | from_entries
+          | with_entries(select(.key | test($re)));
+        def ovr: [{s: "overrides", v: .overrides}, {s: "resolutions", v: .resolutions}, {s: "pnpm.overrides", v: .pnpm.overrides?}]
+          | map(.s as $s | .v | objects | paths(scalars) as $p | {key: ($p | map(tostring) | join(">")), value: {($s): getpath($p)}})
+          | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries
+          | with_entries(select(.key | test($re)));
+        ([$b, $h] | map(lkeys, calls) | unique) as $ks |
+        def sobj: .scripts | if type == "object" then . else {} end;
+        ($b | sobj) as $sb | ($h | sobj) as $sh |
+        ($b | deps) as $db | ($h | deps) as $dh |
+        {scripts: diffmap($sb | with_entries(select(.key | IN($ks[]))); $sh | with_entries(select(.key | IN($ks[])))),
+         quitadas: [$db | keys[] | select($dh[.] == null)],
+         cambiadas: diffmap($db | with_entries(select(.key | IN($dh | keys[]))); $dh | with_entries(select(.key | IN($db | keys[])))),
+         overrides: diffmap($b | ovr; $h | ovr)}
+        | if (.scripts | length) + (.quitadas | length) + (.cambiadas | length) + (.overrides | length) == 0 then empty else . end')" \
+        || { echo "error: no pude comparar package.json" >&2; exit 2; }
       if [ -n "$frag" ]; then
-        jq -r '(.scripts | keys[] | "package.json (scripts.\(.))"), (.quitadas[] | "package.json (quitada \(.))")' <<<"$frag"
-        total=$((total + $(jq '(.scripts | length) + (.quitadas | length)' <<<"$frag")))
+        jq -r '(.scripts | keys[] | "package.json (scripts.\(.))"), (.quitadas[] | "package.json (quitada \(.))"),
+          (.cambiadas | keys[] | "package.json (cambiada \(.))"), (.overrides | keys[] | "package.json (overrides \(.))")' <<<"$frag"
+        total=$((total + $(jq '(.scripts | length) + (.quitadas | length) + (.cambiadas | length) + (.overrides | length)' <<<"$frag")))
       fi
     fi
     if [ $total -gt 0 ]; then
-      # Fixed diff options so the hash does not depend on the user's git config.
+      # Fixed diff options, without global or system git config, so the hash does not depend on the user's setup.
+      # -O/dev/null overrides a repo diff.orderFile (an empty diff.orderFile= makes git fail).
       dif=""
       if [ ${#lista[@]} -gt 0 ]; then
-        dif="$(git -c core.quotepath=false diff --no-ext-diff --no-textconv --no-color --binary --full-index --no-renames -U3 \
-          --diff-algorithm=myers --indent-heuristic --src-prefix=a/ --dst-prefix=b/ "$mb" -- "${lista[@]}")" \
+        dif="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git --literal-pathspecs -c core.quotepath=false \
+          -c diff.interHunkContext=0 -c diff.suppressBlankEmpty=false diff -O/dev/null --no-ext-diff --no-textconv --no-color \
+          --binary --full-index --no-renames -U3 --diff-algorithm=myers --indent-heuristic --src-prefix=a/ --dst-prefix=b/ "$mb" -- "${lista[@]}")" \
           || { echo "error: git diff falló" >&2; exit 2; }
       fi
       for f in ${nuevos[@]+"${nuevos[@]}"}; do
