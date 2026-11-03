@@ -685,6 +685,11 @@ pr2_last() { jq -r --argjson n "$p2" '.prs[] | select(.number == $n) | .comments
 err="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "regla sin ficheros blindados: exit $rc ($err)"
 case "$(pr2_last)" in "<!-- kit-regla"*) fail "regla sin ficheros blindados publicó";; esac
+# an environment error of blindado inside fusionar is exit 2, never a pass (no lint in the base: trinquete never runs)
+echo '{' > "$w2/eslint-suppressions.json"
+bash "$pr" fusionar "$w2" "$p2" 7 >/dev/null 2>"$tmp/e"; rc=$?
+[ $rc -eq 2 ] && grep -q "kit-reglas.sh blindado falló" "$tmp/e" || fail "blindado con error de entorno: exit $rc $(cat "$tmp/e")"
+rm "$w2/eslint-suppressions.json"
 # an own answer posted before the proposal
 gh pr comment "$p2" --repo dru/demo --body "sí, adelante" >/dev/null || fail "reglas: respuesta temprana"
 early="$(dbid_last "$p2")"
@@ -699,6 +704,18 @@ case "$err" in *"$msg_regla"*) ;; *) fail "reglas sin kit-regla: $err";; esac
 # regla: the proposal carries the hash of kit-reglas.sh blindado against origin/main
 h="$(bash "$REPO_ROOT/scripts/kit-reglas.sh" blindado "$w2" origin/main | sed -n 's/^hash: //p')"
 [ ${#h} -eq 64 ] || fail "reglas: hash de blindado '$h'"
+# regla needs a clean tree and HEAD = the PR head: Dru approves exactly the diff that merges
+echo x > "$w2/sucio.txt"
+err="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "regla con árbol sucio: exit $rc"
+case "$err" in *"cambios sin confirmar"*) ;; *) fail "regla con árbol sucio: $err";; esac
+rm "$w2/sucio.txt"
+(cd "$w2" && echo l > local.txt && git add local.txt && git commit -q -m local) || fail "reglas: commit local"
+err="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "regla sin empujar: exit $rc"
+case "$err" in *"empuja antes de proponer la regla"*) ;; *) fail "regla sin empujar: $err";; esac
+git -C "$w2" reset -q --hard HEAD~1 || fail "reglas: deshacer commit local"
+case "$(pr2_last)" in "<!-- kit-regla"*) fail "regla rechazada publicó";; esac
 out="$(bash "$pr" regla "$w2" "$p2" "$tmp/regla" 2>&1)" || fail "regla: $out"
 case "$(last_line "$out")" in "FIN: https://github.com/dru/demo/pull/$p2#issuecomment-"*) ;; *) fail "regla FIN: $out";; esac
 [ "$(pr2_last)" = "<!-- kit-regla: $h -->
@@ -730,6 +747,16 @@ case "$err" in *"$msg_regla"*) ;; *) fail "kit-regla-aprobada con respuesta ante
 # Dru answers in the issue: approved, and the rule gate passes
 flow_add_comment 7 "Sí, apruebo la regla"
 ans="$(dbid_last 7)"
+# a kit-regla-aprobada posted by another account never counts, even pointing at a valid answer
+GH_USER=otro gh pr comment "$p2" --repo dru/demo --body "<!-- kit-regla-aprobada: $h $ans -->" >/dev/null || fail "reglas: aprobada ajena"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"
+case "$err" in *"$msg_regla"*) ;; *) fail "kit-regla-aprobada de otra cuenta aceptado: $err";; esac
+# an own unmarked comment of another issue is not an answer for this PR
+flow_add_issue 9 "Otro issue"
+flow_add_comment 9 "Sí, apruebo"
+err="$(bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 9)" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "aprobar-regla con comentario de otro issue: exit $rc ($err)"
+case "$err" in *"no está en la PR ni en su issue"*) ;; *) fail "aprobar-regla con comentario de otro issue: $err";; esac
 out="$(bash "$pr" aprobar-regla "$w2" "$p2" "$ans" 2>&1)" || fail "aprobar-regla: $out"
 [ "$(last_line "$out")" = "FIN: aprobada" ] || fail "aprobar-regla FIN: $out"
 [ "$(pr2_last)" = "<!-- kit-regla-aprobada: $h $ans -->" ] || fail "aprobar-regla marcador: $(pr2_last)"
@@ -768,14 +795,16 @@ printf '{"src/a.ts":{"no-unused-vars":{"count":1}}}\n' > "$rr/eslint-suppression
 echo '{"revision":{"puestos":[]},"lint":{"fichero":{"ts":"true"}}}' > "$rr/.agents-kit.json"
 (cd "$rr" && git pull -q origin main && git add -A && git commit -q -m "base con lint" && git push -q origin main) >/dev/null 2>&1 \
   || fail "reglas: base con lint"
+# (the PR also drops lint from its own marker: trinquete still runs, it reads the marker of origin/main)
 (cd "$w2" && git fetch -q origin && git reset -q --hard origin/main && echo 'const a = 2;' > src/a.ts \
-  && git commit -q -am "toca a.ts" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 || fail "reglas: toca a.ts"
+  && echo '{"revision":{"puestos":[]}}' > .agents-kit.json \
+  && git commit -q -am "toca a.ts y quita lint" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 || fail "reglas: toca a.ts"
 st "(.prs[] | select(.number == $p2)) |= (.state = \"OPEN\" | del(.headRefOid))"
 bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 4"
 err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "trinquete: exit $rc ($err)"
 case "$err" in *"  - deuda en fichero tocado: src/a.ts (lint)"*) ;; *) fail "trinquete: $err";; esac
-case "$err" in *"ficheros de reglas"*) fail "trinquete: sin cambios blindados pide aprobación: $err";; esac
+case "$err" in *"ficheros de reglas (.agents-kit.json)"*) ;; *) fail "trinquete: quitar lint del marcador no pide aprobación: $err";; esac
 # an environment error of the rule checks is exit 2, never a pass
 echo '{' > "$w2/eslint-suppressions.json"
 bash "$pr" fusionar "$w2" "$p2" 7 >/dev/null 2>&1; rc=$?

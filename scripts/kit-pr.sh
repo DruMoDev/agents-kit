@@ -12,7 +12,8 @@
 # Rule changes (kit-reglas.sh blindado against origin/<base>: lint, types and structure config) need Dru's approval,
 # given by answering, never by a label:
 #   regla: posts <fichero> on the PR after "<!-- kit-regla: <hash> -->" (<hash> = the blindado hash); exit 1 if the
-#     PR changes no shielded file. FIN: <url of the comment>.
+#     PR changes no shielded file, or if the tree is dirty or HEAD is not the PR head (Dru approves on GitHub exactly
+#     the diff that will merge). FIN: <url of the comment>.
 #   aprobar-regla: with <id> (REST id of Dru's answer), checks it is a valid answer and posts
 #     "<!-- kit-regla-aprobada: <hash> <id> -->"; with --chat, first posts on the PR the answer Dru gave in the chat,
 #     quoted, as a normal comment (no marker), and uses its id. Exit 1 if the last own kit-regla is not for the current
@@ -372,6 +373,10 @@ ${out: -38000}"
 
   regla)
     text="$(read_file "$2")" || exit 1
+    is_clean || { echo "el árbol tiene cambios sin confirmar: confírmalos y empuja antes de proponer la regla" >&2; exit 1; }
+    sha="$(head_sha)" || exit 2
+    oid="$(pr_json headRefOid | jq -r '.headRefOid // ""')" || exit 2
+    [ "$oid" = "$sha" ] || { echo "la PR apunta a ${oid:0:8} y aquí estás en ${sha:0:8}: empuja antes de proponer la regla" >&2; exit 1; }
     base="$(base_branch)" || exit 2
     shielded "$base"
     [ "$sh_n" -gt 0 ] || { echo "la PR no cambia ningún fichero de reglas: no hay nada que aprobar" >&2; exit 1; }
