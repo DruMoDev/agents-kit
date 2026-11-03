@@ -31,6 +31,12 @@ for w in 'flujo propio del proyecto' 'kit-revisar' '"flujo": false'; do
   grep -qF "$w" "$rules/sin-flujo.md" || fail "sin-flujo.md must cover: $w"
 done
 
+# deterministic rules: the section and its literal commitments
+grep -q "^## Reglas deterministas" "$rules/core.md" || fail "core.md missing heading: ## Reglas deterministas"
+for w in 'kit-reglas' 'eslint-suppressions.json' 'as any'; do
+  grep -qF "$w" "$rules/core.md" || fail "core.md must cover: $w"
+done
+
 if grep -rlF "docs/agent/" "$rules"; then fail "rules/ references docs/agent/"; fi
 if grep -rlF "—" "$rules"; then fail "rules/ contains em dashes"; fi
 echo "ok"

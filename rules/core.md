@@ -48,6 +48,14 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 - No declares "arreglado" ni "hecho" sin reproducir el problema y volver a probar tras el cambio.
 - Esperas largas (CI, revisores, despliegues) siempre con tope y por un fichero de salida propio (`kit-bg.sh` del kit), nunca buscando procesos por nombre ni fiándote del aviso de segundo plano de la herramienta.
 
+## Reglas deterministas
+
+- El lint, los tipos y las comprobaciones de estructura en verde son parte de terminado.
+- Nunca desactives, debilites ni esquives una regla: `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `as any`, editar su configuración o `--no-verify`. Si una regla está mal, propón el cambio con la skill `kit-reglas`.
+- El hook de antes de editar del kit bloquea `as any`, `@ts-ignore`... solo en ficheros de código: un `.md` puede nombrarlos.
+- Si una convención se puede comprobar con una herramienta, propón la regla en vez de escribirla en un `.md`.
+- Si tocas un fichero con deuda de lint o tipos (`eslint-suppressions.json`, `.agents-kit/tsc-base.json`), déjalo a cero en el mismo cambio, en un commit propio: no cuenta como refactor de paso.
+
 ## Depuración
 
 - Reproduce el bug antes de cambiar código.
@@ -66,7 +74,7 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 
 - Lo técnico lo decides tú, sin preguntar.
 - El producto (funcionalidad, comportamiento, lo que ve quien usa la app) se pregunta a Dru: una pregunta cada vez, sin micro-preguntas.
-- Un cambio, un objetivo. Nada fuera de scope, ni refactors de paso: lo que encuentres por el camino se trata aparte (cómo, lo dice la sección del flujo, al final).
+- Un cambio, un objetivo. Nada fuera de scope, ni refactors de paso, salvo la deuda de lint y tipos de los ficheros que tocas (ver Reglas deterministas): lo que encuentres por el camino se trata aparte (cómo, lo dice la sección del flujo, al final).
 
 ## Git
 
@@ -77,6 +85,7 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 
 Al terminar una tarea, junto con el cambio que la provocó (por dónde va, lo dice la sección del flujo, al final):
 
+- ¿Una convención se puede comprobar con una herramienta? Propón la regla en vez de escribirla en un `.md`.
 - ¿Aprendiste algo que evitaría un error futuro? Regístralo en la skill del proyecto más cercana, o crea una nueva en `.agents/skills/` (`SKILL.md` corto con cuándo usarla, flujo y restricciones; detalle en `references/`; lo determinista en `scripts/`).
 - ¿Cambió el stack, los comandos o el mapa del repo? Corrige `AGENTS.md`.
 - Ante cualquier error o fricción con una skill, mejórala en el momento, con el porqué. Las skills son genéricas: ejemplos genéricos, nunca el caso concreto de hoy.
