@@ -31,7 +31,8 @@ EOF
 cat > "$bin/slowlint" <<'EOF'
 #!/usr/bin/env bash
 echo "$$" >> "$LOG"
-sleep 21.37
+sleep 21.37 & echo "$!" >> "$LOG"
+wait
 EOF
 chmod +x "$bin/fakelint" "$bin/slowlint"
 marker() { printf '%s\n' "$1" > "$r/.agents-kit.json"; }
@@ -357,7 +358,8 @@ t1=$(date +%s)
 pid="$(sed -n 1p "$LOG")"; [ -n "$pid" ] || fail "el lint lento no arrancó"
 sleep 1
 ! kill -0 "$pid" 2>/dev/null || fail "el lint lento sigue vivo"
-! pgrep -f "sleep 21.37" >/dev/null 2>&1 || fail "queda un hijo del lint lento"
+hijo="$(sed -n 2p "$LOG")"; [ -n "$hijo" ] || fail "el lint lento no lanzó su hijo"
+! kill -0 "$hijo" 2>/dev/null || fail "queda un hijo del lint lento"
 [ ! -d "$lock" ] || fail "el candado debe liberarse tras el tope"
 marker "$LINT"
 
