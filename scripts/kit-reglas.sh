@@ -17,7 +17,8 @@
 #     FIN: base completa (lint declared and every ts line says sí, or no ts) or FIN: base incompleta.
 #   trinquete: exit 1 with one line per reason on stderr when a changed or deleted file still has entries in the
 #     suppressions or the tsc baseline of the tree ("deuda en fichero tocado: <ruta> (lint|tipos)"), or when either
-#     file adds a key or raises a count against the merge base ("la deuda crece: <ruta> <regla>|tipos"). FIN: ok.
+#     file adds a key or raises a count against the merge base ("la deuda crece: <ruta> <regla>|tipos"; kit-pr.sh
+#     fusionar lets this one through with Dru's approval of the shielded diff, which includes those files). FIN: ok.
 #   blindado: one line per changed shielded file and per package.json change that counts. The globs of .blindado come
 #     from the marker of <ref>, never of the tree, and match the whole path as bash patterns ([[ == ]]: * crosses /,
 #     so *tsconfig*.json also matches config/tsconfig.base.json); an entry ending in / is a prefix. A file that may live

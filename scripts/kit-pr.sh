@@ -22,7 +22,8 @@
 #   one), in the PR or in the issue it closes ("Cierra #N"; fusionar: <N>), created (REST created_at) after the last
 #   own kit-regla. fusionar requires an own kit-regla-aprobada with the current hash and a valid answer: when the
 #   shielded diff changes, another proposal and another answer. Same gh account for agent and Dru: a known limit.
-# fusionar also runs kit-reglas.sh trinquete (debt only shrinks) when the marker of origin/<base> declares lint.
+# fusionar also runs kit-reglas.sh trinquete when the marker of origin/<base> declares lint: debt in a touched file
+# always blocks; debt that grows blocks unless the PR has a valid kit-regla-aprobada (the debt files are shielded).
 # Env: KIT_CI_TIMEOUT (s; default: ciTimeoutMin of the config, else from the repo history, lib/ci.sh), KIT_CI_POLL (s, default 15),
 #   KIT_CI_GRACE (s, default 300: with workflows but no check run for the SHA after it, esperar-ci reports sin-ci).
 # Exit: 0 ok, 1 rejected (reason on stderr), 2 environment error or undecidable.
@@ -534,22 +535,30 @@ $cl_err") ;;
     fi
 
     # Rules (kit-reglas.sh, over the tree against origin/$base; any error of the checks is exit 2, never a pass):
-    # debt that only shrinks when the base marker declares lint, and Dru's approval for shielded changes.
-    lint="$(kit_config_base "$wt" '.lint' "origin/$base")" || exit 2
-    if [ "$lint" != null ]; then
-      tq="$("$here/kit-reglas.sh" trinquete "$wt" "origin/$base" 2>&1 >/dev/null)"; tq_rc=$?
-      case $tq_rc in
-        0) ;;
-        1) while IFS= read -r line; do [ -z "$line" ] || reasons+=("$line"); done <<< "$tq" ;;
-        *) echo "error: kit-reglas.sh trinquete falló (exit $tq_rc): $tq" >&2; exit 2 ;;
-      esac
-    fi
+    # Dru's approval for shielded changes, and debt that only shrinks when the base marker declares lint.
+    approved=false
     shielded "$base"
     if [ "$sh_n" -gt 0 ]; then
       rest_comments "$p" "$tmpd/pr.json"
       rest_comments "$n" "$tmpd/iss.json"
       why="$(rule_check "$tmpd/pr.json" "$tmpd/iss.json" "$sh_hash")" || exit 2
-      [ -z "$why" ] || reasons+=("la PR cambia ficheros de reglas ($sh_list) sin la aprobación de Dru: kit-pr.sh regla y espera su respuesta")
+      if [ -z "$why" ]; then approved=true
+      else reasons+=("la PR cambia ficheros de reglas ($sh_list) sin la aprobación de Dru: kit-pr.sh regla y espera su respuesta"); fi
+    fi
+    lint="$(kit_config_base "$wt" '.lint' "origin/$base")" || exit 2
+    if [ "$lint" != null ]; then
+      tq="$("$here/kit-reglas.sh" trinquete "$wt" "origin/$base" 2>&1 >/dev/null)"; tq_rc=$?
+      case $tq_rc in
+        0) ;;
+        # debt that grows is in the shielded files (eslint-suppressions.json, .agents-kit/tsc-base.json), so in the
+        # approved hash: with a valid approval it merges. Debt in a touched file always blocks.
+        1) while IFS= read -r line; do
+             [ -n "$line" ] || continue
+             case "$line" in "la deuda crece: "*) [ "$approved" = true ] && continue ;; esac
+             reasons+=("$line")
+           done <<< "$tq" ;;
+        *) echo "error: kit-reglas.sh trinquete falló (exit $tq_rc): $tq" >&2; exit 2 ;;
+      esac
     fi
 
     # Gates from the default branch's marker (a PR cannot weaken them by editing its own).

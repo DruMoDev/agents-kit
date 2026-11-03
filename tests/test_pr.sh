@@ -811,5 +811,31 @@ bash "$pr" fusionar "$w2" "$p2" 7 >/dev/null 2>&1; rc=$?
 [ $rc -eq 2 ] || fail "trinquete con error de entorno: exit $rc"
 git -C "$w2" checkout -q -- eslint-suppressions.json
 [ "$(pr_q '.state')" = OPEN ] || fail "trinquete: fusionó"
+# debt that grows (a new rule with its suppressions, on files the PR does not touch) goes through Dru, it is not forbidden
+(cd "$w2" && git reset -q --hard origin/main && echo 'export default [{rules: {}}];' > eslint.config.mjs \
+  && printf '{"src/a.ts":{"no-unused-vars":{"count":2}}}\n' > eslint-suppressions.json && git add -A \
+  && git commit -q -m "regla nueva con su deuda" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 \
+  || fail "reglas: deuda que crece"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 5"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "deuda que crece sin aprobación: exit $rc ($err)"
+case "$err" in *"  - la deuda crece: src/a.ts no-unused-vars"*) ;; *) fail "deuda que crece sin aprobación: $err";; esac
+case "$err" in *"ficheros de reglas (eslint-suppressions.json, eslint.config.mjs) sin la aprobación de Dru"*) ;;
+  *) fail "deuda que crece sin aprobación: $err";; esac
+bash "$pr" regla "$w2" "$p2" "$tmp/regla" >/dev/null 2>&1 || fail "regla de la deuda"
+flow_add_comment 7 "Vale, esa deuda entra."
+bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 7)" >/dev/null 2>&1 || fail "aprobar la deuda"
+# debt in a touched file still blocks, approval or not (the shielded diff, and so the approval, is unchanged)
+(cd "$w2" && echo 'const a = 3;' > src/a.ts && git commit -q -am "toca a.ts" && git push -q origin HEAD:issue-7-reglas) >/dev/null 2>&1 \
+  || fail "reglas: toca a.ts con aprobación"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 6"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "deuda en fichero tocado con aprobación: exit $rc ($err)"
+case "$err" in *"  - deuda en fichero tocado: src/a.ts (lint)"*) ;; *) fail "deuda en fichero tocado con aprobación: $err";; esac
+case "$err" in *"la deuda crece"*|*"ficheros de reglas"*) fail "con aprobación válida: $err";; esac
+(cd "$w2" && git reset -q --hard HEAD~1 && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 || fail "reglas: deshacer a.ts"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 7"
+out="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1)" || fail "deuda que crece con aprobación: $out"
+[ "$(pr_q '.state')" = MERGED ] || fail "deuda que crece con aprobación: no fusionó"
 
 echo "OK test_pr"
