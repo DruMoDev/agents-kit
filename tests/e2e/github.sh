@@ -5,8 +5,10 @@
 # it creates and closes issues and PRs in that repo, never in another. Long: launch it with scripts/kit-bg.sh.
 # Flow: labels (kit-github-setup) -> issue with an axis (crear) -> siguiente -> reclamar (lock) -> worktree -> commit
 # with the changelog placeholder -> abrir (fills it) -> esperar-ci -> gate-local -> validar -> review round (no seats by
-# default, a temporary global config; real seats with --con-revisores) -> fusionar (lock released) -> limpiar (main
-# fast-forward). Then a lock left by a closed issue is recovered by the next reclamar of that axis.
+# default, a temporary global config; real seats with --con-revisores) -> rule approval (the commit also adds a shielded
+# file, reglas/<stamp>.txt: fusionar refuses it, then kit-regla, decision, an answer in the issue (a comment without a
+# marker) that brings it back to siguiente, reclamar again and aprobar-regla) -> fusionar (lock released) -> limpiar
+# (main fast-forward). Then a lock left by a closed issue is recovered by the next reclamar of that axis.
 # Prints "ok: <step>" per step and "FIN: e2e ok"; exit 1 at the first failed check (the repo keeps what it had).
 set -u
 repo="${1:-}"
@@ -67,7 +69,7 @@ ok "reclamar con candado"
 
 run "worktree" bash "$S/kit-worktree.sh" abrir "$root" "$n" "e2e-$stamp"
 wt="$(last "$out" | sed 's/^FIN: //')"
-mkdir -p "$wt/e2e" && echo "$stamp" > "$wt/e2e/$stamp.txt"
+mkdir -p "$wt/e2e" "$wt/reglas" && echo "$stamp" > "$wt/e2e/$stamp.txt" && echo "$stamp" > "$wt/reglas/$stamp.txt"
 changelog=false
 if [ -f "$wt/CHANGELOG.md" ] && [ "$(jq -r '.changelog // true' "$root/.agents-kit.json")" != false ]; then
   changelog=true
@@ -78,7 +80,7 @@ if [ -f "$wt/CHANGELOG.md" ] && [ "$(jq -r '.changelog // true' "$root/.agents-k
     END { if (!done) print "\n## " d "\n\n### Interno: prueba e2e " s " · [#PR](PR)\nPrueba de punta a punta del kit." }' \
     "$wt/CHANGELOG.md" > "$KIT_TMP/cl" && mv "$KIT_TMP/cl" "$wt/CHANGELOG.md"
 fi
-git -C "$wt" add "e2e/$stamp.txt" $([ "$changelog" = true ] && echo CHANGELOG.md) || die "git add"
+git -C "$wt" add "e2e/$stamp.txt" "reglas/$stamp.txt" $([ "$changelog" = true ] && echo CHANGELOG.md) || die "git add"
 git -C "$wt" commit -q -m "e2e $stamp" || die "commit"
 ok "worktree y commit"
 
@@ -116,6 +118,32 @@ else
 fi
 run "ronda" bash "$S/kit-pr.sh" ronda "$wt" "$pr" 1 "$KIT_TMP/ronda"; ok "ronda publicada"
 
+# a shielded file (reglas/ is in the default blindado) needs Dru's approval, given by answering
+out="$(bash "$S/kit-pr.sh" fusionar "$wt" "$pr" "$n" 2>&1)"; rc=$?
+case "$rc:$out" in 1:*"sin la aprobación de Dru"*) ;; *) die "fusionar sin aprobación de la regla (exit $rc): $out" ;; esac
+ok "fusionar rechaza la regla sin aprobar"
+printf 'Regla de prueba (e2e %s): añade reglas/%s.txt.\n' "$stamp" "$stamp" > "$KIT_TMP/regla"
+run "regla" bash "$S/kit-pr.sh" regla "$wt" "$pr" "$KIT_TMP/regla"
+[[ $(last "$out") =~ ^FIN:\ https://github\.com/.+/pull/$pr#issuecomment-[0-9]+$ ]] || die "regla no dio la URL del comentario: $out"
+case "$out" in *"ficheros de reglas: reglas/$stamp.txt"*) ;; *) die "regla sin la lista de ficheros: $out" ;; esac
+printf '¿Apruebas la regla de prueba? Responde con un comentario.\n' > "$KIT_TMP/pregunta"
+run "decision" bash "$S/kit-issue.sh" decision "$root" "$n" "$id" "$KIT_TMP/pregunta"
+out="$(bash "$S/kit-issue.sh" siguiente "$root" "$n" 2>&1)" && die "siguiente da #$n antes de la respuesta: $out"
+url="$(gh issue comment "$n" --repo "$repo" --body "Sí, apruebo la regla (respuesta de prueba e2e $stamp).")" \
+  || die "no se pudo publicar la respuesta"
+cid="$(printf '%s\n' "$url" | sed -n '$s/.*#issuecomment-\([0-9][0-9]*\)$/\1/p')"
+[ -n "$cid" ] || die "gh issue comment no dio la URL #issuecomment-<id>: $url"
+run "siguiente tras la respuesta" bash "$S/kit-issue.sh" siguiente "$root" "$n"
+run "reclamar tras la respuesta" bash "$S/kit-issue.sh" reclamar "$root" "$n" "$id"
+# the labels take seconds to show up after the edit: poll up to 60 s
+k=0
+until [ "$(gh issue view "$n" --repo "$repo" --json labels --jq 'any(.labels[]; .name == "necesita-respuesta")')" = false ]; do
+  k=$((k + 1)); [ $k -le 12 ] || die "reclamar no quitó necesita-respuesta"; sleep 5
+done
+run "aprobar-regla" bash "$S/kit-pr.sh" aprobar-regla "$wt" "$pr" "$cid"
+[ "$(last "$out")" = "FIN: aprobada" ] || die "aprobar-regla: $out"
+ok "regla aprobada respondiendo en el issue"
+
 run "fusionar" bash "$S/kit-pr.sh" fusionar "$wt" "$pr" "$n"
 case "$out" in *"candado soltado: refs/locks/$axis"*"FIN: ok") ;; *) die "fusionar sin soltar el candado: $out" ;; esac
 [ -z "$(git -C "$root" ls-remote origin "refs/locks/$axis")" ] || die "el candado sigue en origin tras fusionar"
@@ -124,7 +152,7 @@ ok "fusionar"
 
 run "limpiar" bash "$S/kit-worktree.sh" limpiar "$root" "$n"
 case "$out" in *"principal al día con origin/"*) ;; *) die "limpiar no avanzó el clon: $out" ;; esac
-[ -f "$root/e2e/$stamp.txt" ] || die "el clon no tiene el cambio fusionado"
+[ -f "$root/e2e/$stamp.txt" ] && [ -f "$root/reglas/$stamp.txt" ] || die "el clon no tiene el cambio fusionado"
 ok "limpiar y clon al día"
 
 # a lock left by a closed issue (merged by hand, say) is recovered by the next reclamar of its axis
