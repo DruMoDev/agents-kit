@@ -20,7 +20,9 @@
     "*tsconfig*.json", "*jsconfig*.json", "knip.*", "*/knip.*", ".knip.json*", "*/.knip.json*",
     ".dependency-cruiser.*", "*/.dependency-cruiser.*", "sgconfig.yml", "eslint-suppressions.json",
     ".npmrc", "*/.npmrc", "pnpm-workspace.yaml", "*/pnpm-workspace.yaml", ".yarnrc.yml", "*/.yarnrc.yml",
-    ".pnpmfile.cjs", "*/.pnpmfile.cjs", "patches/", ".yarn/",
+    ".yarnrc", "*/.yarnrc", "bunfig.toml", "*/bunfig.toml",
+    ".pnpmfile.cjs", "*/.pnpmfile.cjs", "patches/",
+    ".yarn/plugins/", ".yarn/patches/", ".yarn/releases/", ".yarn/sdks/",
     ".agents-kit/", ".agents-kit.json", "lefthook.yml", ".husky/", ".github/workflows/", "reglas/"
   ]
 }

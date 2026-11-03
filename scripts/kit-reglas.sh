@@ -34,8 +34,8 @@
 #         value (dependencies, devDependencies, peerDependencies, optionalDependencies);
 #       "package.json (overrides <clave>)": overrides or resolutions changed for a key (nested keys joined with >)
 #         that names a lint dependency;
-#       "package.json (<clave>)": any change in eslintConfig, knip, pnpm (the whole object: overrides,
-#         patchedDependencies, packageExtensions...) or the top-level patchedDependencies.
+#       "package.json (<clave>)": any change in eslintConfig, eslintIgnore, knip, pnpm (the whole object:
+#         overrides, patchedDependencies, packageExtensions...), the top-level patchedDependencies or packageManager.
 #     Then "hash: <sha256>" of the diff of those files (fixed options, without the user's git config) plus the
 #     normalized package.json fragment, and FIN: <n>; FIN: 0 without hash if none.
 #   abrir/cerrar: create (with <session_id>) or delete <git-common-dir>/agents-kit/reglas-abiertas, which lets the
@@ -218,7 +218,8 @@ case "$sub" in
          quitadas: [$db | keys[] | select($dh[.] == null)],
          cambiadas: diffmap($db | with_entries(select(.key | IN($dh | keys[]))); $dh | with_entries(select(.key | IN($db | keys[])))),
          overrides: diffmap($b | ovr; $h | ovr),
-         claves: diffmap($b | {eslintConfig, knip, pnpm, patchedDependencies}; $h | {eslintConfig, knip, pnpm, patchedDependencies})}
+         claves: diffmap($b | {eslintConfig, eslintIgnore, knip, pnpm, patchedDependencies, packageManager};
+          $h | {eslintConfig, eslintIgnore, knip, pnpm, patchedDependencies, packageManager})}
         | if [.[] | length] | add == 0 then empty else . end')" \
         || { echo "error: no pude comparar package.json" >&2; exit 2; }
       if [ -n "$frag" ]; then

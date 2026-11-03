@@ -206,12 +206,14 @@ run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" != "$h1" ]
 limpia
 # claves de configuración de package.json, enteras
 pj '.eslintConfig = {"rules": {}} | .knip = {"entry": []} | .patchedDependencies = {"x@1": "patches/x.patch"}
-  | .pnpm.patchedDependencies = {"y@1": "patches/y.patch"} | .pnpm.packageExtensions = {"z": {}}'
+  | .pnpm.patchedDependencies = {"y@1": "patches/y.patch"} | .pnpm.packageExtensions = {"z": {}}
+  | .eslintIgnore = ["dist"] | .packageManager = "pnpm@9.0.0"'
 run blindado "$r" origin/main
-for x in "package.json (eslintConfig)" "package.json (knip)" "package.json (patchedDependencies)" "package.json (pnpm)"; do
+for x in "package.json (eslintConfig)" "package.json (knip)" "package.json (patchedDependencies)" "package.json (pnpm)" \
+  "package.json (eslintIgnore)" "package.json (packageManager)"; do
   grep -qxF "$x" <<<"$out" || fail "claves de package.json sin '$x': $out"
 done
-[ "$(last_line "$out")" = "FIN: 4" ] || fail "pnpm debe salir una vez: $out"
+[ "$(last_line "$out")" = "FIN: 6" ] || fail "pnpm debe salir una vez: $out"
 h1="$(sed -n 's/^hash: //p' <<<"$out")"
 pj '.pnpm.packageExtensions.z = {"a": 1}'
 run blindado "$r" origin/main; [ "$(sed -n 's/^hash: //p' <<<"$out")" != "$h1" ] || fail "las claves deben entrar en el hash"
@@ -262,12 +264,15 @@ for x in "packages/web/eslint.config.mjs" "packages/a/knip.json" ".npmrc"; do gr
 limpia
 mkdir -p "$r/packages/a" "$r/patches" "$r/.yarn/plugins" "$r/src"
 echo x > "$r/packages/a/.eslintignore"; echo x > "$r/src/foo.eslintignore"; echo x > "$r/packages/a/.npmrc"
+mkdir -p "$r/.yarn/cache"; echo x > "$r/.yarn/cache/x.zip"
 echo x > "$r/patches/x.patch"; echo x > "$r/.yarn/plugins/p.cjs"; echo '{}' > "$r/.knip.jsonc"; echo x > "$r/.pnpmfile.cjs"
+echo x > "$r/.yarnrc"; echo x > "$r/packages/a/bunfig.toml"
 run blindado "$r" origin/main
-for x in "packages/a/.eslintignore" "packages/a/.npmrc" "patches/x.patch" ".yarn/plugins/p.cjs" ".knip.jsonc" ".pnpmfile.cjs"; do
+for x in "packages/a/.eslintignore" "packages/a/.npmrc" "patches/x.patch" ".yarn/plugins/p.cjs" ".knip.jsonc" ".pnpmfile.cjs" \
+  ".yarnrc" "packages/a/bunfig.toml"; do
   grep -qxF "$x" <<<"$out" || fail "glob sin '$x': $out"
 done
-[ "$(last_line "$out")" = "FIN: 6" ] || fail "foo.eslintignore no es blindado: $out"
+[ "$(last_line "$out")" = "FIN: 8" ] || fail "foo.eslintignore y .yarn/cache no son blindados: $out"
 limpia
 
 # --- abrir y cerrar
