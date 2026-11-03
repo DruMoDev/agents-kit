@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-deactivate.sh <repo_root>
-# Removes the .agents-kit.json marker and nothing else. Does not commit.
+# Removes the .agents-kit.json marker and the kit-fusionar rule of .claude/settings.json (lib/permiso.sh; the file goes
+# if nothing else is left), nothing else. Does not commit.
 # Exit: 0 ok, 1 usage or not activated, 2 environment error.
 set -u
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/permiso.sh"
 
 if [ $# -ne 1 ] || [ -z "$1" ]; then
   echo "uso: $0 <repo_root>" >&2
@@ -18,6 +20,8 @@ if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
   echo "no está activado: no existe $marker" >&2
   exit 1
 fi
+# the rule goes first: a retry after a failed write still finds the marker and gets here again
+kit_permiso "$repo" quitar || { echo "error: no se pudo escribir .claude/settings.json" >&2; exit 2; }
 rm -f "$marker" || { echo "error: no se pudo borrar $marker" >&2; exit 2; }
 echo "borrado: .agents-kit.json"
 echo "FIN: ok"
