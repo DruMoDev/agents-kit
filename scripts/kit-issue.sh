@@ -38,8 +38,9 @@
 # aparcar: adds someday to the given issues (out of the pool).
 # comprobar: kit-run's start check (one gh label list): exit 1 "kit en versión anterior: ejecuta kit-on para actualizar"
 #   (plus what is missing) when a kit v3 label is missing in the repo or the marker still has v2 keys, and (with the
-#   other reasons, if any) "falta la base de reglas: ejecuta kit-reglas" when kit-reglas.sh estado finds ts and says
-#   base incompleta, unless the marker says "reglas": false; FIN: v3 otherwise.
+#   other reasons, if any) "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el
+#   clon)" when kit-reglas.sh estado finds ts and says base incompleta, unless the marker says "reglas": false;
+#   FIN: v3 otherwise.
 #   Its first line is "kit: <version>", the plugin version on disk: a session that loaded an older SKILL.md notices.
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # With "flujo": false in the marker, siguiente, reparto, aparcar, reclamar, comprobar, crear and tomar-eje exit 1
@@ -420,7 +421,7 @@ case "$sub" in
           [ -z "$miss" ] || echo "faltan etiquetas del kit en el repo: $miss"
           [ -z "$v2" ] || echo "el marcador .agents-kit.json tiene claves de la v2: $v2"
         fi
-        [ -z "$base" ] || echo "falta la base de reglas: ejecuta kit-reglas"
+        [ -z "$base" ] || echo "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)"
       } >&2
       exit 1
     fi

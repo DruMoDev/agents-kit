@@ -54,7 +54,7 @@ Sube la escalera solo después de entender el problema: lee la tarea y el códig
 - Nunca desactives, debilites ni esquives una regla: `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `as any`, editar su configuración o `--no-verify`. Si una regla está mal, propón el cambio con la skill `kit-reglas`.
 - El hook de antes de editar del kit bloquea `as any`, `@ts-ignore`... solo en ficheros de código: un `.md` puede nombrarlos.
 - Si una convención se puede comprobar con una herramienta, propón la regla en vez de escribirla en un `.md`.
-- Si tocas un fichero con deuda de lint o tipos (`eslint-suppressions.json`, `.agents-kit/tsc-base.json`), déjalo a cero en el mismo cambio, en un commit propio: no cuenta como refactor de paso.
+- Si tocas un fichero con entradas en `eslint-suppressions.json` o en `.agents-kit/tsc-base.json` (deuda de lint o tipos), déjalo a cero en el mismo cambio, en un commit propio: no cuenta como refactor de paso.
 
 ## Depuración
 

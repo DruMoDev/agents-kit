@@ -24,9 +24,8 @@
 #     so *tsconfig*.json also matches config/tsconfig.base.json); an entry ending in / is a prefix. A file that may live
 #     in any directory goes as the pair x and */x (eslint.config.*, */eslint.config.*; .npmrc, */.npmrc), never *x,
 #     which would also match any name ending in it (src/myknip.ts for *knip.*, foo.eslintignore for *.eslintignore).
-#     A change that only
-#     shrinks eslint-suppressions.json or .agents-kit/tsc-base.json does not count. Lint dependencies are those whose
-#     name contains eslint, typescript, knip or dependency-cruiser. package.json lines:
+#     A change that only shrinks eslint-suppressions.json or .agents-kit/tsc-base.json does not count. Lint
+#     dependencies are those whose name contains eslint, typescript, knip or dependency-cruiser. package.json lines:
 #       "package.json (scripts.<x>)": a script of the shielded set changed. The set is the transitive closure, in the
 #         base and in the tree (then joined), of the lint*/typecheck* scripts: each name brings its npm lifecycle
 #         hooks pre<x>/post<x>, and every npm run <x>, pnpm [run] <x>, yarn [run] <x> or bun run <x> in the body of

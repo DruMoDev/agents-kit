@@ -156,7 +156,7 @@ use_flow_gh
 rt="$(mk_kit_repo)"; echo '{}' > "$rt/tsconfig.json"
 err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "comprobar TS sin base: exit $rc ($err)"
-[ "$err" = "falta la base de reglas: ejecuta kit-reglas" ] || fail "comprobar TS sin base: '$err'"
+[ "$err" = "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ] || fail "comprobar TS sin base: '$err'"
 echo '{"reglas": false}' > "$rt/.agents-kit.json"
 out="$(bash "$issue" comprobar "$rt" 2>&1)" || fail "comprobar TS con reglas false: exit $? ($out)"
 [ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar TS con reglas false: '$out'"
@@ -165,7 +165,7 @@ echo '{}' > "$rt/.agents-kit.json"
 t="$(mktemp)"; jq '.labels = ["en-curso"]' "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json"
 err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "comprobar con dos motivos: exit $rc"
-case "$err" in "kit en versión anterior: ejecuta kit-on para actualizar"*"faltan etiquetas"*"falta la base de reglas: ejecuta kit-reglas") ;;
+case "$err" in "kit en versión anterior: ejecuta kit-on para actualizar"*"faltan etiquetas"*"falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)") ;;
   *) fail "comprobar con dos motivos: '$err'";; esac
 
 # --- reclamar: en-curso without any kit marker (another flow) -> exit 1, nothing published

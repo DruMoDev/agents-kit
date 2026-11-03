@@ -242,7 +242,7 @@ grep -q 'kit-reglas.sh" trinquete <raíz> <base>' "$rev" && grep -q 'kit-reglas.
 grep -q 'base incompleta' "$rev" || fail "kit-revisar must warn when the rules base is missing"
 awk '/Reglas deterministas/{r=NR} /\*\*Lanzar\.\*\*/{l=NR} END{exit !(r && l && r < l)}' "$rev" || fail "kit-revisar must check the rules before launching the reviewers"
 grep -Eq 'responde con un comentario|responda con un comentario' "$run" || fail "kit-run must tell Dru to answer with a comment"
-grep -q 'falta la base de reglas: ejecuta kit-reglas' "$run" || fail "kit-run must handle comprobar's missing rules base"
+grep -q 'falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)' "$run" || fail "kit-run must handle comprobar's missing rules base"
 grep -q 'no pasa a borrador' "$run" && grep -q '<!-- kit-regla:' "$run" || fail "kit-run: the rule question keeps the PR ready and is found by its marker"
 grep -q 'skills/kit-reglas/references/propuesta.md' "$scout" || fail "kit-scout must propose rules with the critical template"
 grep -q 'eslint-suppressions.json' "$scout" && grep -q 'tsc-base.json' "$scout" || fail "kit-scout must propose debt cleanup issues"
