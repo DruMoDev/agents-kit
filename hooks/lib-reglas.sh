@@ -243,6 +243,20 @@ kr_apunta() {
   [ -z "$nuevo" ] || kr_sesion_limpia
 }
 
+# kr_anota: note "<KR_ROOT><tab><KR_REL>" in the session's file (kr_sesion_fichero sesion), so stop-check checks only
+# what this session edited and not the half-done files of other sessions in the same clone. A name with a tab or a
+# newline is noted as "*" (all the changed files of that repo). Nothing without a session_id; stop-check checks the
+# trust of every noted repo again.
+kr_anota() {
+  local f nuevo="" l rel="$KR_REL"
+  [ -n "$KR_SID" ] && f="$(kr_sesion_fichero sesion)" || return 0
+  case "$rel" in *$'\t'*|*$'\n'*) rel='*' ;; esac
+  l="$KR_ROOT"$'\t'"$rel"
+  [ -e "$f" ] || nuevo=1
+  grep -qxF -- "$l" "$f" 2>/dev/null || printf '%s\n' "$l" >> "$f"
+  [ -z "$nuevo" ] || kr_sesion_limpia
+}
+
 # kr_sesion_dir: print ${TMPDIR:-/tmp}/agents-kit-<uid>, created with mode 0700. Return 1 (nothing that depends on it
 # may run) when it exists but is a symlink, is not ours or has another mode.
 kr_sesion_dir() {

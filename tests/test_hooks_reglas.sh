@@ -525,4 +525,38 @@ rmdir "$lock"
 marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/fakelint\"}}}"
 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "sin turno no hace nada: $rc $out"
 
+# --- stop-check revisa lo que editó la sesión (anotado por pre-edit y post-edit); sin registro, lo sucio del árbol
+cat > "$bin/turnob" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >> "$LOG"
+for a in "$@"; do [ "$a" != ./src/b.ts ] || { echo "b.ts está a medias"; exit 1; }; done
+exit 0
+EOF2
+chmod +x "$bin/turnob"
+marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/fakelint\"}, \"turno\": \"$bin/turnob\"}}"
+(cd "$r" && git add -A && git commit -q -m sesiones) || fail "commit sesiones"
+export TMPDIR="$(mktemp -d)"
+sesj() { inp --arg c "$r" --arg s "$1" --arg f "$2" --arg e "$3" '{session_id: $s, cwd: $c, hook_event_name: $e,
+  tool_name: "Write", tool_input: {file_path: $f, content: "x"}}'; }
+echo 'export const a = 2;' > "$r/src/a.ts"; hook post-edit "$(sesj sa src/a.ts PostToolUse)"
+echo 'export const b = 2;' > "$r/src/b.ts"; hook post-edit "$(sesj sb src/b.ts PostToolUse)"
+hook pre-edit "$(sesj sc src/c.ts PreToolUse)"; [ $rc -eq 0 ] || fail "pre-edit de c.ts: $rc $out"
+echo 'export const c = 2;' > "$r/src/c.ts"
+: > "$LOG"; hook stop-check "$(sjson sa false)"
+[ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/a.ts ] || fail "sa solo revisa lo suyo y b.ts de sb no la bloquea: $rc $out / $(cat "$LOG")"
+: > "$LOG"; hook stop-check "$(sjson sb false)"
+[ $rc -eq 2 ] && [ "$(cat "$LOG")" = ./src/b.ts ] || fail "sb revisa su b.ts: $rc $out / $(cat "$LOG")"
+: > "$LOG"; hook stop-check "$(sjson sc false)"
+[ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/c.ts ] || fail "lo anotado por pre-edit cuenta: $rc $out / $(cat "$LOG")"
+: > "$LOG"; hook stop-check "$(sjson sin-registro false)"
+got="$(sort "$LOG" | tr '\n' ' ')"
+[ $rc -eq 2 ] && [ "$got" = "./src/a.ts ./src/b.ts ./src/c.ts " ] || fail "sin registro, todo lo sucio: $rc $got"
+git -C "$r" checkout -q -- src/a.ts
+: > "$LOG"; hook stop-check "$(sjson sa false)"
+[ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un fichero anotado que ya no está cambiado no se pasa: $rc $(cat "$LOG")"
+rm -f "$r/src/c.ts"
+: > "$LOG"; hook stop-check "$(sjson sc false)"
+[ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un fichero anotado que ya no existe no se pasa: $rc $(cat "$LOG")"
+git -C "$r" checkout -q -- src/b.ts
+
 echo ok

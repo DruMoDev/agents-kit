@@ -2,7 +2,10 @@
 # Stop hook. For the repo of the cwd and for every repo noted for this session by pre-edit/post-edit (kr_apunta: edits
 # in a repo that does not contain the cwd, such as a kit-run worktree), when it has .agents-kit.json and .lint.turno:
 # passes its changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as arguments to
-# .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root.
+# .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root. When the
+# session noted the files it edited (kr_anota, "<root><tab><ruta>" lines in its file), only those of them that are
+# still changed are passed, so the half-done files of other sessions in the same clone do not block this one; a
+# session with no noted file (it edited nothing through the tools: maybe by shell) gets all the changed files.
 # Exit 2 with the output on stderr when any fails; 0 with nothing changed, when a lock is busy, when the tool is
 # missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks again with stop_hook_active, up to
 # KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in kr_sesion_fichero turno-bloqueos, one file per
@@ -24,9 +27,12 @@ kr_cwd_common || exit 0
 ! kr_root || add_root
 ses=""
 [ -z "$KR_SID" ] || ses="$(kr_sesion_fichero sesion)" || ses=""
+anotados=$'\n'; registro=""
 if [ -n "$ses" ] && [ -f "$ses" ]; then
-  while IFS= read -r r; do
+  while IFS= read -r l; do
+    r="${l%%$'\t'*}"
     case "$r" in /*) ;; *) continue ;; esac
+    [ "$r" = "$l" ] || { registro=1; anotados="$anotados$l"$'\n'; }
     [ -d "$r" ] && _kr_git "$r" && [ "$KR_ROOT" = "$r" ] && kr_confianza && add_root
   done < "$ses"
 fi
@@ -48,7 +54,11 @@ while [ $j -lt ${#roots[@]} ]; do
   kr_config && [ -n "$KR_TURNO" ] || continue
   files=()
   while IFS= read -r -d '' f; do
-    [ -f "$KR_ROOT/$f" ] && files+=("./$f")
+    [ -f "$KR_ROOT/$f" ] || continue
+    if [ -n "$registro" ]; then
+      case "$anotados" in *$'\n'"$KR_ROOT"$'\t'"$f"$'\n'*|*$'\n'"$KR_ROOT"$'\t*\n'*) ;; *) continue ;; esac
+    fi
+    files+=("./$f")
   done < <(git -C "$KR_ROOT" diff --name-only --no-renames -z HEAD -- 2>/dev/null
            git -C "$KR_ROOT" ls-files --others --exclude-standard -z 2>/dev/null)
   [ ${#files[@]} -gt 0 ] || continue

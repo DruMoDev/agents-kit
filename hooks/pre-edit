@@ -15,7 +15,8 @@
 # cwd's; a path inside a marked repo that cannot be resolved blocks. Paths and globs are compared without case on
 # macOS; a symlink is checked by its target, and a target outside its repo does nothing. Inert (exit 0, no output)
 # as described in hooks/lib-reglas.sh, and for paths outside any repo with .agents-kit.json. An allowed edit in a
-# repo that does not contain the cwd is noted for stop-check (kr_apunta).
+# repo that does not contain the cwd is noted for stop-check (kr_apunta), and every allowed file is noted for this
+# session (kr_anota).
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input && { [ ${#KR_ITEMS[@]} -gt 0 ] || [ -n "$KR_PARCHE" ]; } || exit 0
 ilegible_msg="No se pudo leer el parche (apply_patch) para comprobar las reglas; se bloquea por si acaso."
@@ -71,6 +72,7 @@ while [ $i -lt ${#KR_ITEMS[@]} ]; do
       exit 2
     fi
   fi
+  kr_anota
   kr_apunta
 done
 if [ -n "$ilegible" ] && kr_root && kr_config; then echo "$ilegible_msg" >&2; exit 2; fi

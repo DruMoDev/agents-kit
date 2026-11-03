@@ -13,7 +13,9 @@ while [ $i -lt ${#KR_ITEMS[@]} ]; do
   ruta="${KR_ITEMS[$i]}"; [ "${KR_ITEMS[$((i + 1))]}" != '"ilegible"' ] || { i=$((i + 2)); continue; }; i=$((i + 2))
   kr_item "$ruta" && [ -f "$KR_ROOT/$KR_REL" ] && kr_confianza || continue
   kr_ext
-  [ -n "$KR_EXT" ] && kr_config "$KR_EXT" && [ -n "$KR_CMD" ] || continue
+  kr_config "$KR_EXT" || continue
+  kr_anota
+  [ -n "$KR_EXT" ] && [ -n "$KR_CMD" ] || continue
   kr_apunta
   roots+=("$KR_ROOT"); commons+=("$KR_COMMON"); cmds+=("$KR_CMD"); rels+=("$KR_REL")
 done
