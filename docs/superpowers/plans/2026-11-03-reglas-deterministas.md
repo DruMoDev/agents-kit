@@ -55,11 +55,18 @@
 - **Deuda:**
   - lint: `eslint-suppressions.json` (nativo de ESLint, que lo aplica solo);
   - tipos: `.agents-kit/tsc-base.json`, de la forma `{"<ruta>": <nº de errores>}`, comprobado por `.agents-kit/tsc-base.mjs`, copia de `templates/reglas/tsc-base.mjs`.
-- **Aprobación de reglas:**
-  1. `kit-pr.sh regla` publica en la PR `<!-- kit-regla: <hash> -->`, donde `<hash>` es el `sha256` del diff de los ficheros blindados frente a `origin/<base>`.
-  2. Dru aprueba poniendo en la PR la etiqueta `regla-aprobada`.
-  3. `fusionar` exige que el último comentario `kit-regla` lleve el hash actual y que haya un evento `labeled regla-aprobada` posterior a ese comentario (`gh api repos/<slug>/issues/<pr>/events`).
-  4. Si el diff blindado cambia después, hace falta otro comentario y otra aprobación.
+- **Aprobación de reglas, respondiendo (decisión de Dru: nada de etiquetas).**
+  1. `kit-pr.sh regla` publica en la PR `<!-- kit-regla: <hash> -->` con la explicación. `<hash>` es el `sha256` del diff de los ficheros blindados frente a `origin/<base>`.
+  2. Después, `kit-issue.sh decision` publica la pregunta en el issue, pone `necesita-respuesta` y avisa.
+  3. Dru responde con un comentario normal en el issue o en la PR.
+  4. **Retomar sin tocar etiquetas:** `kit-issue.sh siguiente` vuelve a dar por disponible un issue en `necesita-respuesta` cuando, después de su último `<!-- kit-decision -->`, hay un comentario de la cuenta del kit sin marcador `<!-- kit-`. `reclamar` le quita `necesita-respuesta`. Esto vale para cualquier decisión, no solo para reglas.
+     - Requisito que el builder comprueba: todo comentario que publican los scripts del kit lleva un marcador `<!-- kit-...`. Si alguno no lo lleva, se le añade.
+  5. El agente lee la respuesta con `kit-issue.sh leer`.
+     - Si Dru aprueba: `kit-pr.sh aprobar-regla <wt> <pr> <id-del-comentario-de-Dru>` publica `<!-- kit-regla-aprobada: <hash> <id> -->`.
+     - Si rechaza: quita el commit de la regla.
+  6. `fusionar` exige un `kit-regla-aprobada` con el hash actual. El `<id>` tiene que ser un comentario de la cuenta del kit, sin marcador, publicado en el issue o en la PR después del último `kit-regla`.
+  7. Si el diff blindado cambia después, hace falta otra propuesta y otra respuesta.
+  8. **En una sesión con Dru (chat):** el agente publica la respuesta de Dru tal cual, citada, como comentario en la PR (`kit-pr.sh aprobar-regla <wt> <pr> --chat <fichero>`, que publica el comentario y el marcador). Hay una limitación conocida, ya en el spec: con la misma cuenta de `gh`, un agente que quisiera engañar podría falsificarla.
 - **Cómo pasa una edición aprobada el hook de antes de editar:** el hook deja pasar las ediciones de ficheros blindados si existe `$(git rev-parse --git-common-dir)/agents-kit/reglas-abiertas` con el `session_id` de la sesión. Lo crea `kit-reglas.sh abrir <wt> <session_id>` y lo borra `kit-reglas.sh cerrar <wt>`. Es un reductor de velocidad con un mensaje que dice qué hacer, no una barrera: la barrera es `fusionar`. Nunca se permiten `eslint-disable`, `@ts-ignore`, `@ts-nocheck` ni `as any`.
 - **`knip` en repos empezados:** al instalar la base, sus hallazgos de hoy no van a un fichero de deuda. `kit-reglas` abre un issue de limpieza (`propuesta`, con la lista), y `knip` entra en `verificar.completo` cuando ese issue se fusiona.
 
@@ -169,9 +176,11 @@
   - subcomando nuevo `regla <wt> <pr> <fichero>`;
   - en `fusionar`, motivos nuevos antes de `report` (cerca de `:424`);
   - uso y cabecera.
-- Modificar: `scripts/kit-issue.sh` (`comprobar`, `:345`; `KIT_LABELS`, `:151`, añade `regla-aprobada`).
-- Modificar: `scripts/kit-github-setup.sh` si mantiene su propia lista de etiquetas (que use `regla-aprobada` con su descripción).
-- Modificar: `tests/stubs/gh` (respuesta para `api repos/.../issues/<n>/events`).
+- Modificar: `scripts/kit-issue.sh`:
+  - `comprobar`, `:345`;
+  - `siguiente` y `reclamar`: issue respondido de vuelta en el reparto y fuera `necesita-respuesta` al reclamar;
+  - la cabecera.
+- Modificar: los scripts que publican comentarios sin marcador `<!-- kit-`, si los hay.
 - Test: `tests/test_pr.sh` y `tests/test_issue.sh`.
 
 **Interfaces:**
@@ -180,14 +189,17 @@
   - `kit-pr.sh regla <wt> <pr> <fichero>`: publica el contenido de `<fichero>` en la PR precedido de `<!-- kit-regla: <hash> -->`, con el hash de `kit-reglas.sh blindado <wt> origin/<base>`, y termina en `FIN: <url>`. Exit 1 si `blindado` da `FIN: 0`.
   - Motivos de `fusionar`:
     - si el marcador base tiene `lint`, cada línea de `kit-reglas.sh trinquete` es un motivo;
-    - si `blindado` da `n > 0`: `la PR cambia ficheros de reglas (<lista>) sin la aprobación de Dru: kit-pr.sh regla y etiqueta regla-aprobada`, salvo que el último `kit-regla` propio lleve el hash actual y haya un evento `labeled` `regla-aprobada` posterior a ese comentario.
+    - si `blindado` da `n > 0`: `la PR cambia ficheros de reglas (<lista>) sin la aprobación de Dru: kit-pr.sh regla y espera su respuesta`, salvo que haya un `kit-regla-aprobada` válido (sección "Decisiones").
+  - `kit-pr.sh aprobar-regla <wt> <pr> <id-comentario> | --chat <fichero>`: comprueba que el comentario es válido (sección "Decisiones") o publica la cita del chat, escribe `<!-- kit-regla-aprobada: <hash> <id> -->` y termina en `FIN: aprobada`. Exit 1 si no hay `kit-regla` con el hash actual o si el comentario no vale.
   - `kit-issue.sh comprobar`: exit 1 con `falta la base de reglas: ejecuta kit-reglas`, si `kit-reglas.sh estado` da `base incompleta` en un repo con `ts` y el marcador no tiene `"reglas": false`.
 
 - [ ] **Paso 1: tests que fallan.**
   - `fusionar` rechaza una PR que toca `eslint.config.mjs` sin `kit-regla`.
-  - La rechaza también con `kit-regla` y la etiqueta puesta antes del comentario.
-  - La acepta con la etiqueta puesta después del comentario.
-  - La rechaza otra vez si el diff blindado cambia tras aprobar (hash distinto).
+  - `aprobar-regla` rechaza un comentario anterior al `kit-regla`, uno con marcador `<!-- kit-` y uno de otra cuenta.
+  - `fusionar` acepta tras `aprobar-regla` con una respuesta posterior válida.
+  - `fusionar` la rechaza otra vez si el diff blindado cambia tras aprobar (hash distinto).
+  - `siguiente` da por disponible un issue en `necesita-respuesta` con una respuesta sin marcador posterior a su `kit-decision`, y no da uno sin respuesta.
+  - `reclamar` le quita `necesita-respuesta`.
   - La rechaza con deuda en un fichero tocado.
   - `regla` sin ficheros blindados da exit 1.
   - `comprobar` rechaza un repo TS sin `lint` y acepta uno con `"reglas": false`.
@@ -302,10 +314,15 @@
 **Ficheros:**
 - Modificar:
   - `skills/kit-on/SKILL.md`: paso 5, tras "Verificación": `kit-reglas.sh estado`; con `base incompleta`, seguir la skill `kit-reglas` dentro del worktree de `kit-on`. Hacer lo mismo en "Actualizar un repo ya activado".
-  - `skills/kit-run/SKILL.md`: el lint en verde es terminado. El commit de limpieza de deuda en los ficheros tocados. Antes de `fusionar`, si `kit-reglas.sh blindado` da `n > 0`: `kit-pr.sh regla` con la plantilla, `kit-issue.sh decision` (pone `necesita-respuesta` y avisa) y pasar al siguiente issue. Al retomar con la regla rechazada: quitar el commit, verificar y hacer una ronda nueva. En el "Qué hacer" para Dru del final: poner `regla-aprobada` y quitar `necesita-respuesta`.
+  - `skills/kit-run/SKILL.md`: el lint en verde es terminado. El commit de limpieza de deuda en los ficheros tocados. Antes de `fusionar`, si `kit-reglas.sh blindado` da `n > 0`: `kit-pr.sh regla` con la plantilla, `kit-issue.sh decision` (pone `necesita-respuesta` y avisa) y pasar al siguiente issue. Al retomar, leer la respuesta de Dru:
+    - si aprueba: `kit-pr.sh aprobar-regla` con el id de su comentario;
+    - si rechaza: quitar el commit, verificar y hacer una ronda nueva;
+    - si no está claro: otra `decision`.
+
+    En el "Qué hacer" para Dru del final: responder en el issue, sin etiquetas. Lo mismo para `necesita-respuesta` en general: actualizar la línea que hoy le pide quitar la etiqueta.
   - `skills/kit-scout/SKILL.md`: buscar convenciones repetidas en `AGENTS.md` que podrían ser reglas (propuesta con la plantilla crítica) y abrir issues de limpieza de deuda (una regla o una carpeta cada uno).
   - `skills/kit-revisar/SKILL.md`: `kit-reglas.sh trinquete <raíz> HEAD` y `blindado <raíz> HEAD` sobre el diff local; avisar si falta la base.
-  - `tests/test_skills.sh`: cada skill cita lo suyo (`kit-reglas.sh`, `kit-pr.sh" regla`, `regla-aprobada`).
+  - `tests/test_skills.sh`: cada skill cita lo suyo (`kit-reglas.sh`, `kit-pr.sh" regla`, `aprobar-regla`).
 
 - [ ] **Paso 1:** ampliar `tests/test_skills.sh`. Esperado: FAIL.
 - [ ] **Paso 2:** editar las cuatro skills.
@@ -334,11 +351,11 @@
   - manifiestos (por `scripts/release.sh 3.7.0`).
 - Borrar: `docs/superpowers/specs/2026-11-03-reglas-deterministas-design.md` y este plan (andamiaje; lo no obvio va a `AGENTS.md` o a la skill).
 
-- [ ] **Paso 1:** en un repo TS de Dru (con su OK sobre cuál), seguir `kit-reglas` en un worktree y anotar los tiempos:
+- [ ] **Paso 1:** en `/Users/drumorera/Documents/tiktok/tiktok-editor` (lo eligió Dru), seguir `kit-reglas` en un worktree temporal fuera de su árbol de trabajo, sin publicar nada ni tocar su clon, y anotar los tiempos:
   - `post-edit` en frío y con caché;
   - `stop-check` con 5 ficheros cambiados.
 
   Si `post-edit` con caché pasa de 2 s, aplicar la alternativa de la skill y volver a medir.
-- [ ] **Paso 2:** `tests/e2e/github.sh DruMoDev/agents-kit-sandbox` lanzado con `scripts/kit-bg.sh`. Esperado: termina en verde. Añade al e2e el caso de una PR con un fichero blindado: se rechaza sin aprobación y se fusiona con `regla-aprobada` tras `kit-regla`.
+- [ ] **Paso 2:** `tests/e2e/github.sh DruMoDev/agents-kit-sandbox` lanzado con `scripts/kit-bg.sh`. Esperado: termina en verde. Añade al e2e el caso de una PR con un fichero blindado: se rechaza sin aprobación y se fusiona tras `kit-regla`, una respuesta en el issue y `aprobar-regla`.
 - [ ] **Paso 3:** `scripts/release.sh 3.7.0`, `tests/run.sh` y `claude plugin validate .`. Esperado: todo PASS.
 - [ ] **Paso 4:** borrar el spec y el plan, actualizar `AGENTS.md` y hacer commit. La PR sigue el flujo del repo del kit.

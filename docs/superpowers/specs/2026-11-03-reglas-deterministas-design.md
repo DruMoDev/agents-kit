@@ -108,7 +108,7 @@ Una regla nueva, cambiada o quitada, una excepción nueva en la configuración o
   Avisa con `kit-notify.sh` y deja el issue en `necesita-respuesta`. Si Dru aprueba, se fusiona como siempre. Si rechaza, el agente quita ese commit y sigue sin la regla.
 - **En repos con `"flujo": false`:** como en la sesión con Dru. `kit-revisar` señala los cambios de reglas del diff local para que el agente los consulte.
 
-La garantía mecánica: `fusionar` no fusiona una PR que toque los ficheros de reglas sin la aprobación de Dru registrada en esa PR. Cómo se registra lo decide el builder; algo que el agente no haga en el camino normal, coherente con los marcadores HTML que ya usa el kit. **Limitación conocida:** si el agente usa la misma cuenta de `gh` que Dru, un agente que intente engañar a propósito podría falsificar la aprobación. Contra el caso real (el agente descuidado) la barrera es sólida. Si hace falta que sea absoluta, el kit tendría que usar una cuenta de `gh` distinta. Fuera de alcance por ahora.
+La garantía mecánica: `fusionar` no fusiona una PR que toque los ficheros de reglas sin la aprobación de Dru registrada en esa PR. **Dru aprueba respondiendo, nunca con etiquetas (decisión de Dru):** contesta con un comentario normal en el issue o en la PR, el issue vuelve solo al reparto y el agente registra la aprobación citando ese comentario. El detalle está en el plan. **Limitación conocida:** si el agente usa la misma cuenta de `gh` que Dru, un agente que intente engañar a propósito podría falsificar la aprobación. Contra el caso real (el agente descuidado) la barrera es sólida. Si hace falta que sea absoluta, el kit tendría que usar una cuenta de `gh` distinta. Fuera de alcance por ahora.
 
 ### 6. Blindaje contra las trampas
 
