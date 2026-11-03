@@ -3,11 +3,13 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 export TMPDIR="$(mktemp -d)"
 H="$REPO_ROOT/hooks"
-for h in pre-edit post-edit stop-check; do [ -x "$H/$h" ] || fail "hooks/$h falta o no es ejecutable"; done
+for h in pre-edit pre-bash post-edit stop-check; do [ -x "$H/$h" ] || fail "hooks/$h falta o no es ejecutable"; done
 jq -e '(.hooks.PreToolUse[0].matcher == "Edit|Write|MultiEdit|NotebookEdit")
   and (.hooks.PostToolUse[0].matcher == "Edit|Write|MultiEdit|NotebookEdit")
   and (.hooks.Stop[0] | has("matcher") | not)
   and (.hooks.PreToolUse[0].hooks[0].command | endswith("/hooks/pre-edit\""))
+  and (.hooks.PreToolUse[1].matcher == "Bash")
+  and (.hooks.PreToolUse[1].hooks[0].command | endswith("/hooks/pre-bash\""))
   and (.hooks.PostToolUse[0].hooks[0].command | endswith("/hooks/post-edit\""))
   and (.hooks.Stop[0].hooks[0].command | endswith("/hooks/stop-check\""))
   and (.hooks.SessionStart[0].matcher == "startup|resume|clear|compact|fork")' "$H/hooks.json" >/dev/null \
@@ -558,5 +560,37 @@ rm -f "$r/src/c.ts"
 : > "$LOG"; hook stop-check "$(sjson sc false)"
 [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un fichero anotado que ya no existe no se pasa: $rc $(cat "$LOG")"
 git -C "$r" checkout -q -- src/b.ts
+
+# --- pre-bash: saltarse los hooks de git
+bjson() { inp --arg c "${2:-$r}" --arg k "$1" '{session_id: "s1", cwd: $c, hook_event_name: "PreToolUse", tool_name: "Bash",
+  tool_input: {command: $k}}'; }
+malos=('git commit --no-verify -m x' 'git push --no-verify origin main' 'HUSKY=0 git commit -m x' 'LEFTHOOK=0 git push'
+  'SKIP=eslint git commit -m x' 'git -c core.hooksPath=/dev/null commit -m x' 'cd src && git commit -qm x --no-verify'
+  "HUSKY='0' git commit -m x" 'npm publish --no-verify')
+buenos=('git commit -m x' 'git push origin main' 'NOSKIP=1 make' 'echo HUSKY=1' 'git config --get core.hooksPath' 'ls -la')
+for m in "" '{"reglas": false}'; do
+  if [ -z "$m" ]; then rm -f "$r/.agents-kit.json"; else marker "$m"; fi
+  for k in "${malos[@]}"; do
+    hook pre-bash "$(bjson "$k")"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "pre-bash inerte ($m) con '$k': $rc $out"
+  done
+done
+marker '{}'
+for k in "${malos[@]}"; do
+  hook pre-bash "$(bjson "$k")"
+  [ $rc -eq 2 ] && [[ "$out" == *"No te saltes los hooks de git"* ]] || fail "pre-bash debe bloquear '$k': $rc $out"
+done
+for k in "${buenos[@]}"; do
+  hook pre-bash "$(bjson "$k")"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "pre-bash no debe bloquear '$k': $rc $out"
+done
+mkdir -p "$r/sub dir"; hook pre-bash "$(bjson 'git commit --no-verify' "$r/sub dir")"
+[ $rc -eq 2 ] || fail "pre-bash con el cwd en un subdirectorio del repo: $rc $out"
+nogit="$(mktemp -d)"; hook pre-bash "$(bjson 'git commit --no-verify' "$nogit")"
+[ $rc -eq 0 ] && [ -z "$out" ] || fail "pre-bash fuera de git es inerte: $rc $out"
+hook pre-bash 'no es json{ --no-verify'; [ $rc -eq 0 ] && [ -z "$out" ] || fail "pre-bash con entrada rota: $rc $out"
+# sale pronto sin nada sospechoso: ni jq ni git (PATH sin ellos)
+vacio="$(mktemp -d)"; ln -s "$(command -v cat)" "$vacio/cat"
+out="$(cd / && printf '%s' "$(bjson 'ls -la')" | PATH="$vacio" "$(command -v bash)" "$H/pre-bash" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && [ -z "$out" ] || fail "pre-bash sin nada sospechoso no necesita jq ni git: $rc $out"
+marker "$LINT"
 
 echo ok

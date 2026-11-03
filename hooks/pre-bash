@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# PreToolUse hook (Bash; Codex's exec_command also arrives as tool_name "Bash", and OpenCode's bash tool through the
+# plugin). Exit 2 with the remedy on stderr when tool_input.command skips git hooks: --no-verify (in git commit,
+# git push or anything else), HUSKY=0, LEFTHOOK=0, SKIP=<hooks> (pre-commit) or -c core.hooksPath=.
+# Inert (exit 0, no output) without .agents-kit.json in the repo of the cwd (or in the nearest marked repo that
+# contains it), with "reglas": false, outside git or when the input is not usable. It does not need "lint": the rule
+# against skipping hooks is in rules/core.md for every repo with rules.
+# The kit scripts that commit without hooks (kit-ship-pr.sh) do it inside the script: this hook only sees the
+# command the agent runs, so they are not blocked.
+# Cost: a bash pattern over the raw input, before anything else; only when it matches, one jq and one git.
+[ ! -t 0 ] || exit 0
+IFS= read -r -d '' entrada
+case "$entrada" in *no-verify*|*HUSKY*|*LEFTHOOK*|*SKIP*|*hooksPath*) ;; *) exit 0 ;; esac
+source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
+cwd=""; cmd=""; ok=""
+{ IFS= read -r -d '' ok; IFS= read -r -d '' cwd; IFS= read -r -d '' cmd; } < <(
+  printf '%s' "$entrada" | jq -j 'def s: if type == "string" then . else "" end;
+    "ok", "\u0000", (.cwd | s), "\u0000", (.tool_input | objects | .command // .cmd | s), "\u0000"' 2>/dev/null)
+[ "$ok" = ok ] && [ -n "$cwd" ] && [ -n "$cmd" ] || exit 0
+re='--no-verify|(^|[^[:alnum:]_])(HUSKY|LEFTHOOK)=["'"'"']?(0|false)|(^|[^[:alnum:]_])SKIP=|core\.hooksPath='
+[[ "$cmd" =~ $re ]] || exit 0
+KR_CWD="$(cd "$cwd" 2>/dev/null && pwd -P)" && [ -n "$KR_CWD" ] || exit 0
+kr_root || exit 0
+[ "$(jq -r '.reglas != false' "$KR_ROOT/.agents-kit.json" 2>/dev/null)" = true ] || exit 0
+echo "No te saltes los hooks de git (--no-verify, HUSKY=0, LEFTHOOK=0, SKIP=, -c core.hooksPath=): arregla lo que fallan. Si un hook está mal, propón el cambio (kit-reglas)." >&2
+exit 2

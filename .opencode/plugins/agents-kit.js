@@ -1,7 +1,8 @@
 // agents-kit plugin for OpenCode, V1 (`opencode` 1.x, `server`) and V2 (2.x, `setup`).
 // Registers the plugin skills and, only in repos with .agents-kit.json, injects
 // the same context as hooks/session-start (V1: first user message; V2: system)
-// and runs hooks/pre-edit and hooks/post-edit around the edit tools (editHook). The hooks find the repo of each
+// and runs hooks/pre-edit and hooks/post-edit around the edit tools, and hooks/pre-bash before the bash tool
+// (editHook). The hooks find the repo of each
 // edited file themselves and stay inert outside repos with .agents-kit.json; if a hook cannot run (it fails to start,
 // dies or passes its time limit), the edit goes through, as in Claude Code.
 
@@ -14,6 +15,9 @@ const PLUGIN_ROOT = path.resolve(path.dirname(fs.realpathSync(fileURLToPath(impo
 const HOOK = path.join(PLUGIN_ROOT, 'hooks', 'session-start');
 const PRE_EDIT = path.join(PLUGIN_ROOT, 'hooks', 'pre-edit');
 const POST_EDIT = path.join(PLUGIN_ROOT, 'hooks', 'post-edit');
+const PRE_BASH = path.join(PLUGIN_ROOT, 'hooks', 'pre-bash');
+// What hooks/pre-bash looks for, checked first so a plain command spawns nothing.
+const SKIP_HOOKS = /no-verify|HUSKY|LEFTHOOK|SKIP|hooksPath/;
 const MARK = 'agents-kit está activo';
 // What the kit skills read or run outside the project. Never hooks/ or .opencode/.
 const ALLOWED_DIRS = ['scripts', 'skills', 'rules', 'templates'];
@@ -80,8 +84,9 @@ export const kitContext = (directory) => {
   return ctx;
 };
 
-// Rule hooks (hooks/pre-edit, hooks/post-edit), fed with the same JSON as Claude Code (Codex's for the patch tool).
-// V1 tools take filePath, V2 tools path; the patch tool (V1 `patch`/`apply_patch`, V2 `patch`) takes patchText.
+// Rule hooks (hooks/pre-edit, hooks/post-edit, hooks/pre-bash), fed with the same JSON as Claude Code (Codex's for the
+// patch tool). V1 tools take filePath, V2 tools path; the patch tool (V1 `patch`/`apply_patch`, V2 `patch`) takes
+// patchText; bash takes command.
 const hookInput = (directory, sessionID, tool, args) => {
   const a = args && typeof args === 'object' ? args : {};
   const file = a.filePath ?? a.path;
@@ -101,6 +106,9 @@ const hookInput = (directory, sessionID, tool, args) => {
     const edits = (Array.isArray(a.edits) ? a.edits : []).map((e) => ({
       old_string: e?.oldString, new_string: e?.newString, replace_all: e?.replaceAll === true }));
     input = { file_path: file, edits };
+  } else if (tool === 'bash') {
+    name = 'Bash';
+    input = { command: a.command };
   } else return null;
   return { session_id: sessionID || '', cwd: directory, tool_name: name, tool_input: input };
 };
@@ -115,10 +123,15 @@ const hookTimeout = (hook, input) => {
 };
 
 // editHook <hook> <directory> <sessionID> <tool> <args>: resolves to '' when the hook lets it pass (exit 0, an inert
-// repo or a hook that could not run) and to its stderr when it blocks (exit 2).
+// repo or a hook that could not run) and to its stderr when it blocks (exit 2). For the bash tool, PRE_EDIT means
+// hooks/pre-bash (only when the command has something it looks for) and POST_EDIT runs nothing.
 export const editHook = (hook, directory, sessionID, tool, args) => new Promise((resolve) => {
   const input = hookInput(directory, sessionID, tool, args);
   if (!input) return resolve('');
+  if (input.tool_name === 'Bash') {
+    if (hook !== PRE_EDIT || !SKIP_HOOKS.test(String(input.tool_input.command ?? ''))) return resolve('');
+    hook = PRE_BASH;
+  }
   let child;
   try {
     child = execFile(hook, [], {

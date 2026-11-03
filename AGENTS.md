@@ -15,7 +15,7 @@ Aprobación de reglas: una PR que cambia ficheros blindados (`kit-reglas.sh blin
 
 ### Reglas deterministas
 
-Lint, tipos y estructura que fallan solos, para que "terminado" sea "las comprobaciones en verde" y no "el agente cree que siguió el `.md`". La configuración vive en cada repo (`eslint.config.*`, `tsconfig.json`, `knip`...); el kit pone la skill `kit-reglas` (instala la base y propone reglas, con el OK de Dru), `kit-reglas.sh` (`estado`, `trinquete`, `blindado`, `abrir`, `cerrar`), las plantillas `templates/reglas/`, los hooks `pre-edit`, `post-edit` y `stop-check`, y las puertas de `kit-pr.sh fusionar` y `kit-issue.sh comprobar` (`falta la base de reglas` en un repo TS sin la base).
+Lint, tipos y estructura que fallan solos, para que "terminado" sea "las comprobaciones en verde" y no "el agente cree que siguió el `.md`". La configuración vive en cada repo (`eslint.config.*`, `tsconfig.json`, `knip`...); el kit pone la skill `kit-reglas` (instala la base y propone reglas, con el OK de Dru), `kit-reglas.sh` (`estado`, `trinquete`, `blindado`, `abrir`, `cerrar`), las plantillas `templates/reglas/`, los hooks `pre-edit`, `post-edit`, `stop-check` y `pre-bash` (bloquea en `Bash` los comandos que se saltan los hooks de git: `--no-verify`, `HUSKY=0`, `LEFTHOOK=0`, `SKIP=`, `-c core.hooksPath=`; los scripts del kit que hacen commits sin hooks lo hacen dentro del script, que el hook no ve), y las puertas de `kit-pr.sh fusionar` y `kit-issue.sh comprobar` (`falta la base de reglas` en un repo TS sin la base).
 - Claves del marcador: `lint` (`{"fichero": {"<ext>,<ext>": "<comando>"}, "turno": "<comando>"}`; que exista equivale a "base instalada" y activa los hooks) y `blindado` (lista de rutas o globs; sustituye entera a la de `templates/config.json`). `blindado` también se puede definir en `~/.agents-kit/config.json`: es el modelo de confianza del kit (lo global es de Dru, como `notify`).
 - Las puertas leen el marcador de `origin/<base>` (`kit_config_base`): una PR no puede debilitar su propia puerta. Los hooks leen el del worktree, porque son un reductor de velocidad con un mensaje que dice qué hacer; la barrera es `fusionar` y el CI. Por lo mismo, si falta la herramienta de lint (126/127) o se pasa el tope, los hooks no bloquean.
 - Los hooks van en el plugin (`hooks/hooks.json`), no en `.claude/settings.json` de cada repo: un agente no los quita editando el repo y se actualizan con el kit. Coste: Codex pide aprobarlos otra vez con `/hooks` cada vez que cambian.
@@ -45,7 +45,7 @@ Lint, tipos y estructura que fallan solos, para que "terminado" sea "las comprob
 - `.claude-plugin/`: manifiesto y marketplace de Claude Code.
 - `.codex-plugin/`: manifiesto de Codex.
 - `.agents/plugins/`: marketplace de Codex.
-- `hooks/`: `hooks.json`, el script `session-start` y los hooks de reglas `pre-edit`, `post-edit` y `stop-check` (con `lib-reglas.sh`).
+- `hooks/`: `hooks.json`, el script `session-start` y los hooks de reglas `pre-edit`, `post-edit`, `stop-check` y `pre-bash` (con `lib-reglas.sh`).
 - `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso, reglas y los hooks `pre-edit`/`post-edit` alrededor de las herramientas de edición).
 - `rules/`: reglas inyectadas en las sesiones.
 - `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout`, `kit-revisar` (revisión del diff local, sin PR), `kit-reglas` (base de lint, tipos y estructura y reglas nuevas; `references/`: `base.md`, `escalera.md`, `propuesta.md`) y `kit-run` (con `references/`: plantilla de issue, prompts del revisor (`revisor.md` y `revisor-verificar.md`), esquema JSON de la revisión y formato de ronda).
@@ -192,7 +192,7 @@ Verificado el 2026-11-03 con codex-cli 0.165.0, opencode 2.1.4 (`run --standalon
   - `multiedit` de V1 en uso real;
   - la cifra del tope de bloqueos de `Stop` en Claude Code (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`).
 - `tests/test_hooks_reglas.sh` pasa también en Linux: verificado el 2026-11-03 en docker con `debian:stable-slim` (bash 5, GNU coreutils 9.7).
-- Límite conocido: las ediciones hechas por shell no pasan por `pre-edit` ni `post-edit`, igual que el `Bash` de Claude Code. En Codex se vio con un `exec_command` que escribió un fichero. En OpenCode serían `bash`/`shell`, pero no lo probé. Solo las ve `stop-check`, en Codex y Claude Code.
+- Límite conocido: las ediciones hechas por shell no pasan por `pre-edit` ni `post-edit`, igual que el `Bash` de Claude Code. En Codex se vio con un `exec_command` que escribió un fichero. En OpenCode serían `bash`/`shell`, pero no lo probé. Solo las ve `stop-check`, en Codex y Claude Code. `pre-bash` va con el matcher `Bash`, el nombre con el que llega el `exec_command` de Codex (visto arriba), y en OpenCode el plugin lo llama para su herramienta `bash` (`{command}`); sin verificar en Codex ni OpenCode reales, solo con stubs y los harness.
 
 #### Flujo de issues (fase 2)
 

@@ -124,5 +124,13 @@ out="$(run2 "$plugin" "$hrepo" '[{"tool":"write","input":{"path":"src/b.ts","con
 printf '%s' "$out" | jq -e '(.tools[0].before | contains("No desactives reglas"))
   and .tools[1].before == null and .tools[1].content[0] == "hecho" and (.tools[1].content[1] | contains("MALO en ./src/a.ts"))
   and (.tools[2].before | contains("src/a.ts: No desactives reglas"))' >/dev/null || fail "v2 pre-edit y post-edit por herramienta: $out"
+# bash tool: hooks/pre-bash blocks skipping git hooks (V1 args and V2 input carry command)
+out="$(run "$plugin" "$hrepo" '{}' - '[{"tool":"bash","args":{"command":"git commit --no-verify -m x"}},
+  {"tool":"bash","args":{"command":"git status"}}]')" || fail "harness bash: $out"
+printf '%s' "$out" | jq -e '(.tools[0].before | contains("No te saltes los hooks de git"))
+  and .tools[1].before == null and .tools[1].output == "hecho"' >/dev/null || fail "v1 pre-bash en la herramienta bash: $out"
+out="$(run2 "$plugin" "$hrepo" '[{"tool":"bash","input":{"command":"HUSKY=0 git push"}}]')" || fail "v2 harness bash: $out"
+printf '%s' "$out" | jq -e '(.tools[0].before | contains("No te saltes los hooks de git"))' >/dev/null \
+  || fail "v2 pre-bash en la herramienta bash: $out"
 
 echo ok
