@@ -2,9 +2,9 @@
 # PreToolUse hook (Edit|Write|MultiEdit|NotebookEdit). Exit 2 with the remedy on stderr when the edit
 #   - raises the number of eslint-disable, @ts-ignore, @ts-nocheck or `as any` (KR_PROHIBIDO) in a code file
 #     (extension, without case, in the keys of .lint.fichero or KR_CODIGO): the whole file before and after the edit
-#     (kr_sube_prohibido), so inherited occurrences kept as they are do not count; an edit whose old_string is not
-#     in the file falls back to new_string against old_string, a NotebookEdit cell to any match, and a check that
-#     cannot run (jq error, unreadable file) blocks too; or
+#     (kr_sube_prohibido, over every field present), so inherited occurrences kept as they are do not count; an edit
+#     whose old_string is not in the file, or a NotebookEdit cell, blocks with any match in its new text, and a check
+#     that cannot run (jq error, unreadable file) blocks too; or
 #   - touches a shielded file (.blindado) without <git-common-dir>/agents-kit/reglas-abiertas holding this session_id
 #     (kit-reglas.sh abrir). package.json is not checked here: kit-pr.sh fusionar does it.
 # Paths and globs are compared without case on macOS; a symlink is checked by its target, and a target outside the

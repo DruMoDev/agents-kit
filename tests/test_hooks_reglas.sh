@@ -100,7 +100,19 @@ hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file
 [ $rc -eq 2 ] || fail "un old_string que no está y un new_string con as any bloquea: $rc $out"
 hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
   old_string: "p as any", new_string: "q as any"}}')"
-[ $rc -eq 0 ] || fail "un old_string que no está sin subir la cuenta de entrada no bloquea: $rc $out"
+[ $rc -eq 2 ] || fail "un old_string que no está con as any en new_string bloquea aunque old_string lo tenga: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
+  old_string: "p as any", new_string: "q"}}')"
+[ $rc -eq 0 ] || fail "un old_string que no está sin texto prohibido en new_string no bloquea: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
+  edits: [{old_string: "w as anything", new_string: "w as anything2"}, {old_string: "no está", new_string: "// @ts-nocheck"}]}}')"
+[ $rc -eq 2 ] || fail "una edición de MultiEdit que no casa con texto prohibido bloquea: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
+  new_source: "x = 1", content: "let v = w as any;"}}')"
+[ $rc -eq 2 ] || fail "todos los campos cuentan: new_source limpio y content con as any bloquea: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
+  content: "let v = w as anything;", old_string: "anything", new_string: "any;"}}')"
+[ $rc -eq 2 ] || fail "todos los campos cuentan: content limpio y Edit que crea as any bloquea: $rc $out"
 printf 'let a = 1;\r\nlet b = c as any;\r\n' > "$r/src/crlf.ts"
 hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/crlf.ts",
   old_string: "let a = 1;\nlet b = c as any;", new_string: "let a = 2;\nlet b = c as any;"}}')"

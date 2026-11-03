@@ -40,32 +40,33 @@ kr_ext() {
 
 # kr_sube_prohibido: print "no" only when the edit in KR_JSON does not raise the number of KR_PROHIBIDO matches; any
 # other output (also a jq error or an unreadable file) means it must be blocked. Text is compared with CRLF as LF.
-#   - Whole file: the file after the edit is computed as the tool would (Write = content; Edit and each edit of a
-#     MultiEdit, in order, replace the first literal occurrence of old_string, all of them with replace_all: true) and
-#     must not have more matches than KR_ROOT/KR_REL (a file that does not exist counts as empty).
-#   - Each edit whose old_string is not in the simulated text (or is empty, on a non-empty text) falls back to the
-#     input: its new_string must not have more matches than its old_string.
-#   - NotebookEdit: any match in new_source (the cell is not compared).
+# Every field present counts, whatever the tool; any of them can block:
+#   - new_source (NotebookEdit): any match (the cell is not compared);
+#   - content (Write): more matches than KR_ROOT/KR_REL (a file that does not exist counts as empty);
+#   - old_string/new_string and each of edits[], in that order, simulated as the tool would over the current file
+#     (first literal occurrence of old_string, all of them with replace_all: true): the result must not have more
+#     matches than the file; and an edit whose old_string is not in the simulated text (the tool also normalizes
+#     quotes and whitespace, which this does not reproduce) must not bring any match in its new_string.
 kr_sube_prohibido() {
   local f="$KR_ROOT/$KR_REL"
   [ -e "$f" ] || f=/dev/null
   printf '%s' "$KR_JSON" | jq -r --arg re "$KR_PROHIBIDO" --rawfile cur "$f" '
     def lf: if type == "string" then split("\r\n") | join("\n") else "" end;
     def cnt: [match($re; "g")] | length;
-    (.tool_input | if type == "object" then . else {} end) as $i | ($cur | lf) as $antes |
-    if ($i.new_source | type) == "string" then (if ($i.new_source | lf | cnt) > 0 then "sube" else "no" end)
-    elif ($i.content | type) == "string" then (if ($i.content | lf | cnt) > ($antes | cnt) then "sube" else "no" end)
-    else
-      reduce ((if ($i.edits | type) == "array" then $i.edits[] else $i end) | objects) as $e
-        ({t: $antes, mal: false};
-         ($e.old_string | lf) as $o | ($e.new_string | lf) as $n |
-         if $o == "" and .t == "" then .t = $n
-         elif $o != "" and (.t | index($o)) != null then
-           (.t | split($o)) as $p
-           | .t = (if $e.replace_all == true then $p | join($n) else $p[0] + $n + ($p[1:] | join($o)) end)
-         else .mal = (.mal or (($n | cnt) > ($o | cnt))) end)
-      | if .mal or ((.t | cnt) > ($antes | cnt)) then "sube" else "no" end
-    end' 2>/dev/null
+    (.tool_input | if type == "object" then . else {} end) as $i | ($cur | lf) as $antes | ($antes | cnt) as $na |
+    (($i.new_source | type) == "string" and ($i.new_source | lf | cnt) > 0) as $celda |
+    (($i.content | type) == "string" and ($i.content | lf | cnt) > $na) as $escrito |
+    ([if ($i.old_string | type) == "string" or ($i.new_string | type) == "string" then $i else empty end]
+      + ($i.edits | if type == "array" then map(objects) else [] end)) as $ediciones |
+    (reduce $ediciones[] as $e ({t: $antes, mal: false};
+       ($e.old_string | lf) as $o | ($e.new_string | lf) as $n |
+       if $o == "" and .t == "" then .t = $n
+       elif $o != "" and (.t | index($o)) != null then
+         (.t | split($o)) as $p
+         | .t = (if $e.replace_all == true then $p | join($n) else $p[0] + $n + ($p[1:] | join($o)) end)
+       else .mal = (.mal or ($n | cnt) > 0) end)
+     | .mal or (($ediciones | length) > 0 and (.t | cnt) > $na)) as $editado |
+    if $celda or $escrito or $editado then "sube" else "no" end' 2>/dev/null
 }
 
 # kr_root: KR_ROOT and KR_COMMON (git common dir, absolute) of KR_CWD. Return 1 outside git or without the marker.
