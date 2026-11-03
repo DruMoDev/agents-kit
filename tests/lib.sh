@@ -67,7 +67,10 @@ flow_add_issue() {
 # FLOW_AUTHOR sets the comment author (default: the gh user, filled in by the stub).
 flow_add_comment() {
   local tmp; tmp="$(mktemp)"
-  jq --argjson n "$1" --arg b "$2" --arg a "${FLOW_AUTHOR:-}" '(.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_seed\(length)", body: $b}
+  # (it ticks the stub's clock like a comment posted through gh: REST id and created_at in posting order)
+  jq --argjson n "$1" --arg b "$2" --arg a "${FLOW_AUTHOR:-}" '.clock = ((.clock // 0) + 1) | .clock as $c
+      | (.issues[] | select(.number == $n) | .comments) |= . + [{id: "IC_seed\(length)", body: $b,
+        dbid: (100000 + $c), created_at: (1767225600 + $c | todate)}
       + (if $a == "" then {} else {author: {login: $a}} end)]' \
     "$GH_STATE/state.json" > "$tmp" && mv "$tmp" "$GH_STATE/state.json" || fail "flow_add_comment"
 }

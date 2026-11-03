@@ -151,6 +151,22 @@ err="$(bash "$issue" comprobar "$r2" 2>&1 >/dev/null)"; rc=$?
 case "$err" in "kit en versión anterior: ejecuta kit-on para actualizar"*"reviewers"*"notify"*) ;; *) fail "comprobar claves v2: $err";; esac
 GH_FAIL_ON="label list" bash "$issue" comprobar "$r" >/dev/null 2>&1; [ $? -eq 2 ] || fail "comprobar con gh roto debe salir 2"
 bash "$issue" comprobar "$r" x >/dev/null 2>&1; [ $? -eq 1 ] || fail "comprobar con argumentos debe salir 1"
+# a TS repo without the rule base (kit-reglas.sh estado: base incompleta) is refused, unless the marker says "reglas": false
+use_flow_gh
+rt="$(mk_kit_repo)"; echo '{}' > "$rt/tsconfig.json"
+err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "comprobar TS sin base: exit $rc ($err)"
+[ "$err" = "falta la base de reglas: ejecuta kit-reglas" ] || fail "comprobar TS sin base: '$err'"
+echo '{"reglas": false}' > "$rt/.agents-kit.json"
+out="$(bash "$issue" comprobar "$rt" 2>&1)" || fail "comprobar TS con reglas false: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar TS con reglas false: '$out'"
+# with v3 labels missing too, both reasons
+echo '{}' > "$rt/.agents-kit.json"
+t="$(mktemp)"; jq '.labels = ["en-curso"]' "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json"
+err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "comprobar con dos motivos: exit $rc"
+case "$err" in "kit en versión anterior: ejecuta kit-on para actualizar"*"faltan etiquetas"*"falta la base de reglas: ejecuta kit-reglas") ;;
+  *) fail "comprobar con dos motivos: '$err'";; esac
 
 # --- reclamar: en-curso without any kit marker (another flow) -> exit 1, nothing published
 use_flow_gh
@@ -180,7 +196,8 @@ flow_add_issue 7 "tarea"
 flow_add_comment 7 '<!-- kit-reclamado: otro -->'
 err="$(bash "$issue" reclamar "$r" 7 kit-aaaa1111 2>&1 >/dev/null)"; rc=$?
 [ $rc -eq 1 ] || fail "reclamar perdido: exit $rc ($err)"
-[ "$(flow_issue 7 '.comments[-1].body')" = 'El agente `kit-aaaa1111` suelta este issue: lo había cogido antes `otro`.' ] \
+[ "$(flow_issue 7 '.comments[-1].body')" = '<!-- kit-perdido: kit-aaaa1111 -->
+El agente `kit-aaaa1111` suelta este issue: lo había cogido antes `otro`.' ] \
   || fail "reclamar perdido: comentario '$(flow_issue 7 '.comments[-1].body')'"
 [ "$(flow_issue 7 '[.labels[].name] | index("en-curso") != null')" = true ] || fail "reclamar perdido: quitó en-curso ajeno"
 # --- reclamar: en-curso of another kit agent -> exit 1 before publishing anything
@@ -313,7 +330,7 @@ sent() { awk '$0 == "--data-raw" {getline; b = $0} END {print b}' "$CURL_LOG" | 
 msg="$(sent .message)"
 [ "$(sed -n 1p <<<"$msg")" = "#7 tarea: rojo" ] || fail "aviso ntfy: mensaje ($msg)"
 grep -qxF "$(grep -v '^[[:space:]]*$' "$qfile" | sed -n 1p | cut -c1-200)" <<<"$msg" || fail "aviso ntfy: sin extracto ($msg)"
-grep -qx "Responde en el issue y quita la etiqueta necesita-respuesta: el siguiente kit-run lo retoma." <<<"$msg" \
+grep -qx "Responde en el issue: el siguiente kit-run lo retoma." <<<"$msg" \
   || fail "aviso ntfy: sin cómo desbloquear ($msg)"
 case "$(sent .click)" in "https://github.com/dru/demo/issues/7#issuecomment-"*) ;; *) fail "aviso ntfy: url $(sent .click)";; esac
 seed7; : > "$CURL_LOG"
@@ -389,6 +406,67 @@ done
 grep -q '^issue edit\|^issue comment' "$GH_LOG" && fail "siguiente <N>: no debe tocar nada"
 bash "$issue" siguiente "$r" x >/dev/null 2>&1; [ $? -eq 1 ] || fail "siguiente número inválido debe salir 1"
 bash "$issue" siguiente "$r" 7 8 >/dev/null 2>&1; [ $? -eq 1 ] || fail "siguiente con dos números debe salir 1"
+
+# --- answered decision: an issue in necesita-respuesta is back in the pool once, after its last own kit-decision,
+# there is an own comment without a kit marker (Dru's answer), in the issue or in its open PR (branch issue-<N>-...)
+use_flow_gh
+flow_add_issue 30 "respondido" necesita-respuesta
+flow_add_comment 30 '<!-- kit-decision -->
+¿Rojo o azul?'
+flow_add_comment 30 '<!-- kit-soltado: kit-a -->'
+flow_add_comment 30 'Azul.'
+flow_add_issue 31 "sin respuesta" necesita-respuesta
+flow_add_comment 31 'Una nota vieja.'
+flow_add_comment 31 '<!-- kit-decision -->
+¿Rojo o azul?'
+flow_add_issue 32 "respuesta ajena" necesita-respuesta
+flow_add_comment 32 '<!-- kit-decision -->
+¿Rojo o azul?'
+FLOW_AUTHOR=desconocido flow_add_comment 32 'Rojo, soy Dru.'
+flow_add_issue 33 "respuesta con marcador" necesita-respuesta
+flow_add_comment 33 '<!-- kit-decision -->
+¿Rojo o azul?'
+flow_add_comment 33 '<!-- kit-gate-local: abc -->'
+flow_add_issue 34 "respondida antes de otra pregunta" necesita-respuesta
+flow_add_comment 34 '<!-- kit-decision -->
+¿Rojo o azul?'
+flow_add_comment 34 'Azul.'
+flow_add_comment 34 '<!-- kit-decision -->
+¿Y el tamaño?'
+flow_add_issue 35 "respondido y bloqueado" necesita-respuesta bloqueado
+flow_add_comment 35 '<!-- kit-decision -->
+¿Rojo o azul?'
+flow_add_comment 35 'Azul.'
+flow_add_issue 36 "respondido en la PR" necesita-respuesta
+flow_add_comment 36 '<!-- kit-decision -->
+¿Apruebas la regla?'
+flow_add_issue 37 "sin pregunta del kit" necesita-respuesta
+flow_add_comment 37 'Azul.'
+t="$(mktemp)"; jq '.prs += [{number: 40, headRefName: "issue-36-regla", state: "OPEN", comments: []},
+    {number: 41, headRefName: "issue-361-otro", state: "OPEN", comments: []}]' "$GH_STATE/state.json" > "$t" \
+  && mv "$t" "$GH_STATE/state.json"
+gh pr comment 40 --repo dru/demo --body "Sí, apruébala." >/dev/null || fail "respuesta en la PR"
+for n in 30 36; do
+  out="$(bash "$issue" siguiente "$r" "$n" 2>&1)" || fail "siguiente $n respondido: exit $? ($out)"
+  [ "$(last_line "$out")" = "FIN: $n" ] || fail "siguiente $n respondido: '$out'"
+done
+for c in "31:#31 lleva necesita-respuesta" "32:#32 lleva necesita-respuesta" "33:#33 lleva necesita-respuesta" \
+         "34:#34 lleva necesita-respuesta" "35:#35 lleva bloqueado" "37:#37 lleva necesita-respuesta"; do
+  n="${c%%:*}"; want="${c#*:}"
+  err="$(bash "$issue" siguiente "$r" "$n" 2>&1 >/dev/null)"; rc=$?
+  [ $rc -eq 1 ] || fail "siguiente $n: exit $rc ($err)"
+  case "$err" in *"$want"*) ;; *) fail "siguiente $n: '$err' (esperado '$want')";; esac
+done
+out="$(bash "$issue" reparto "$r" 2>&1)" || fail "reparto con respondidos: $out"
+[ "$(printf '%s\n' "$out" | grep -c '^#')" = 2 ] && [ "$(last_line "$out")" = "FIN: 2" ] || fail "reparto con respondidos: '$out'"
+# a PR answer of another issue whose number starts the same does not count
+gh pr comment 41 --repo dru/demo --body "Vale." >/dev/null || fail "respuesta en otra PR"
+bash "$issue" siguiente "$r" 31 >/dev/null 2>&1; [ $? -eq 1 ] || fail "siguiente 31 con respuesta en otra PR"
+GH_FAIL_ON="issues/30/comments" bash "$issue" siguiente "$r" >/dev/null 2>&1; [ $? -eq 2 ] || fail "siguiente con comentarios ilegibles debe salir 2"
+rm -f "$GH_STATE/.failed"
+# reclamar takes the answered issue out of necesita-respuesta
+out="$(bash "$issue" reclamar "$r" 30 kit-bbbb2222 2>&1)" || fail "reclamar respondido: exit $? ($out)"
+[ "$(flow_issue 30 '[.labels[].name] | sort | join(",")')" = en-curso ] || fail "reclamar respondido: etiquetas $(flow_issue 30 '.labels')"
 
 # --- leer: title, body, labels and only the comments of the gh account (others are omitted and counted)
 use_flow_gh

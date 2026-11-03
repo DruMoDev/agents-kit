@@ -68,6 +68,17 @@ err="$(kit_config "$d" '.lint.turno' 2>&1 >/dev/null)"
 echo '{"blindado":["solo.txt"]}' > "$d/.agents-kit.json"
 [ "$(kit_config "$d" '.blindado | length' 2>/dev/null)" = "1" ] || fail "blindado del repo sustituye la lista"
 [ "$(kit_config "$d" '.blindado[0]' 2>/dev/null)" = "solo.txt" ] || fail "blindado del repo valor"
+# kit_config_base: blindado of the marker at <ref> (origin), never the tree's; no marker there = the plugin default
+rb="$(mk_repo)"; ob="$(mktemp -d)"; git init -q --bare "$ob"
+echo '{"blindado":["base.txt","otra/"]}' > "$rb/.agents-kit.json"
+(cd "$rb" && git add .agents-kit.json && git commit -q -m m && git remote add origin "$ob" && git push -q origin main \
+  && git fetch -q origin) >/dev/null 2>&1 || fail "kit_config_base: setup"
+echo '{"blindado":[]}' > "$rb/.agents-kit.json"
+[ "$(kit_config_base "$rb" '.blindado[]' origin/main 2>/dev/null | paste -sd, -)" = "base.txt,otra/" ] \
+  || fail "kit_config_base blindado de origin: '$(kit_config_base "$rb" '.blindado[]' origin/main 2>&1)'"
+rn="$(mk_repo)"
+[ "$(kit_config_base "$rn" '.blindado | index("eslint.config.*") != null' HEAD 2>/dev/null)" = true ] \
+  || fail "kit_config_base sin marcador en la ref: blindado por defecto"
 
 # claves prohibidas o desconocidas: se ignoran con un aviso por clave
 cat > "$d/.agents-kit.json" <<'J'
