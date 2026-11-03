@@ -25,6 +25,9 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-03
 
+### Arreglo: kit-run fusiona también en el modo auto de Claude Code · [#PR](PR)
+En el modo auto, Claude Code bloqueaba la fusión de `kit-run` como "fusión sin revisión" aunque la PR hubiera pasado las rondas de revisión y el CI, y el issue se quedaba a medias. Ahora `kit-on` deja en el repo una regla de permiso que solo deja pasar esa fusión, y va en git, así que funciona en cualquier Mac sin configurar nada. Para los repos ya activados, relanza `kit-on` una vez. `kit-off` la quita.
+
 ### Nuevo: reglas de lint, tipos y estructura que los agentes no pueden saltarse · [#28](https://github.com/DruMoDev/agents-kit/pull/28)
 La skill nueva `kit-reglas` instala en cada repo una base estricta de lint, tipos y estructura y convierte en reglas las convenciones del proyecto, explicándote cada una y aplicando solo lo que apruebas. En un repo con código hecho, lo que hoy falla se congela y solo puede bajar.
 

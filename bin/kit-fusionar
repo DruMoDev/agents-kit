@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Usage: kit-fusionar <wt> <pr> <N>
+# kit-pr.sh fusionar as a bare command: Claude Code puts the plugin's bin/ on the Bash PATH, and the repo's
+# .claude/settings.json rule (scripts/lib/permiso.sh) lets it past the auto mode classifier. Same exit codes and output.
+exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/kit-pr.sh" fusionar "$@"

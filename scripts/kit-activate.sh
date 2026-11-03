@@ -16,11 +16,14 @@
 # HEAD (last 300 commits) mostly changes in direct commits (subject without "(#N)"): kit-on proposes them to Dru.
 # v2 keys of an existing marker (reviewers, implementer, notify) are dropped, each with a "nota: ..." line saying where it
 # goes now (kit-on runs this on an activated repo to update it).
+# With the flow on, .claude/settings.json gets the permission rule for bin/kit-fusionar (lib/permiso.sh: kit-run
+# merges in Claude Code's auto mode); with "flujo": false the rule is removed.
 # Exit: 0 ok, 1 usage, 2 environment error.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/config.sh"
 source "$here/lib/repo-hook.sh"
+source "$here/lib/permiso.sh"
 
 usage() {
   echo "uso: $0 <repo_root> [--changelog true|false] [--reglas true|false] [--flujo true|false] [--setup <ruta>]" \
@@ -210,6 +213,11 @@ else
   mkdir -p "$repo/.claude" && ln -s "$want" "$link" || exit 2
   created .claude/skills
 fi
+
+# Claude Code permission rule for kit-fusionar (lib/permiso.sh): only the kit's flow merges
+op=poner; [ "$(jq -r '.flujo' "$marker")" = false ] && op=quitar
+po="$(kit_permiso "$repo" "$op")" || { echo "error: no se pudo escribir .claude/settings.json" >&2; exit 2; }
+[ -z "$po" ] || { echo "$po"; n=$((n + 1)); }
 
 # Content directories: what the first-parent history changes mostly without a PR (a squash merge ends its subject with
 # "(#N)"; a merge commit says "Merge pull request #N", and -m lists its files).
