@@ -307,12 +307,19 @@ set_global '{"notify":"ntfy"}'
 seed7; : > "$CURL_LOG"
 out="$(bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso ntfy: exit $?"
 [ "$(last_line "$out")" = "FIN: necesita-respuesta #7" ] || fail "aviso ntfy: '$out'"
-grep -qx "Title: demo: necesita respuesta" "$CURL_LOG" || fail "aviso ntfy: título ($(cat "$CURL_LOG"))"
-grep -qx "#7 tarea: rojo" "$CURL_LOG" || fail "aviso ntfy: mensaje"
-grep -qx "Click: https://github.com/dru/demo/issues/7" "$CURL_LOG" || fail "aviso ntfy: url"
+sent() { awk '$0 == "--data-raw" {getline; b = $0} END {print b}' "$CURL_LOG" | jq -r "$1"; }
+[ "$(sent .title)" = "✋ demo: necesita respuesta #7" ] || fail "aviso ntfy: título ($(cat "$CURL_LOG"))"
+[ "$(sent .priority)" = 4 ] || fail "aviso ntfy: prioridad"
+msg="$(sent .message)"
+[ "$(sed -n 1p <<<"$msg")" = "#7 tarea: rojo" ] || fail "aviso ntfy: mensaje ($msg)"
+grep -qxF "$(grep -v '^[[:space:]]*$' "$qfile" | sed -n 1p | cut -c1-200)" <<<"$msg" || fail "aviso ntfy: sin extracto ($msg)"
+grep -qx "Responde en el issue y quita la etiqueta necesita-respuesta: el siguiente kit-run lo retoma." <<<"$msg" \
+  || fail "aviso ntfy: sin cómo desbloquear ($msg)"
+case "$(sent .click)" in "https://github.com/dru/demo/issues/7#issuecomment-"*) ;; *) fail "aviso ntfy: url $(sent .click)";; esac
 seed7; : > "$CURL_LOG"
 out="$(bash "$issue" bloquear "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso bloquear: exit $?"
-grep -qx "Title: demo: bloqueado" "$CURL_LOG" || fail "aviso bloquear: título"
+[ "$(sent .title)" = "✋ demo: bloqueado #7" ] || fail "aviso bloquear: título"
+grep -q "quita la etiqueta bloqueado:" <<<"$(sent .message)" || fail "aviso bloquear: etiqueta"
 seed7
 err="$(CURL_FAIL=1 bash "$issue" decision "$r" 7 kit-aaaa1111 "$qfile" 2>&1 >"$HOME/out")"; rc=$?
 [ $rc -eq 0 ] || fail "aviso fallido: exit $rc"
@@ -327,8 +334,10 @@ printf '%s\n' "$out" | grep -q '^tema ntfy nuevo: agents-kit-' || fail "tema nue
 set_global '{"notify":"claude-push"}'
 seed7
 out="$(bash "$issue" bloquear "$r" 7 kit-aaaa1111 "$qfile" 2>/dev/null)" || fail "aviso push: exit $?"
-[ "$out" = "$(printf 'AVISO-CLAUDE: demo: bloqueado: #7 tarea: rojo https://github.com/dru/demo/issues/7\nFIN: bloqueado #7')" ] \
-  || fail "aviso push: '$out'"
+case "$out" in "AVISO-CLAUDE: ✋ demo: bloqueado #7: #7 tarea: rojo "*"quita la etiqueta bloqueado: el siguiente kit-run lo retoma. https://github.com/dru/demo/issues/7#issuecomment-"*) ;;
+  *) fail "aviso push: '$out'";; esac
+[ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 2 ] || fail "aviso push: más de una línea de aviso ('$out')"
+[ "$(last_line "$out")" = "FIN: bloqueado #7" ] || fail "aviso push: FIN '$out'"
 rm -f "$KIT_CONFIG"
 
 # --- crear

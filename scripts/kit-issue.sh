@@ -158,10 +158,12 @@ WINNER_JQ='[.comments[] | select(.author.login == $me) | .body // ""] as $b
   | ([range(0; $b | length) | select($b[.] | test("^<!-- kit-soltado: \\S+ -->"))] | last // -1) as $s
   | [range($s + 1; $b | length) | $b[.] | capture("^<!-- kit-reclamado: (?<id>\\S+) -->") | .id] | first // ""'
 
-comment() { # <N> <body>
+comment() { # <N> <body>: the comment URL (gh prints it) goes to $comment_url
   printf '%s\n' "$2" > "$tmpd/body"
-  gh issue comment "$1" --repo "$slug" --body-file "$tmpd/body" >/dev/null
+  comment_url="$(gh issue comment "$1" --repo "$slug" --body-file "$tmpd/body")" || return 1
+  comment_url="$(printf '%s\n' "$comment_url" | sed -n '$p')"
 }
+comment_url=""
 me=""
 own_login() { # set $me (the gh login: only its markers count) once; exit 2 if unreadable
   [ -n "$me" ] && return 0
@@ -237,12 +239,22 @@ require_not_foreign() {
     exit 1
   fi
 }
-# notify <N> <estado>: tell Dru out of GitHub; never fails. Forwards the notifier's lines except its FIN,
-# also when it fails (a "tema ntfy nuevo" line is printed only once and must reach Dru).
+# notify <N> <estado> <etiqueta> <fichero>: tell Dru out of GitHub that there is something for Dru to do; never fails. The message
+# carries the issue title, the start of the question or reason and how to unblock it; the link opens the comment.
+# Forwards the notifier's lines except its FIN, also when it fails (a "tema ntfy nuevo" line is printed only once
+# and must reach Dru).
 notify() {
-  local t out rc line
+  local t out rc line extract msg url
   t="$(gh issue view "$1" --repo "$slug" --json title --jq .title 2>/dev/null)" || t=""
-  out="$(bash "$here/kit-notify.sh" "$root" "${slug#*/}: $2" "#$1${t:+ $t}" "https://github.com/$slug/issues/$1" 2>"$tmpd/notify.err")"
+  extract="$(grep -v '^[[:space:]]*$' "$4" | grep -v '^<!--' | sed -n '1,6p' | cut -c1-200)"
+  [ ${#extract} -le 500 ] || extract="${extract:0:497}..."
+  msg="#$1${t:+ $t}${extract:+
+
+$extract}
+
+Responde en el issue y quita la etiqueta $3: el siguiente kit-run lo retoma."
+  case "$comment_url" in "https://github.com/$slug/issues/$1#"*) url="$comment_url" ;; *) url="https://github.com/$slug/issues/$1" ;; esac
+  out="$(bash "$here/kit-notify.sh" "$root" accion "${slug#*/}: $2 #$1" "$msg" "$url" 2>"$tmpd/notify.err")"
   rc=$?
   while IFS= read -r line; do
     case "$line" in FIN:*|"") ;; *) printf '%s\n' "$line" ;; esac
@@ -451,7 +463,7 @@ $text" || { echo "error: no se pudo comentar en #$n" >&2; exit 2; }
     gh issue edit "$n" --repo "$slug" --add-label "$label" --add-assignee @me >/dev/null \
       || { echo "error: no se pudo marcar #$n como $label" >&2; exit 2; }
     release "$n" "$id" "$motivo" || { echo "error: no se pudo soltar #$n" >&2; exit 2; }
-    notify "$n" "$aviso"
+    notify "$n" "$aviso" "$label" "$3"
     echo "FIN: $label #$n"
     ;;
 
