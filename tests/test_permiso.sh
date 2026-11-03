@@ -68,6 +68,23 @@ err="$(bash "$A" "$r" 2>&1 >/dev/null)" || fail "activate should not fail on sym
 grep -q 'aviso: .claude/settings.json' <<<"$err" || fail "expected a warning for symlinked settings, got: $err"
 [ "$(cat "$t")" = '{}' ] || fail "symlink target was modified"
 
+# 6b. a valid object followed by broken JSON: untouched (jq would print the first object before failing)
+r="$(new_repo)"; mkdir -p "$r/.claude"
+printf '{"model":"x"}\n{ roto\n' > "$r/.claude/settings.json"; before="$(cat "$r/.claude/settings.json")"
+err="$(bash "$A" "$r" 2>&1 >/dev/null)" || fail "activate should not fail on trailing garbage"
+grep -q 'aviso: .claude/settings.json' <<<"$err" || fail "expected a warning for trailing garbage, got: $err"
+[ "$(cat "$r/.claude/settings.json")" = "$before" ] || fail "settings with trailing garbage was modified"
+
+# 6c. deactivate: a failed write of settings keeps the marker, so a retry removes the rule
+r="$(new_repo)"; bash "$A" "$r" >/dev/null 2>&1 || fail "activate failed"
+jq '.model = "x"' "$r/.claude/settings.json" > "$r/s.tmp" && mv "$r/s.tmp" "$r/.claude/settings.json"
+stub="$(mktemp -d)"; dirs+=("$stub"); printf '#!/bin/sh\nexit 1\n' > "$stub/mv"; chmod +x "$stub/mv"
+PATH="$stub:$PATH" bash "$D" "$r" >/dev/null 2>&1; [ $? -eq 2 ] || fail "deactivate with a failing write should exit 2"
+[ -e "$r/.agents-kit.json" ] || fail "marker removed although the rule could not be removed"
+bash "$D" "$r" >/dev/null 2>&1 || fail "deactivate retry failed"
+[ "$(n_rule "$r")" = 0 ] || fail "retry did not remove the rule"
+[ ! -e "$r/.agents-kit.json" ] || fail "retry did not remove the marker"
+
 # 7. bin/kit-fusionar runs kit-pr.sh fusionar with the same arguments (usage error reaches through)
 err="$(bash "$REPO_ROOT/bin/kit-fusionar" 2>&1)"; code=$?
 [ $code -eq 1 ] || fail "kit-fusionar without args should exit 1 (kit-pr.sh usage), got $code"

@@ -20,7 +20,8 @@ kit_permiso() {
     return 0
   fi
   if [ -e "$f" ]; then
-    cur="$(jq -c . "$f" 2>/dev/null)"
+    # exactly one JSON value, read whole: jq on "{...}{ roto" prints the first object before failing
+    cur="$(jq -cs 'if length == 1 then .[0] else error("") end' "$f" 2>/dev/null)" || cur=""
     if [ -z "$cur" ] || ! jq -e 'type == "object" and ((.permissions // {}) | type == "object")
         and ((.permissions.allow // []) | type == "array")' <<<"$cur" >/dev/null 2>&1; then
       echo "aviso: .claude/settings.json no es JSON válido o su permissions.allow no es una lista; no lo toco. Añade a mano la regla '$KIT_PERMISO' para que kit-run fusione en modo auto." >&2

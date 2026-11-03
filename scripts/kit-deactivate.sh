@@ -20,7 +20,8 @@ if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
   echo "no está activado: no existe $marker" >&2
   exit 1
 fi
+# the rule goes first: a retry after a failed write still finds the marker and gets here again
+kit_permiso "$repo" quitar || { echo "error: no se pudo escribir .claude/settings.json" >&2; exit 2; }
 rm -f "$marker" || { echo "error: no se pudo borrar $marker" >&2; exit 2; }
 echo "borrado: .agents-kit.json"
-kit_permiso "$repo" quitar || { echo "error: no se pudo escribir .claude/settings.json" >&2; exit 2; }
 echo "FIN: ok"
