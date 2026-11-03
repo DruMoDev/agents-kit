@@ -2,7 +2,9 @@
 # PreToolUse hook (Edit|Write|MultiEdit|NotebookEdit). Exit 2 with the remedy on stderr when the edit
 #   - raises the number of eslint-disable, @ts-ignore, @ts-nocheck or `as any` (KR_PROHIBIDO) in a code file
 #     (extension, without case, in the keys of .lint.fichero or KR_CODIGO): the whole file before and after the edit
-#     (kr_sube_prohibido), so inherited occurrences kept as they are do not count; or
+#     (kr_sube_prohibido), so inherited occurrences kept as they are do not count; an edit whose old_string is not
+#     in the file falls back to new_string against old_string, a NotebookEdit cell to any match, and a check that
+#     cannot run (jq error, unreadable file) blocks too; or
 #   - touches a shielded file (.blindado) without <git-common-dir>/agents-kit/reglas-abiertas holding this session_id
 #     (kit-reglas.sh abrir). package.json is not checked here: kit-pr.sh fusionar does it.
 # Paths and globs are compared without case on macOS; a symlink is checked by its target, and a target outside the
@@ -13,9 +15,14 @@ kr_input && [ -n "$KR_FILE" ] && kr_root && kr_resolve || exit 0
 kr_ext
 kr_config "$KR_EXT" || exit 0
 
-if kr_codigo "$KR_EXT" && kr_sube_prohibido; then
-  echo "No desactives reglas ni tipos: arregla la causa. Si la regla está mal, propón el cambio (kit-reglas)." >&2
-  exit 2
+if kr_codigo "$KR_EXT"; then
+  case "$(kr_sube_prohibido)" in
+    no) ;;
+    sube) echo "No desactives reglas ni tipos: arregla la causa. Si la regla está mal, propón el cambio (kit-reglas)." >&2
+      exit 2 ;;
+    *) echo "No se pudo comprobar si la edición desactiva reglas o tipos (¿el fichero se puede leer?); se bloquea por si acaso." >&2
+      exit 2 ;;
+  esac
 fi
 source "$KR_PLUGIN/scripts/lib/blindado.sh"
 nocase=""

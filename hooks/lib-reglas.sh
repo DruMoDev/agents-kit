@@ -11,8 +11,8 @@ source "$KR_PLUGIN/scripts/lib/repo-hook.sh"
 
 # Rule- or type-disabling text: eslint-disable, @ts-ignore, @ts-nocheck, `as any` not followed by an identifier char.
 KR_PROHIBIDO='eslint-disable|@ts-ignore|@ts-nocheck|\bas\s+any(?![\w$])'
-# Code extensions always checked for that text, besides the keys of .lint.fichero.
-KR_CODIGO=',ts,tsx,js,jsx,mjs,cjs,mts,cts,astro,vue,svelte,'
+# Code extensions always checked for that text, besides the keys of .lint.fichero (ipynb: cells of NotebookEdit).
+KR_CODIGO=',ts,tsx,js,jsx,mjs,cjs,mts,cts,astro,vue,svelte,ipynb,'
 
 # kr_input: parse the hook input on stdin (kept in KR_JSON) into KR_CWD (physical), KR_FILE (tool_input.file_path or
 # notebook_path) and KR_SID (session_id). Return 1 if unusable.
@@ -38,23 +38,34 @@ kr_ext() {
   case "$KR_EXT" in *[A-Z]*) KR_EXT="$(printf '%s' "$KR_EXT" | tr 'A-Z' 'a-z')" ;; esac
 }
 
-# kr_sube_prohibido: return 0 when the edit in KR_JSON raises the number of KR_PROHIBIDO matches in the file
-# KR_ROOT/KR_REL. The file after the edit is computed as the tool would: Write = content; Edit and each edit of a
-# MultiEdit, in order, replace the first literal occurrence of old_string (all of them with replace_all: true). A file
-# that does not exist counts as empty. An input with another shape (NotebookEdit) changes nothing.
+# kr_sube_prohibido: print "no" only when the edit in KR_JSON does not raise the number of KR_PROHIBIDO matches; any
+# other output (also a jq error or an unreadable file) means it must be blocked. Text is compared with CRLF as LF.
+#   - Whole file: the file after the edit is computed as the tool would (Write = content; Edit and each edit of a
+#     MultiEdit, in order, replace the first literal occurrence of old_string, all of them with replace_all: true) and
+#     must not have more matches than KR_ROOT/KR_REL (a file that does not exist counts as empty).
+#   - Each edit whose old_string is not in the simulated text (or is empty, on a non-empty text) falls back to the
+#     input: its new_string must not have more matches than its old_string.
+#   - NotebookEdit: any match in new_source (the cell is not compared).
 kr_sube_prohibido() {
   local f="$KR_ROOT/$KR_REL"
-  [ -f "$f" ] || f=/dev/null
-  [ "$(printf '%s' "$KR_JSON" | jq -r --arg re "$KR_PROHIBIDO" --rawfile cur "$f" '
+  [ -e "$f" ] || f=/dev/null
+  printf '%s' "$KR_JSON" | jq -r --arg re "$KR_PROHIBIDO" --rawfile cur "$f" '
+    def lf: if type == "string" then split("\r\n") | join("\n") else "" end;
     def cnt: [match($re; "g")] | length;
-    def rep($o; $n; $all): if $o == "" then . else split($o) as $p
-      | if $all then $p | join($n) elif ($p | length) < 2 then . else $p[0] + $n + ($p[1:] | join($o)) end end;
-    (.tool_input | if type == "object" then . else {} end) as $i |
-    (if ($i.content | type) == "string" then $i.content
-     else reduce ((if ($i.edits | type) == "array" then $i.edits[] else $i end) | objects
-         | select((.old_string | type) == "string" and (.new_string | type) == "string")) as $e
-       ($cur; rep($e.old_string; $e.new_string; $e.replace_all == true)) end) as $despues |
-    if ($despues | cnt) > ($cur | cnt) then "sube" else "no" end' 2>/dev/null)" = sube ]
+    (.tool_input | if type == "object" then . else {} end) as $i | ($cur | lf) as $antes |
+    if ($i.new_source | type) == "string" then (if ($i.new_source | lf | cnt) > 0 then "sube" else "no" end)
+    elif ($i.content | type) == "string" then (if ($i.content | lf | cnt) > ($antes | cnt) then "sube" else "no" end)
+    else
+      reduce ((if ($i.edits | type) == "array" then $i.edits[] else $i end) | objects) as $e
+        ({t: $antes, mal: false};
+         ($e.old_string | lf) as $o | ($e.new_string | lf) as $n |
+         if $o == "" and .t == "" then .t = $n
+         elif $o != "" and (.t | index($o)) != null then
+           (.t | split($o)) as $p
+           | .t = (if $e.replace_all == true then $p | join($n) else $p[0] + $n + ($p[1:] | join($o)) end)
+         else .mal = (.mal or (($n | cnt) > ($o | cnt))) end)
+      | if .mal or ((.t | cnt) > ($antes | cnt)) then "sube" else "no" end
+    end' 2>/dev/null
 }
 
 # kr_root: KR_ROOT and KR_COMMON (git common dir, absolute) of KR_CWD. Return 1 outside git or without the marker.

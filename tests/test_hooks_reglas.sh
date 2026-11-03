@@ -97,7 +97,30 @@ hook pre-edit "$(gjson false)"; [ $rc -eq 0 ] || fail "sin replace_all solo camb
 hook pre-edit "$(gjson true)"; [ $rc -eq 2 ] || fail "replace_all que crea as any bloquea: $rc $out"
 hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
   old_string: "no está", new_string: "x as any"}}')"
-[ $rc -eq 0 ] || fail "un old_string que no está no cambia el fichero: $rc $out"
+[ $rc -eq 2 ] || fail "un old_string que no está y un new_string con as any bloquea: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/f.ts",
+  old_string: "p as any", new_string: "q as any"}}')"
+[ $rc -eq 0 ] || fail "un old_string que no está sin subir la cuenta de entrada no bloquea: $rc $out"
+printf 'let a = 1;\r\nlet b = c as any;\r\n' > "$r/src/crlf.ts"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/crlf.ts",
+  old_string: "let a = 1;\nlet b = c as any;", new_string: "let a = 2;\nlet b = c as any;"}}')"
+[ $rc -eq 0 ] || fail "CRLF en el fichero casa con LF en old_string: $rc $out"
+# matched (with CRLF as LF) the file keeps one as any; unmatched, the input rule would block (0 -> 1)
+printf 'c = d as any\r\nq\r\n' > "$r/src/crlf2.ts"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/crlf2.ts",
+  old_string: "any\nq", new_string: "anything\nq as any"}}')"
+[ $rc -eq 0 ] || fail "con CRLF normalizado la edición casa y la cuenta del fichero no sube: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_name: "NotebookEdit",
+  tool_input: {notebook_path: "src/n.ipynb", cell_id: "c1", new_source: "x = y  # @ts-ignore"}}')"
+[ $rc -eq 2 ] || fail "NotebookEdit con texto prohibido en new_source bloquea: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_name: "NotebookEdit",
+  tool_input: {notebook_path: "src/n.ipynb", cell_id: "c1", new_source: "x = 1"}}')"
+[ $rc -eq 0 ] || fail "NotebookEdit sin texto prohibido pasa: $rc $out"
+printf 'x\n' > "$r/src/ilegible.ts"; chmod 000 "$r/src/ilegible.ts"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/ilegible.ts",
+  old_string: "x", new_string: "y"}}')"
+chmod 644 "$r/src/ilegible.ts"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo comprobar"* ]] || fail "un fichero ilegible bloquea: $rc $out"
 printf 'x\n' > "$r/src/MAY.TS"
 hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_input: {file_path: "src/MAY.TS",
   old_string: "x", new_string: "x as any"}}')"
