@@ -8,7 +8,7 @@
 # Mechanical checks of the deterministic rules (lint, types, structure) for kit-pr.sh fusionar, the hooks and the
 # kit-reglas skill. "Changed" is the working tree of <wt> (committed or not, plus untracked files not ignored) against
 # git merge-base <ref> HEAD, without rename detection: a renamed file counts as its old path deleted. So it serves both
-# fusionar (ref=origin/<base>, clean tree) and a local review (ref=HEAD).
+# fusionar (ref=origin/<base>, clean tree) and a local review (ref = the review base, or HEAD for only the uncommitted).
 #   estado: one line per fact, for kit-reglas to propose what is missing: "lenguajes: ts,py,sh|ninguno",
 #     "lint: declarado|sin declarar" (marker of <wt>), and with ts: "tsconfig: <flag> sí|no" for each flag of the base
 #     (grep over tsconfig.json; "extends" is not followed), "eslint: strictTypeChecked sí|no", "eslint: noInlineConfig
