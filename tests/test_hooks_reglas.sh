@@ -178,6 +178,48 @@ hook pre-edit "$(edit_json eslint.config.mjs 'x')"; [ $rc -eq 0 ] || fail "el bl
 hook pre-edit "$(edit_json reglas/x.yml 'x')"; [ $rc -eq 2 ] || fail "blindado del marcador: $rc $out"
 marker "$LINT"
 
+# --- Codex: apply_patch (tool_input.command con el parche; puede tocar varios ficheros)
+pjson() { inp --arg c "$r" --arg p "$1" --arg s "${2:-s1}" '{session_id: $s, cwd: $c, hook_event_name: "PreToolUse",
+  tool_name: "apply_patch", tool_input: {command: $p}}'; }
+patch() { printf '*** Begin Patch\n%s\n*** End Patch\n' "$1"; }
+hook pre-edit "$(pjson "$(patch $'*** Add File: src/p1.ts\n+const x = 1 as any')")"
+[ $rc -eq 2 ] && [[ "$out" == *"src/p1.ts: No desactives reglas ni tipos"* ]] || fail "apply_patch Add con as any bloquea: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Add File: src/p1.ts\n+const x = 1')")"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "apply_patch Add limpio pasa: $rc $out"
+printf 'let a = b as any;\nlet c = 1;\n' > "$r/src/p2.ts"
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/p2.ts\n@@\n let a = b as any;\n-let c = 1;\n+let c = 2;')")"
+[ $rc -eq 0 ] || fail "apply_patch Update con as any heredado en el contexto pasa: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/p2.ts\n@@\n let a = b as any;\n-let c = 1;\n+let c = d as any;')")"
+[ $rc -eq 2 ] || fail "apply_patch Update que añade as any bloquea: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/p2.ts\n let a = b as any;\n+// @ts-ignore\n let c = 1;')")"
+[ $rc -eq 2 ] || fail "apply_patch Update sin @@ que añade un @ts-ignore bloquea: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/p2.ts\n@@\n-let a = b as any;\n+let a = b as unknown;')")"
+[ $rc -eq 0 ] || fail "apply_patch Update que quita as any pasa: $rc $out"
+# hunk que no casa con el fichero: cualquier coincidencia en su texto nuevo bloquea (falla cerrado)
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/p2.ts\n@@\n let a = b as any;\n-no está\n+otra')")"
+[ $rc -eq 2 ] || fail "apply_patch con un hunk que no casa y as any en el contexto bloquea: $rc $out"
+# varios ficheros: basta uno; el blindado se mira en cada uno (Delete y Move to incluidos)
+hook pre-edit "$(pjson "$(patch $'*** Add File: README.md\n+hola\n*** Add File: src/p3.ts\n+// eslint-disable-next-line')")"
+[ $rc -eq 2 ] && [[ "$out" == *"src/p3.ts: "* ]] || fail "apply_patch con varios ficheros bloquea por el segundo: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Delete File: eslint.config.mjs')")"
+[ $rc -eq 2 ] && [[ "$out" == *"eslint.config.mjs: Fichero de reglas"* ]] || fail "apply_patch Delete de un blindado bloquea: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Update File: src/p2.ts\n*** Move to: tsconfig.json\n@@\n-let c = 1;\n+let c = 3;')")"
+[ $rc -eq 2 ] && [[ "$out" == *"tsconfig.json: Fichero de reglas"* ]] || fail "apply_patch Move to a un blindado bloquea: $rc $out"
+hook pre-edit "$(pjson "$(patch $'*** Add File: src/con espacios/q r.ts\n+x')")"; [ $rc -eq 0 ] || fail "apply_patch ruta con espacios: $rc $out"
+fuera_p="$(mktemp -d)"
+hook pre-edit "$(pjson "$(patch "*** Add File: $fuera_p/eslint.config.mjs"$'\n+x as any')")"
+[ $rc -eq 0 ] && [ -z "$out" ] || fail "apply_patch fuera del repo no hace nada: $rc $out"
+hook pre-edit "$(pjson $'*** Begin Patch\r\n*** Add File: src/p4.ts\r\n+x as any\r\n*** End Patch\r\n')"
+[ $rc -eq 2 ] || fail "apply_patch con CRLF bloquea igual: $rc $out"
+hook pre-edit "$(pjson 'esto no es un parche')"
+[ $rc -eq 2 ] && [[ "$out" == *"No se pudo leer el parche"* ]] || fail "apply_patch ilegible bloquea: $rc $out"
+hook pre-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_name: "apply_patch", tool_input: {}}')"
+[ $rc -eq 2 ] || fail "apply_patch sin command bloquea: $rc $out"
+bash "$REPO_ROOT/scripts/kit-reglas.sh" abrir "$r" sesion-p >/dev/null || fail "abrir (apply_patch)"
+hook pre-edit "$(pjson "$(patch $'*** Add File: eslint.config.mjs\n+export default []')" sesion-p)"
+[ $rc -eq 0 ] && [ -z "$out" ] || fail "apply_patch de un blindado con abrir para la sesión pasa: $rc $out"
+bash "$REPO_ROOT/scripts/kit-reglas.sh" cerrar "$r" >/dev/null || fail "cerrar (apply_patch)"
+rm -f "$r/src/p2.ts"
+
 # --- pre-edit: fuera del repo
 fuera="$(mktemp -d)"
 hook pre-edit "$(edit_json "$fuera/eslint.config.mjs" 'x as any')"
@@ -209,6 +251,18 @@ hook post-edit "$(post_json README.md)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fai
 echo x > "$fuera/a.ts"
 hook post-edit "$(post_json "$fuera/a.ts")"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "fuera del repo no lanza nada"
 hook post-edit "$(post_json src/no-existe.ts)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "un fichero que no existe no lanza nada"
+# apply_patch: un lint por comando con todos sus ficheros que existen, en el orden del parche
+marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/fakelint --ts\", \"tsx\": \"$bin/fakelint --tsx\"}}}"
+echo x > "$r/src/q1.ts"; echo x > "$r/src/q2.tsx"; : > "$LOG"
+hook post-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_name: "apply_patch", tool_input: {command:
+  "*** Begin Patch\n*** Add File: src/q1.ts\n+x\n*** Update File: src/q2.tsx\n@@\n-y\n+x\n*** Delete File: src/borrado.ts\n*** Add File: src/a.ts\n+x\n*** Add File: README.md\n+x\n*** End Patch\n"}}')"
+[ $rc -eq 0 ] && [ "$(tr '\n' ' ' < "$LOG")" = "--ts ./src/q1.ts ./src/a.ts --tsx ./src/q2.tsx " ] || fail "post-edit de apply_patch: $rc $out / $(cat "$LOG")"
+FAKE_RC=1 hook post-edit "$(inp --arg c "$r" '{session_id: "s1", cwd: $c, tool_name: "apply_patch", tool_input: {command:
+  "*** Begin Patch\n*** Add File: src/q1.ts\n+x\n*** Add File: src/q2.tsx\n+x\n*** End Patch\n"}}')"
+[ $rc -eq 2 ] && [[ "$out" == *"El lint falla en src/q1.ts"* ]] && [[ "$out" == *"El lint falla en src/q2.tsx"* ]] \
+  || fail "post-edit de apply_patch con lint roto en los dos comandos: $rc $out"
+[ ! -d "$lock" ] || fail "el candado debe liberarse tras apply_patch"
+rm -f "$r/src/q1.ts" "$r/src/q2.tsx"; marker "$LINT"; : > "$LOG"
 # old <dir> <s>: set the mtime of <dir> <s> seconds in the past.
 old() { touch -t "$(date -r $(( $(date +%s) - $2 )) +%Y%m%d%H%M.%S)" "$1"; }
 ahora=$(date +%s)
@@ -282,6 +336,19 @@ FAKE_RC=1 hook stop-check "$(stop_json)"
 FAKE_RC=127 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] || fail "stop-check exit 127 no bloquea: $rc"
 FAKE_RC=1 hook stop-check "$(inp --arg c "$r" '{cwd: $c, stop_hook_active: true}')"
 [ $rc -eq 2 ] || fail "stop_hook_active sigue comprobando: $rc"
+# tope propio de bloqueos seguidos (Codex no tiene): con stop_hook_active, a los 8 deja terminar y vuelve a empezar
+sjson() { inp --arg c "$r" --arg s "$1" --argjson a "$2" '{session_id: $s, cwd: $c, stop_hook_active: $a}'; }
+FAKE_RC=1 hook stop-check "$(sjson t1 false)"; [ $rc -eq 2 ] || fail "primer bloqueo: $rc"
+for k in 2 3 4 5 6 7 8; do FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "bloqueo $k: $rc"; done
+FAKE_RC=1 hook stop-check "$(sjson otra true)"; [ $rc -eq 2 ] || fail "otra sesión no hereda la cuenta: $rc"
+FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "otra sesión entre medias reinicia la cuenta: $rc"
+FAKE_RC=1 hook stop-check "$(sjson t1 false)"; [ $rc -eq 2 ] || fail "sin stop_hook_active empieza de cero: $rc"
+for k in 2 3 4 5 6 7 8; do FAKE_RC=1 hook stop-check "$(sjson t1 true)"; done
+: > "$LOG"; FAKE_RC=1 hook stop-check "$(sjson t1 true)"
+[ $rc -eq 0 ] && [[ "$out" == *"tras 8 intentos seguidos"* ]] && [ ! -s "$LOG" ] || fail "al noveno deja terminar: $rc $out"
+FAKE_RC=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 2 ] || fail "tras dejar terminar vuelve a comprobar: $rc"
+FAKE_RC=1 KIT_TURNO_BLOQUEOS=1 hook stop-check "$(sjson t1 true)"; [ $rc -eq 0 ] || fail "KIT_TURNO_BLOQUEOS manda: $rc"
+hook stop-check "$(sjson t1 false)"; [ $rc -eq 0 ] && [ ! -f "$common/agents-kit/turno-bloqueos" ] || fail "un turno limpio borra la cuenta: $rc"
 mkdir -p "$lock"; : > "$LOG"
 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "stop-check con candado no lanza nada"
 rmdir "$lock"

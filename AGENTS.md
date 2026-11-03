@@ -31,8 +31,8 @@ Con `"flujo": false` en el marcador, nada entra en este flujo (`kit_require_flow
 - `.claude-plugin/`: manifiesto y marketplace de Claude Code.
 - `.codex-plugin/`: manifiesto de Codex.
 - `.agents/plugins/`: marketplace de Codex.
-- `hooks/`: `hooks.json` y el script `session-start`.
-- `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso y reglas).
+- `hooks/`: `hooks.json`, el script `session-start` y los hooks de reglas `pre-edit`, `post-edit` y `stop-check` (con `lib-reglas.sh`).
+- `.opencode/plugins/agents-kit.js`: plugin de OpenCode (skills, permiso, reglas y los hooks `pre-edit`/`post-edit` alrededor de las herramientas de edición).
 - `rules/`: reglas inyectadas en las sesiones.
 - `skills/`: `kit-on`, `kit-off`, `kit-plan`, `kit-scout`, `kit-revisar` (revisión del diff local, sin PR) y `kit-run` (con `references/`: plantilla de issue, prompts del revisor (`revisor.md` y `revisor-verificar.md`), esquema JSON de la revisión y formato de ronda).
 - `scripts/`: scripts mecánicos de las skills (`kit-issue.sh`, `kit-worktree.sh`, `kit-pr.sh`, `kit-ship-pr.sh` (worktree temporal de `kit-on`/`kit-off`), `kit-agents-md.sh` (diff del reordenado de `AGENTS.md`), `kit-review.sh` y `kit-review-all.sh` (modo `completa` o `verificar` por puesto, según `revision.rondas`; `--local` revisa el árbol de trabajo sin PR para `kit-revisar` o el flujo propio del repo), `kit-verify.sh` (`verificar.rapido`/`completo` del marcador y estado de hook y CI para `kit-on`), `kit-bg.sh` (lanza un comando desacoplado y espera por su fichero de salida, con tope: todas las esperas largas), `kit-changelog.sh`, `kit-notify.sh`, `kit-skills-check.sh` (citas rotas a ficheros en las skills; los tests lo pasan sobre el propio kit)...) y `release.sh`.
@@ -124,6 +124,38 @@ Verificado contra opencode 1.19.0 (V1) con `opencode run` en un repo activado y 
 - Sin permiso `external_directory`, `opencode run` rechaza leer o ejecutar los scripts del plugin, que están fuera del proyecto.
 - OpenCode V2 (2.x), verificado el 2026-10-27 con opencode 2.1.4 (`opencode run --standalone`) y otra vez con 1.19.4 el mismo fichero: un único `export default {id, setup, server}` sirve a las dos (V1 llama a `server`, V2 a `setup`). En V2 no hay hooks por nombre ni objeto de configuración: las skills van con `ctx.skill.transform` (editor `get`/`add`), las reglas con `ctx.session.hook("context")` en `event.system` (se rehace en cada llamada al modelo y no se guarda: sin guarda) y `external_directory` está permitido por defecto: un `ask` ahí siempre es una regla del usuario, así que el plugin no toca permisos (como en V1, la regla del usuario manda). Un plugin V1 en V2 no carga: `Plugin must export a default definition with an id and an effect or setup function` en `~/.local/share/opencode/log/`.
 - V2 corre por defecto en un servicio de fondo compartido: no ve el entorno del proceso (`OPENCODE_CONFIG_CONTENT`) y, en macOS, puede no tener acceso a `~/Documents` (`EPERM`, 500 en `opencode plugin list`). `--standalone` arranca un servidor propio. `--pure` ya no existe; V2 lee los permisos V1 (`permission`) y los V2 (`permissions`, lista ordenada con `action`/`resource`/`effect`). Solo lee `AGENTS.md`, sin fallback a `CLAUDE.md`.
+
+#### Hooks de reglas en Codex y OpenCode
+
+Verificado el 2026-11-03 con codex-cli 0.165.0, opencode 2.1.4 (`run --standalone`) y opencode 1.19.4 (de `npm install opencode-ai@1.19.4` en un directorio temporal). Cada herramienta corrió aislada: `CODEX_HOME`, `HOME` y `XDG_*` temporales, plugin instalado desde una copia y un repo de prueba con `lint` falso. El modelo era un servidor local falso que repetía llamadas a herramientas fijadas de antemano, sin credenciales ni llamadas reales: Responses API para Codex, con `model_providers` y `-m gpt-6.1-sol`, y chat completions para OpenCode, con `@ai-sdk/openai-compatible`.
+- Codex (`codex exec --dangerously-bypass-hook-trust`): `PreToolUse`, `PostToolUse` y `Stop` de `hooks/hooks.json` se ejecutan.
+  - Las ediciones llegan como `tool_name: "apply_patch"` con `tool_input: {"command": "<parche>"}`, el parche entero con `*** Begin Patch`. Pasa igual si el modelo llama a `apply_patch` directamente o desde `exec` (el modo código de los modelos `gpt-6.x`, `tools.apply_patch(...)`).
+  - El matcher `Edit|Write|MultiEdit|NotebookEdit` ya las recoge: Codex trata `apply_patch` como `Edit`/`Write`, y un `exec_command` no entró en ese matcher. No sé qué alias exactos admite.
+  - La entrada trae `session_id`, `turn_id`, `cwd`, `tool_use_id`, `model` y `permission_mode`. En `PostToolUse` llega además `tool_response` en texto, y en `Stop`, `stop_hook_active` y `last_assistant_message`.
+  - Exit 2 en `PreToolUse` bloquea: el fichero no se crea y el modelo recibe `Command blocked by PreToolUse hook: <stderr>. Command: <parche>`.
+  - Exit 2 en `PostToolUse` sustituye la salida de la herramienta por el stderr.
+  - Exit 2 en `Stop` vuelve a llamar al modelo con el stderr dentro de `<hook_prompt>`. Codex no pone tope: un `Stop` que siempre falla dio 982 vueltas en 90 s. Por eso `stop-check` lleva su propio tope de 8 bloqueos seguidos por sesión (`KIT_TURNO_BLOQUEOS`).
+  - Sin `--dangerously-bypass-hook-trust` no corre ningún hook del plugin, ni siquiera `SessionStart`.
+  - `lib-reglas.sh` (`kr_input`) convierte cada fichero del parche en una entrada aparte:
+    - `Add` cuenta como `Write`;
+    - `Update` cuenta como `MultiEdit`, con un hunk por edición (contexto más líneas `-` frente a contexto más líneas `+`);
+    - `Move to` cuenta como `MultiEdit` sobre el destino;
+    - `Delete` solo pasa por el blindado.
+  - Si el parche no se puede leer, `pre-edit` bloquea.
+- OpenCode V2 (2.1.4): `setup(ctx)` tiene `ctx.tool.hook("execute.before" | "execute.after", cb)`. Lo vi en el binario y lo usé de verdad.
+  - Lanzar un error en `execute.before` bloquea la herramienta, y el mensaje llega al modelo como su error.
+  - `execute.after` recibe `{tool, sessionID, input, status, result: {content, output, metadata}}`. Al añadir texto a `result.content`, el modelo lo lee con el resultado.
+  - Herramientas: `write {path, content}` y `edit {path, oldString, newString, replaceAll}`. Los modelos `gpt-` (sin `oss` ni `gpt-4`) usan `patch {patchText}` en su lugar, con el mismo formato de parche que Codex.
+- OpenCode V1 (1.19.4): `tool.execute.before` (lanzar un error bloquea) y `tool.execute.after` (se añade texto a `output.output`).
+  - Herramientas: `write`/`edit` con `filePath`. Los modelos `gpt-` usan `apply_patch {patchText}`.
+  - El plugin traduce todas estas herramientas a la entrada de Claude Code o a la de `apply_patch` de Codex, y llama a `hooks/pre-edit` y `hooks/post-edit`. Solo lo hace si el repo de la sesión tiene marcador. `multiedit` (V1) se traduce, pero no lo vi en uso real.
+  - Verificado en las dos versiones: `as any` y un fichero blindado bloquean, y el fallo del lint llega al modelo.
+- OpenCode no tiene equivalente a `Stop` que pueda bloquear: ningún hook de sesión de V2 (`context`, `generate`, `compaction`, `model.request`...) ni el evento `session.idle` de V1. `stop-check` no corre ahí, y lo frenan `fusionar` y el CI.
+- Sin verificar:
+  - la aprobación con `/hooks` en el CLI interactivo de Codex: tocaría la configuración real;
+  - un modelo de verdad que corrige tras el bloqueo: el falso no razona;
+  - `multiedit` de V1 en uso real.
+- Límite conocido: las ediciones hechas por shell no pasan por `pre-edit` ni `post-edit`, igual que el `Bash` de Claude Code. En Codex se vio con un `exec_command` que escribió un fichero. En OpenCode serían `bash`/`shell`, pero no lo probé. Solo las ve `stop-check`, en Codex y Claude Code.
 
 #### Flujo de issues (fase 2)
 

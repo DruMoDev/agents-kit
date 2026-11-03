@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Sourced by hooks/pre-edit, hooks/post-edit and hooks/stop-check (Claude Code PreToolUse, PostToolUse and Stop).
+# Sourced by hooks/pre-edit, hooks/post-edit and hooks/stop-check (PreToolUse, PostToolUse and Stop of Claude Code and
+# of Codex, whose apply_patch reaches the Edit|Write matcher with tool_name "apply_patch"; see kr_input).
 # They read the marker of the session's worktree (speed; the guarantee is kit-pr.sh fusionar) and stay inert (exit 0,
 # no output) without .agents-kit.json, with "reglas": false, without "lint", or when the input has no usable path.
 # Cost before the lint: one jq over the input, one git, one jq over the marker (pre-edit: one more over the input and
@@ -14,18 +15,50 @@ KR_PROHIBIDO='eslint-disable|@ts-ignore|@ts-nocheck|\bas\s+any(?![\w$])'
 # Code extensions always checked for that text, besides the keys of .lint.fichero (ipynb: cells of NotebookEdit).
 KR_CODIGO=',ts,tsx,js,jsx,mjs,cjs,mts,cts,astro,vue,svelte,ipynb,'
 
-# kr_input: parse the hook input on stdin (kept in KR_JSON) into KR_CWD (physical), KR_FILE (tool_input.file_path or
-# notebook_path) and KR_SID (session_id). Return 1 if unusable.
+# kr_input: parse the hook input on stdin (kept in KR_JSON) into KR_CWD (physical), KR_SID (session_id), KR_ACTIVO
+# (1 when stop_hook_active is true), KR_PARCHE (1 for Codex's apply_patch) and KR_ITEMS, pairs "<path>" "<input>" of
+# the files the tool touches, where <input> holds the tool_input that kr_sube_prohibido checks for that file:
+#   - Claude Code: one pair, tool_input.file_path or notebook_path and the whole input (none without a path);
+#   - Codex apply_patch (tool_input.command, the patch): one pair per "*** Add|Update|Delete File:" and per
+#     "*** Move to:", as a Write (Add: content, the + lines), a MultiEdit (Update and its destination: one edit per
+#     hunk, old_string the context and - lines, new_string the context and + lines) or nothing to check (Delete).
+# Return 1 if unusable.
 kr_input() {
-  local cwd ok
+  local cwd ok x
   [ ! -t 0 ] || return 1
-  KR_JSON="$(cat)"; KR_CWD=""; KR_FILE=""; KR_SID=""; ok=""
-  { IFS= read -r -d '' cwd; IFS= read -r -d '' KR_FILE; IFS= read -r -d '' KR_SID; IFS= read -r -d '' ok; } < <(
+  KR_JSON="$(cat)"; KR_CWD=""; KR_SID=""; KR_ACTIVO=""; KR_PARCHE=""; KR_ITEMS=(); ok=""
+  { IFS= read -r -d '' cwd; IFS= read -r -d '' KR_SID; IFS= read -r -d '' KR_ACTIVO; IFS= read -r -d '' KR_PARCHE
+    IFS= read -r -d '' ok; while IFS= read -r -d '' x; do KR_ITEMS+=("$x"); done; } < <(
     printf '%s' "$KR_JSON" | jq -j '
       def s: if type == "string" then . else "" end;
+      def lineas: map(. + "\n") | join("");
+      def ultimo(f): .fs[(.fs | length) - 1] |= f;
+      def hunk(f): (if (.h | length) == 0 then .h = [{o: [], n: []}] else . end) | .h[(.h | length) - 1] |= f;
+      def parche: reduce (split("\r\n") | join("\n") | split("\n"))[] as $l ({fs: [], fin: false};
+        if .fin then .
+        elif $l == "*** End Patch" then .fin = true
+        elif ($l | test("^\\*\\*\\* (Add|Update|Delete) File: ")) then
+          ($l | capture("^\\*\\*\\* (?<op>[A-Za-z]+) File: (?<p>.*)$")) as $c
+          | .fs += [{op: $c.op, p: ($c.p | sub("\\s+$"; "")), mv: null, add: [], h: []}]
+        elif (.fs | length) == 0 then .
+        elif ($l | startswith("*** Move to: ")) then ultimo(.mv = ($l[13:] | sub("\\s+$"; "")))
+        elif ($l | startswith("*** ")) then .
+        elif .fs[-1].op == "Add" then ultimo(.add += [$l | if startswith("+") then .[1:] else . end])
+        elif .fs[-1].op != "Update" then .
+        elif ($l | startswith("@@")) then ultimo(.h += [{o: [], n: []}])
+        elif ($l | startswith("+")) then ultimo(hunk(.n += [$l[1:]]))
+        elif ($l | startswith("-")) then ultimo(hunk(.o += [$l[1:]]))
+        else ($l | if startswith(" ") then .[1:] else . end) as $x | ultimo(hunk(.o += [$x] | .n += [$x])) end)
+        | .fs[] | (if .op == "Add" then {content: (.add | lineas)}
+                   elif .op == "Update" then {edits: [.h[] | {old_string: (.o | lineas), new_string: (.n | lineas)}]}
+                   else {} end) as $i
+        | (.p, (.mv | values)) | select(. != "") | ., "\u0000", ({tool_input: ($i + {file_path: .})} | tojson), "\u0000";
       (.tool_input | if type == "object" then . else {} end) as $i |
-      (.cwd | s), "\u0000", ($i.file_path // $i.notebook_path | s), "\u0000", (.session_id | s), "\u0000",
-      "ok", "\u0000"' 2>/dev/null)
+      (.cwd | s), "\u0000", (.session_id | s), "\u0000", (if .stop_hook_active == true then "1" else "" end), "\u0000",
+      (if .tool_name == "apply_patch" then "1" else "" end), "\u0000", "ok", "\u0000",
+      (if .tool_name == "apply_patch" then ($i.command // $i.patch // $i.input | s | parche)
+       else ($i.file_path // $i.notebook_path | s) as $f | select($f != "") | $f, "\u0000", tojson, "\u0000" end)
+      ' 2>/dev/null)
   [ "$ok" = ok ] && [ -n "$cwd" ] || return 1
   KR_CWD="$(cd "$cwd" 2>/dev/null && pwd -P)" && [ -n "$KR_CWD" ]
 }
@@ -179,17 +212,18 @@ kr_tope() {
   case "$1" in ''|*[!0-9]*|0*) echo "$2" ;; *) echo "$1" ;; esac
 }
 
-# kr_lint <tope> <qué> <comando> [args...]: run `<comando> <args>` from KR_ROOT under the lock and exit: 2 with the
-# output on stderr when it fails; 0 when it passes, the lock is busy, the tool is missing (126/127) or it times out.
+# kr_lint <tope> <qué> <comando> [args...]: run `<comando> <args>` from KR_ROOT under the lock (taken with <tope> on
+# the first call; later calls reuse it) and return: 2 with the output on stderr when it fails; 0 when it passes, the
+# lock is busy, the tool is missing (126/127) or it times out.
 kr_lint() {
   local t="$1" what="$2" cmd="$3" rc; shift 3
-  kr_lock "$t" || exit 0
+  [ -n "${KR_LOCK_OK:-}" ] || { kr_lock "$t" || return 0; KR_LOCK_OK=1; }
   kit_run_timeout "$KR_ROOT" "$t" /bin/sh -c "$cmd \"\$@\"" kit-lint "$@"; rc=$?
   case $rc in
-    0) exit 0 ;;
-    126|127) echo "agents-kit: el lint no se pudo ejecutar ($cmd, exit $rc); no bloquea" >&2; exit 0 ;;
-    142) echo "agents-kit: el lint pasó de $t s ($cmd); no bloquea" >&2; exit 0 ;;
+    0) return 0 ;;
+    126|127) echo "agents-kit: el lint no se pudo ejecutar ($cmd, exit $rc); no bloquea" >&2; return 0 ;;
+    142) echo "agents-kit: el lint pasó de $t s ($cmd); no bloquea" >&2; return 0 ;;
   esac
   printf 'El lint falla en %s (%s, exit %s). Arréglalo:\n%s\n' "$what" "$cmd" "$rc" "$KIT_HOOK_OUT" >&2
-  exit 2
+  return 2
 }
