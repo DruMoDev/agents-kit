@@ -380,21 +380,79 @@ for x in "lenguajes: ts,js" "proyecto: social-apps (js, base incompleta)" "proye
   grep -qxF "$x" <<<"$out" || fail "estado JS sin '$x': $out"
 done
 [ "$(grep -c '^tsconfig: strict ' <<<"$out")" = 1 ] || fail "las opciones estrictas solo en el proyecto TS: $out"
-# the JS base: strictTypeChecked, noInlineConfig and knip, without the strict tsconfig flags
+# the JS base: strictNullChecks (by strict or by itself), strictTypeChecked, noInlineConfig and knip, without the other
+# strict tsconfig flags
 printf 'export default [tseslint.configs.strictTypeChecked, { linterOptions: { noInlineConfig: true } }];\n' > "$j/social-apps/eslint.config.js"
 echo '{}' > "$j/social-apps/knip.json"
+run estado "$j"; [ "$(last_line "$out")" = "FIN: base incompleta" ] && grep -qxF "proyecto: social-apps (js, base incompleta)" <<<"$out" \
+  && grep -qxF "tsconfig: strictNullChecks no" <<<"$out" || fail "JS sin strictNullChecks debe ser incompleta: $out"
+# js_tsc <opciones>: the tsconfig of social-apps with these extra compilerOptions
+js_tsc() {
+  printf '{\n  "compilerOptions": { "allowJs": true, "checkJs": false, "noEmit": true, %s },\n  "include": ["**/*.mjs", "**/*.js"]\n}\n' "$1" \
+    > "$j/social-apps/tsconfig.json"
+}
+js_tsc '"strict": true, "strictNullChecks": false'
+run estado "$j"; grep -qxF "proyecto: social-apps (js, base incompleta)" <<<"$out" && grep -qxF "tsconfig: strictNullChecks no" <<<"$out" \
+  || fail "strict con strictNullChecks false no cuenta: $out"
+js_tsc '"strictNullChecks": true'
 run estado "$j"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" \
-  || fail "JS con su base debe ser completa: $out"
+  && grep -qxF "tsconfig: strictNullChecks sí" <<<"$out" || fail "JS con strictNullChecks debe ser completa: $out"
+js_tsc '"strict":true'
+run estado "$j"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" \
+  && grep -qxF "tsconfig: strictNullChecks sí" <<<"$out" || fail "JS con strict debe ser completa: $out"
+[ "$(grep -c '^tsconfig: strictNullChecks ' <<<"$out")" = 1 ] || fail "strictNullChecks solo en el proyecto JS: $out"
 sed -i.bak 's/"checkJs": false/"checkJs": true/' "$j/social-apps/tsconfig.json"; rm -f "$j/social-apps/tsconfig.json.bak"
 run estado "$j"; grep -qxF "tsconfig: checkJs sí (opcional)" <<<"$out" && [ "$(last_line "$out")" = "FIN: base completa" ] \
   || fail "checkJs es opcional: $out"
+# inline directives: counted per project (TS and JS), only its own files, not node_modules nor a nested project's
+grep -qxF "directivas-en-linea: 0" <<<"$out" && [ "$(grep -c '^directivas-en-linea: 0$' <<<"$out")" = 2 ] || fail "sin directivas: $out"
+cat > "$j/social-apps/api/src/viejo.mjs" <<'EOF2'
+/* eslint-disable no-control-regex */
+// eslint-disable-next-line no-console
+console.log(1); // eslint-disable-line no-console
+/*eslint no-alert: "off"*/
+// antes había un eslint-disable aquí: esto no es una directiva
+export const re = /\x00/; /* eslint-enable no-control-regex */
+EOF2
+mkdir -p "$j/social-apps/node_modules/x" "$j/social-apps/sub"
+echo '// eslint-disable-next-line' > "$j/social-apps/node_modules/x/i.js"
+echo '{}' > "$j/social-apps/sub/package.json"; echo '{"compilerOptions": {"allowJs": true}}' > "$j/social-apps/sub/tsconfig.json"
+echo '// eslint-disable-next-line no-console' > "$j/social-apps/sub/a.mjs"
+echo '// eslint-disable-next-line' > "$j/web/src/b.ts"
+echo '// eslint-disable-next-line' > "$j/social-apps/notas.md"
+run estado "$j"
+blk() { awk -v p="proyecto: $1 (" 'index($0, p) == 1 { on = 1; next } /^proyecto: |^FIN: / { on = 0 } on' <<<"$out"; }
+grep -qxF "directivas-en-linea: 5" <<<"$(blk social-apps)" || fail "directivas de social-apps: $out"
+grep -qxF "directivas-en-linea: 1" <<<"$(blk social-apps/sub)" || fail "directivas del proyecto anidado: $out"
+grep -qxF "directivas-en-linea: 1" <<<"$(blk web)" || fail "directivas del proyecto TS: $out"
+grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" || fail "las directivas no cambian la base: $out"
+rm -rf "$j/social-apps/api/src/viejo.mjs" "$j/social-apps/node_modules" "$j/social-apps/sub" "$j/social-apps/notas.md" "$j/web/src/b.ts"
+# the kit templates: up to date, with the four variables adjusted, or out of date; no line when the file is not there
+t="$REPO_ROOT/templates/reglas"
+run estado "$j"; grep -q '^plantilla: ' <<<"$out" && fail "sin plantillas no hay línea: $out"
+mkdir -p "$j/social-apps/.agents-kit"; cp "$t/turno.sh" "$j/social-apps/.agents-kit/turno.sh"
+cp "$t/tsc-base.mjs" "$j/social-apps/.agents-kit/tsc-base.mjs"
+run estado "$j"; grep -qxF "plantilla: .agents-kit/turno.sh al día" <<<"$(blk social-apps)" \
+  && grep -qxF "plantilla: .agents-kit/tsc-base.mjs al día" <<<"$(blk social-apps)" || fail "plantillas al día: $out"
+sed -i.bak -e 's#^TSC_EXT=.*#TSC_EXT=""#' -e 's#^LINT_EXT=.*#LINT_EXT="js mjs astro"#' -e 's#^TSC=.*#TSC="node_modules/typescript7/bin/tsc"#' \
+  -e 's#^ANTES_TSC=.*#ANTES_TSC="node_modules/.bin/astro sync"#' "$j/social-apps/.agents-kit/turno.sh"; rm -f "$j/social-apps/.agents-kit/turno.sh.bak"
+grep -qx 'TSC_EXT=""' "$j/social-apps/.agents-kit/turno.sh" || fail "fixture de turno.sh"
+run estado "$j"; grep -qxF "plantilla: .agents-kit/turno.sh al día" <<<"$(blk social-apps)" || fail "las cuatro variables no desfasan: $out"
+sed -i.bak 's#^rc=0$#rc=0; true#' "$j/social-apps/.agents-kit/turno.sh"; rm -f "$j/social-apps/.agents-kit/turno.sh.bak"
+echo '// otra versión' >> "$j/social-apps/.agents-kit/tsc-base.mjs"
+run estado "$j"
+grep -qxF "plantilla: .agents-kit/turno.sh desfasada: vuelve a copiar templates/reglas/turno.sh del kit (conserva TSC_EXT, LINT_EXT, TSC y ANTES_TSC)" <<<"$(blk social-apps)" \
+  && grep -qxF "plantilla: .agents-kit/tsc-base.mjs desfasada: vuelve a copiar templates/reglas/tsc-base.mjs del kit" <<<"$(blk social-apps)" \
+  || fail "plantillas desfasadas: $out"
+grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" || fail "una plantilla desfasada no cambia la base: $out"
+rm -rf "$j/social-apps/.agents-kit"
 # a nested project's .ts does not make its parent TS; a .ts of its own does
 mkdir -p "$j/social-apps/tools"; echo '{}' > "$j/social-apps/tools/package.json"; echo '{}' > "$j/social-apps/tools/tsconfig.json"
 echo 'export const t = 1;' > "$j/social-apps/tools/gen.ts"
 run estado "$j"; grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" && grep -qxF "proyecto: social-apps/tools (ts, base incompleta)" <<<"$out" \
   || fail "el .ts de un proyecto anidado no cuenta: $out"
 rm -rf "$j/social-apps/tools"; echo 'export const x = 1;' > "$j/social-apps/api/src/x.ts"
-run estado "$j"; grep -qxF "proyecto: social-apps (ts, base incompleta)" <<<"$out" && grep -qxF "tsconfig: strict no" <<<"$out" \
+run estado "$j"; grep -qxF "proyecto: social-apps (ts, base incompleta)" <<<"$out" && grep -qxF "tsconfig: noUncheckedIndexedAccess no" <<<"$out" \
   || fail "allowJs con un .ts propio es TS: $out"
 rm "$j/social-apps/api/src/x.ts"
 # a versioned .ts deleted but not staged no longer counts

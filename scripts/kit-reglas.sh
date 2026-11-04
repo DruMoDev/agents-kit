@@ -16,12 +16,19 @@
 #     is js when its tsconfig.json says "allowJs": true and none of its own files (those not under a nested project)
 #     is TS source (.ts, .tsx, .mts, .cts; declarations .d.ts, .d.mts, .d.cts aside): its tsconfig only feeds types to
 #     typescript-eslint. Then a ts project gets "tsconfig: <flag> sí|no" for each flag of the base (grep over its
-#     tsconfig.json; "extends" is not followed), and a js one "tsconfig: checkJs sí|no (opcional)" (the strict flags go
-#     with checkJs, a migration apart, never part of its base). Both: "eslint: strictTypeChecked sí|no", "eslint: noInlineConfig sí|no" (grep over its eslint.config.*), "knip: sí|no"
-#     and its "deuda-lint: <n> entradas|ninguna" (its eslint-suppressions.json, one entry per file and rule) and
-#     "deuda-tsc: <n> ficheros|ninguna" (its .agents-kit/tsc-base.json). The root's debt lines always appear: right
-#     after "lint:" when the root is not a TS project. FIN: base completa (lint declared and every project complete,
-#     or no TS project) or FIN: base incompleta.
+#     tsconfig.json; "extends" is not followed), and a js one "tsconfig: strictNullChecks sí|no" (sí with
+#     "strictNullChecks": true, or "strict": true without "strictNullChecks": false: several strictTypeChecked rules
+#     need it, also in JS) and "tsconfig: checkJs sí|no (opcional)" (the other strict flags go with checkJs, a
+#     migration apart, never part of its base). Both: "eslint: strictTypeChecked sí|no", "eslint: noInlineConfig sí|no"
+#     (grep over its eslint.config.*), "knip: sí|no", then the informative lines that never change the base:
+#     "directivas-en-linea: <n>" (ESLint directive comments, // or /* followed by eslint, eslint-disable,
+#     eslint-disable-line, eslint-disable-next-line or eslint-enable, in its own files with a lint extension, those
+#     not under a nested project) and, for each of .agents-kit/turno.sh and .agents-kit/tsc-base.mjs that exists,
+#     "plantilla: <fichero> al día|desfasada: <qué hacer>" against templates/reglas/ of this kit (turno.sh without its
+#     TSC_EXT=, LINT_EXT=, TSC= and ANTES_TSC= lines). Last, its "deuda-lint: <n> entradas|ninguna" (its
+#     eslint-suppressions.json, one entry per file and rule) and "deuda-tsc: <n> ficheros|ninguna" (its
+#     .agents-kit/tsc-base.json). The root's debt lines always appear: right after "lint:" when the root is not a TS
+#     project. FIN: base completa (lint declared and every project complete, or no TS project) or FIN: base incompleta.
 #   trinquete: exit 1 with one line per reason on stderr when a changed or deleted file still has entries in the
 #     suppressions or the tsc baseline of the root or of a directory that contains it ("deuda en fichero tocado:
 #     <ruta> (lint|tipos)"; the keys of a directory's debt files are relative to it), or when one of those files adds
@@ -77,6 +84,12 @@ cd "$wt" || exit 2
 
 SUP=eslint-suppressions.json
 TSB=.agents-kit/tsc-base.json
+PLANTILLAS="$here/../templates/reglas"
+# Extensions whose files can carry ESLint directives (directivas-en-linea).
+DIR_EXT='js|jsx|mjs|cjs|ts|tsx|mts|cts|astro|vue|svelte'
+# An ESLint directive comment: // or /* and then eslint (inline config), eslint-disable[-line|-next-line] or
+# eslint-enable, followed by a space, the end of the comment or the end of the line.
+DIR_RE='(//|/\*)[[:space:]]*eslint(-disable(-next-line|-line)?|-enable)?([[:space:]]|\*/|$)'
 FLAGS="strict noUncheckedIndexedAccess exactOptionalPropertyTypes verbatimModuleSyntax noImplicitOverride noFallthroughCasesInSwitch"
 LINT_DEP='eslint|typescript|knip|dependency-cruiser'
 # PKG_JQ (jq -n, $b/$h = package.json of the base/tree, $re = LINT_DEP): the package.json changes that count, as
@@ -190,21 +203,55 @@ grows_tsb() {
   jq -rn --argjson b "$b" --argjson h "$h" --arg p "$p" '$h | to_entries[] | select((.value // 0) > ($b[.key] // -1)) | "\($p)\(.key)\ttipos"'
 }
 
-# project_kind <dir> <projects> <files>: "js" when <dir>/tsconfig.json says "allowJs": true and none of the project's
-# own files (of <files> and still on disk, not under another of <projects> nested in it) is TS source (declarations
-# aside); "ts" otherwise. A versioned file deleted but not staged is in <files> and no longer counts.
+# own_files <dir> <projects> <files>: the files of <files> that are the project's own (under <dir>, not under another
+# of <projects> nested in it), one per line, paths from the repo root.
+own_files() {
+  D="$1" P="$2" awk '
+    BEGIN { d = ENVIRON["D"]; pre = (d == ".") ? "" : d "/"; n = split(ENVIRON["P"], ps, "\n")
+      for (i = 1; i <= n; i++) if (ps[i] != "" && ps[i] != d && ps[i] != "." && (pre == "" || index(ps[i] "/", pre) == 1)) hijo[ps[i] "/"] = 1 }
+    pre != "" && index($0, pre) != 1 { next }
+    { for (h in hijo) if (index($0, h) == 1) next }
+    $0 != ""' <<<"$3"
+}
+
+# project_kind <dir> <own files>: "js" when <dir>/tsconfig.json says "allowJs": true and none of the project's own
+# files still on disk is TS source (declarations aside); "ts" otherwise. A versioned file deleted but not staged is
+# in the list and no longer counts.
 project_kind() {
   local f
   grep -Eq '"allowJs"[[:space:]]*:[[:space:]]*true' "./$1/tsconfig.json" 2>/dev/null || { echo ts; return 0; }
   while IFS= read -r f; do
     [ -e "$f" ] && { echo ts; return 0; }
-  done < <(D="$1" P="$2" awk '
-    BEGIN { d = ENVIRON["D"]; pre = (d == ".") ? "" : d "/"; n = split(ENVIRON["P"], ps, "\n")
-      for (i = 1; i <= n; i++) if (ps[i] != "" && ps[i] != d && ps[i] != "." && (pre == "" || index(ps[i] "/", pre) == 1)) hijo[ps[i] "/"] = 1 }
-    pre != "" && index($0, pre) != 1 { next }
-    { for (h in hijo) if (index($0, h) == 1) next }
-    /\.(ts|tsx|mts|cts)$/ && !/\.d\.(ts|mts|cts)$/' <<<"$3")
+  done < <(grep -E '\.(ts|tsx|mts|cts)$' <<<"$2" | grep -Ev '\.d\.(ts|mts|cts)$')
   echo js
+}
+
+# directives <own files>: the number of ESLint directive comments in those files (with a DIR_EXT extension and still
+# on disk). Paths from the repo root (the current directory).
+directives() {
+  local n
+  n="$(grep -Ei "\.($DIR_EXT)\$" <<<"$1" | while IFS= read -r f; do [ -f "$f" ] && printf '%s\0' "$f"; done \
+    | xargs -0 grep -Eoh -- "$DIR_RE" /dev/null | wc -l)"
+  echo "$((n + 0))"
+}
+
+# templates_lines: "plantilla: ..." for the kit templates copied into the project in the current directory.
+templates_lines() {
+  local q='^(TSC_EXT|LINT_EXT|TSC|ANTES_TSC)='
+  if [ -f .agents-kit/turno.sh ]; then
+    if cmp -s <(grep -Ev "$q" .agents-kit/turno.sh) <(grep -Ev "$q" "$PLANTILLAS/turno.sh"); then
+      echo "plantilla: .agents-kit/turno.sh al día"
+    else
+      echo "plantilla: .agents-kit/turno.sh desfasada: vuelve a copiar templates/reglas/turno.sh del kit (conserva TSC_EXT, LINT_EXT, TSC y ANTES_TSC)"
+    fi
+  fi
+  if [ -f .agents-kit/tsc-base.mjs ]; then
+    if cmp -s .agents-kit/tsc-base.mjs "$PLANTILLAS/tsc-base.mjs"; then
+      echo "plantilla: .agents-kit/tsc-base.mjs al día"
+    else
+      echo "plantilla: .agents-kit/tsc-base.mjs desfasada: vuelve a copiar templates/reglas/tsc-base.mjs del kit"
+    fi
+  fi
 }
 
 # base_checks <lint> <ts|js>: the checks of the base for the project in the current directory, one line each; return 1
@@ -214,6 +261,12 @@ base_checks() {
   [ -n "$1" ] || ok=1
   pkg="$(json_tree package.json)" || return 2
   if [ "$2" = js ]; then
+    v="no"
+    if grep -Eq '"strictNullChecks"[[:space:]]*:[[:space:]]*true' tsconfig.json; then v="sí"
+    elif grep -Eq '"strict"[[:space:]]*:[[:space:]]*true' tsconfig.json \
+      && ! grep -Eq '"strictNullChecks"[[:space:]]*:[[:space:]]*false' tsconfig.json; then v="sí"; fi
+    [ "$v" = "sí" ] || ok=1
+    echo "tsconfig: strictNullChecks $v"
     if grep -Eq '"checkJs"[[:space:]]*:[[:space:]]*true' tsconfig.json; then v="sí"; else v="no"; fi
     echo "tsconfig: checkJs $v (opcional)"
   else
@@ -251,9 +304,12 @@ case "$sub" in
   estado)
     projs="$(ts_projects)" || { echo "error: no pude listar los proyectos TS (git falló)" >&2; exit 2; }
     files="$(tree_files)" || { echo "error: no pude listar los ficheros (git falló)" >&2; exit 2; }
-    kinds=""
+    kinds=""; dirs_n=""
     while IFS= read -r d; do
-      [ -n "$d" ] && kinds="$kinds$(project_kind "$d" "$projs" "$files")"$'\n'
+      [ -n "$d" ] || continue
+      own="$(own_files "$d" "$projs" "$files")"
+      kinds="$kinds$(project_kind "$d" "$own")"$'\n'
+      dirs_n="$dirs_n$(directives "$own")"$'\n'
     done <<<"$projs"
     langs=""
     grep -qx ts <<<"$kinds" && langs="ts"
@@ -266,14 +322,15 @@ case "$sub" in
     if [ -n "$l" ]; then echo "lint: declarado"; else echo "lint: sin declarar"; fi
     # The root's debt goes first when the root is not a TS project; each project prints its own after its checks.
     case "$projs" in .|.$'\n'*) ;; *) debt_lines || exit 2 ;; esac
-    while IFS= read -r d && IFS= read -r t <&3; do
+    while IFS= read -r d && IFS= read -r t <&3 && IFS= read -r nd <&4; do
       [ -n "$d" ] || continue
       blk="$(cd "./$d" || exit 2; base_checks "$l" "$t")"; rc=$?
       [ $rc -le 1 ] || exit 2
       if [ $rc -eq 0 ]; then echo "proyecto: $d ($t, base completa)"; else echo "proyecto: $d ($t, base incompleta)"; completa=0; fi
       printf '%s\n' "$blk"
-      (cd "./$d" || exit 2; debt_lines) || exit 2
-    done <<<"$projs" 3<<<"$kinds"
+      echo "directivas-en-linea: $nd"
+      (cd "./$d" || exit 2; templates_lines; debt_lines) || exit 2
+    done <<<"$(grep -v '^$' <<<"$projs")" 3<<<"$kinds" 4<<<"$dirs_n"
     if [ $completa -eq 1 ]; then echo "FIN: base completa"; else echo "FIN: base incompleta"; fi
     ;;
 
