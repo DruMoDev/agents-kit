@@ -1,6 +1,6 @@
 # La base obligatoria
 
-Unos mínimos para todos los repos. Lo propio de cada proyecto va encima, con la escalera (`escalera.md`). Las versiones nunca salen de aquí ni de memoria: `npm view <paquete> version` y `npm view <paquete> peerDependencies` antes de instalar. Los ejemplos usan `npm`; con otro gestor, el equivalente (`pnpm`, `yarn`, `bun`).
+Unos mínimos para todos los repos. Un proyecto JavaScript (su `tsconfig.json` con `allowJs` y sin ficheros `.ts`, `.tsx`, `.mts` ni `.cts` propios) lleva otra base: "JavaScript con `tsconfig` de solo inferencia", abajo. Lo propio de cada proyecto va encima, con la escalera (`escalera.md`). Las versiones nunca salen de aquí ni de memoria: `npm view <paquete> version` y `npm view <paquete> peerDependencies` antes de instalar. Los ejemplos usan `npm`; con otro gestor, el equivalente (`pnpm`, `yarn`, `bun`).
 
 ## TypeScript: `tsconfig.json`
 
@@ -66,7 +66,8 @@ export default defineConfig(
       ],
     },
   },
-  // Ficheros JS de configuración: sin reglas con tipos, con los globales de Node (process...).
+  // Ficheros JS de configuración de un proyecto TS: sin reglas con tipos, con los globales de Node (process...).
+  // En un proyecto JS, nunca: apagaría las reglas con tipos en todo su código.
   {
     files: ["**/*.{js,mjs,cjs}"],
     extends: [tseslint.configs.disableTypeChecked],
@@ -130,6 +131,46 @@ En un monorepo, cada app (`web/`, `packages/<x>`) lleva su base en su directorio
 Tiene que ser dentro del proyecto: desde la raíz, ESLint 10 encuentra el `eslint.config.*` del directorio del fichero, pero lee las supresiones del `cwd` (`--suppressions-location` no lo arregla: sus claves son relativas a la app) y el parser de Astro no encuentra `typescript`.
 
 En `turno.sh` de un proyecto con TypeScript 7: `TSC="node_modules/typescript7/bin/tsc"`; en Astro, `ANTES_TSC="node_modules/.bin/astro sync"` y `astro` en `LINT_EXT`.
+
+## JavaScript con `tsconfig` de solo inferencia
+
+Un proyecto JS cuyo `tsconfig.json` existe solo para que `typescript-eslint` infiera tipos (`allowJs: true`, `checkJs: false`, `noEmit: true`). `kit-reglas.sh estado` lo marca `(js, ...)`. Su base: el lint declarado, `strictTypeChecked`, `noInlineConfig` y `knip`; las seis opciones del `tsconfig` no entran.
+
+Por qué otra base: en JS sin anotar casi todo es `any`, y la base TS lo deja inservible. La familia `no-unsafe-*` y `restrict-template-expressions` marcan casi cada línea (en un proyecto real de 113 ficheros, el 85% de 18.875 errores; sin ellas quedaron 530 en 70 ficheros, hallazgos útiles como `require-await` o `no-unnecessary-condition`). Congelarlos con el trinquete dejaría el proyecto intocable: cada fichero tocado tendría que quedar a cero, y esos errores no se arreglan sin anotar tipos. Y con `checkJs: false`, `tsc` no comprueba nada: las opciones estrictas del `tsconfig` y `tsc-base.mjs` serían teatro.
+
+`eslint.config.mjs` (o `.js`), la misma de TS con dos cambios: las reglas de abajo apagadas y ningún `disableTypeChecked` para `**/*.{js,mjs,cjs}`, que apagaría las reglas con tipos (`no-floating-promises`) en todo el código, justo lo que protegen:
+
+```js
+export default defineConfig(
+  { ignores: ["dist/", "build/", "coverage/", "node_modules/"] },
+  { linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "error" } },
+  js.configs.recommended,
+  tseslint.configs.strictTypeChecked,
+  {
+    languageOptions: {
+      globals: globals.node,
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      // JS sin anotar: todo lo que no infiere es `any`, y estas marcan casi cada línea sin encontrar nada.
+      // Vuelven si el proyecto activa checkJs y anota sus tipos.
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/restrict-template-expressions": "off",
+    },
+  },
+  rapido ? tseslint.configs.disableTypeChecked : {},
+);
+```
+
+- Las reglas con tipos solo ven lo que el `tsconfig` deja tipar, y una que no puede tipar una expresión se calla en vez de fallar: `include` cubre todas las extensiones que se lintan (`**/*.mjs`, `**/*.js`, `**/*.cjs`), `lib` las APIs del entorno (`webworker` para `fetch` en un Worker) y `types` los de Node (`["node"]`, con `@types/node`). Compruébalo con un fichero de prueba que deja una promesa sin esperar (`fetch(...)` sin `await`): el lint tiene que fallar.
+- Un fichero que el `include` no recoge (los de un directorio que empieza por punto, por ejemplo) da `was not found by the project service`: añádelo al `include` o a `ignores`.
+- Sin `typecheck` ni `tsc-base.mjs`: `npm run lint` y `knip` en `verificar.completo`. `turno.sh` con `TSC_EXT=""` (sin tipos: solo ESLint con tipos) y en `LINT_EXT` las extensiones del proyecto. La deuda de lint que quede se congela igual (`--suppress-all`).
+- **Pieza opcional, aparte: `checkJs`.** Activarlo es una migración (anotar tipos con JSDoc), no parte de la base: se propone a Dru como issue propio. Con `checkJs: true` entran las seis opciones del `tsconfig` de arriba, `tsc-base.mjs` con su deuda, el script `typecheck` y `TSC_EXT="js jsx mjs cjs"` en `turno.sh`; y cuando el código ya esté anotado, se pueden volver a encender las `no-unsafe-*`.
 
 ## `knip`: código muerto
 

@@ -174,7 +174,19 @@ err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"
   || fail "comprobar sin TS en la raíz: '$err'"
 echo '{"reglas": false}' > "$rt/.agents-kit.json"
 out="$(bash "$issue" comprobar "$rt" 2>&1)" || fail "subproyectos con reglas false: exit $? ($out)"
-rm -rf "$rt/web" "$rt/packages"; echo '{}' > "$rt/tsconfig.json"
+# a JS project (tsconfig with allowJs, no .ts of its own): refused without its base, accepted with the JS base
+rm -rf "$rt/web" "$rt/packages"; mkdir -p "$rt/app/src"; echo '{}' > "$rt/app/package.json"
+echo '{"compilerOptions": {"allowJs": true, "checkJs": false, "noEmit": true}}' > "$rt/app/tsconfig.json"
+echo 'export const a = 1;' > "$rt/app/src/a.mjs"
+echo '{"lint": {"fichero": {"mjs": "eslint"}}}' > "$rt/.agents-kit.json"
+err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] && [ "$err" = "falta la base de reglas en app: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ] \
+  || fail "comprobar JS sin base: $rc '$err'"
+printf 'export default [strictTypeChecked, { linterOptions: { noInlineConfig: true } }];\n' > "$rt/app/eslint.config.js"
+echo '{}' > "$rt/app/knip.json"
+out="$(bash "$issue" comprobar "$rt" 2>&1)" || fail "comprobar con la base JS: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar con la base JS: '$out'"
+rm -rf "$rt/app"; echo '{}' > "$rt/tsconfig.json"
 # with v3 labels missing too, both reasons
 echo '{}' > "$rt/.agents-kit.json"
 t="$(mktemp)"; jq '.labels = ["en-curso"]' "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json"

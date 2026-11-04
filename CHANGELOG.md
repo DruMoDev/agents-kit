@@ -25,6 +25,9 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
+### Mejora: la base de reglas distingue los proyectos JavaScript de los TypeScript · [#42](https://github.com/DruMoDev/agents-kit/pull/42)
+Un proyecto JavaScript con `tsconfig.json` solo para que el lint infiera tipos ya no recibe la base de TypeScript, que lo dejaba inservible con miles de avisos de `any` imposibles de arreglar sin anotar tipos. `kit-reglas` lo reconoce, lo marca como JS y le propone su propia base: el lint estricto con tipos sin las reglas que solo hacen ruido en JS sin anotar, y sin las opciones estrictas del `tsconfig`, que ahí no comprueban nada. Con esa base, `kit-run` trabaja en el proyecto. Activar `checkJs` queda como migración aparte.
+
 ### Interno: el test de la web que comprueba Access vuelve a pasar · [#40](https://github.com/DruMoDev/agents-kit/pull/40)
 El test de punta a punta que comprueba que fuera de localhost se exige Access esperaba la respuesta de cuando Access aún no estaba configurado. Ahora espera el acceso denegado sin la sesión de Access.
 

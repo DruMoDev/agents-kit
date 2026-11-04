@@ -316,29 +316,29 @@ base_ts() {
 mkdir -p "$m/web"; echo '{}' > "$m/web/package.json"; echo '{}' > "$m/web/tsconfig.json"
 run estado "$m"; [ $rc -eq 0 ] || fail "estado web: $out"
 [ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "web sin base debe ser incompleta: $out"
-for x in "lenguajes: ts" "proyecto: web (base incompleta)" "tsconfig: strict no" "knip: no"; do
+for x in "lenguajes: ts" "proyecto: web (ts, base incompleta)" "tsconfig: strict no" "knip: no"; do
   grep -qxF "$x" <<<"$out" || fail "estado web sin '$x': $out"
 done
 [ "$(grep -c '^deuda-lint:' <<<"$out")" = 2 ] || fail "deuda de la raíz y de web: $out"
 grep -q '^proyecto: \.' <<<"$out" && fail "la raíz sin TS no es proyecto: $out"
 rm -rf "$m/web"; base_ts "$m/web"
 run estado "$m"; [ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "sin lint declarado debe ser incompleta: $out"
-grep -qxF "proyecto: web (base incompleta)" <<<"$out" || fail "sin lint, web incompleta: $out"
+grep -qxF "proyecto: web (ts, base incompleta)" <<<"$out" || fail "sin lint, web incompleta: $out"
 echo '{"lint": {"fichero": {"ts": "eslint"}}}' > "$m/.agents-kit.json"
-run estado "$m"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: web (base completa)" <<<"$out" \
+run estado "$m"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: web (ts, base completa)" <<<"$out" \
   || fail "web con base debe ser completa: $out"
 mkdir -p "$m/web/.agents-kit"; echo '{"src/a.ts": 2}' > "$m/web/.agents-kit/tsc-base.json"
 run estado "$m"; grep -qxF "deuda-tsc: 1 ficheros" <<<"$out" || fail "deuda de web: $out"
 # two packages, one without the base; a directory name with repeated spaces and a tab
 base_ts "$m/packages/a  b"; base_ts "$m/packages/t	u"; mkdir -p "$m/packages/c"; echo '{}' > "$m/packages/c/package.json"; echo '{}' > "$m/packages/c/tsconfig.json"
 run estado "$m"; [ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "un paquete sin base: $out"
-for x in "proyecto: packages/a  b (base completa)" "proyecto: packages/c (base incompleta)" "proyecto: web (base completa)" \
-  "proyecto: packages/t"$'\t'"u (base completa)"; do
+for x in "proyecto: packages/a  b (ts, base completa)" "proyecto: packages/c (ts, base incompleta)" "proyecto: web (ts, base completa)" \
+  "proyecto: packages/t"$'\t'"u (ts, base completa)"; do
   grep -qxF "$x" <<<"$out" || fail "monorepo sin '$x': $out"
 done
 rm -rf "$m/packages/c"
 # a name that starts with - is a directory, never an option
-base_ts "$m/-app"; run estado "$m"; [ $rc -eq 0 ] && grep -qxF "proyecto: -app (base completa)" <<<"$out" || fail "proyecto -app: $rc $out"
+base_ts "$m/-app"; run estado "$m"; [ $rc -eq 0 ] && grep -qxF "proyecto: -app (ts, base completa)" <<<"$out" || fail "proyecto -app: $rc $out"
 mkdir -p "$m/-app/.agents-kit"; echo '{"src/a.ts": 1}' > "$m/-app/.agents-kit/tsc-base.json"
 run estado "$m"; [ $rc -eq 0 ] || fail "deuda de -app: $rc $out"
 rm -rf "$m/-app"
@@ -353,9 +353,60 @@ run estado "$m"; [ "$(last_line "$out")" = "FIN: base completa" ] || fail "nada 
 mv "$m/.git" "$m/.git-off"; run estado "$m"; [ $rc -eq 2 ] || fail "estado con git roto debe dar 2: $rc $out"; mv "$m/.git-off" "$m/.git"
 # a single app in the root: the root is the project, its debt lines once
 s1="$(mk_repo)"; echo '{"lint": {"fichero": {"ts": "eslint"}}}' > "$s1/.agents-kit.json"; base_ts "$s1"
-run estado "$s1"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: . (base completa)" <<<"$out" \
+run estado "$s1"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: . (ts, base completa)" <<<"$out" \
   || fail "app en la raíz: $out"
 [ "$(grep -c '^deuda-lint:' <<<"$out")" = 1 ] || fail "deuda de la raíz una vez: $out"
+
+# --- estado: proyecto JS (tsconfig con allowJs solo para que typescript-eslint infiera tipos) frente a uno TS
+j="$(mk_repo)"; echo '{"lint": {"fichero": {"ts,mjs": "eslint"}}}' > "$j/.agents-kit.json"
+base_ts "$j/web"; mkdir -p "$j/web/src"; echo 'export const a: number = 1;' > "$j/web/src/main.ts"
+mkdir -p "$j/social-apps/api/src" "$j/social-apps/scripts" "$j/social-apps/test" "$j/social-apps/types"
+echo '{"type": "module", "devDependencies": {"eslint": "x", "typescript": "x", "typescript-eslint": "x"}}' > "$j/social-apps/package.json"
+cat > "$j/social-apps/tsconfig.json" <<'EOF2'
+{
+  "//": ["Solo para que typescript-eslint infiera tipos: no compila nada."],
+  "compilerOptions": { "allowJs": true, "checkJs": false, "noEmit": true, "module": "esnext", "target": "esnext" },
+  "include": ["**/*.mjs", "**/*.js"]
+}
+EOF2
+echo 'export default { fetch: async () => new Response("ok") };' > "$j/social-apps/api/src/index.mjs"
+echo 'await fetch("http://localhost");' > "$j/social-apps/scripts/smoke.mjs"
+echo 'import { test } from "node:test"; test("x", () => {});' > "$j/social-apps/test/api.test.mjs"
+echo 'declare const ENV: string;' > "$j/social-apps/types/env.d.ts"
+run estado "$j"; [ $rc -eq 0 ] || fail "estado JS: $out"
+[ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "JS sin base debe ser incompleta: $out"
+for x in "lenguajes: ts,js" "proyecto: social-apps (js, base incompleta)" "proyecto: web (ts, base completa)" \
+  "tsconfig: checkJs no (opcional)" "eslint: strictTypeChecked no" "knip: no"; do
+  grep -qxF "$x" <<<"$out" || fail "estado JS sin '$x': $out"
+done
+[ "$(grep -c '^tsconfig: strict ' <<<"$out")" = 1 ] || fail "las opciones estrictas solo en el proyecto TS: $out"
+# the JS base: strictTypeChecked, noInlineConfig and knip, without the strict tsconfig flags
+printf 'export default [tseslint.configs.strictTypeChecked, { linterOptions: { noInlineConfig: true } }];\n' > "$j/social-apps/eslint.config.js"
+echo '{}' > "$j/social-apps/knip.json"
+run estado "$j"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" \
+  || fail "JS con su base debe ser completa: $out"
+sed -i.bak 's/"checkJs": false/"checkJs": true/' "$j/social-apps/tsconfig.json"; rm -f "$j/social-apps/tsconfig.json.bak"
+run estado "$j"; grep -qxF "tsconfig: checkJs sí (opcional)" <<<"$out" && [ "$(last_line "$out")" = "FIN: base completa" ] \
+  || fail "checkJs es opcional: $out"
+# a nested project's .ts does not make its parent TS; a .ts of its own does
+mkdir -p "$j/social-apps/tools"; echo '{}' > "$j/social-apps/tools/package.json"; echo '{}' > "$j/social-apps/tools/tsconfig.json"
+echo 'export const t = 1;' > "$j/social-apps/tools/gen.ts"
+run estado "$j"; grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" && grep -qxF "proyecto: social-apps/tools (ts, base incompleta)" <<<"$out" \
+  || fail "el .ts de un proyecto anidado no cuenta: $out"
+rm -rf "$j/social-apps/tools"; echo 'export const x = 1;' > "$j/social-apps/api/src/x.ts"
+run estado "$j"; grep -qxF "proyecto: social-apps (ts, base incompleta)" <<<"$out" && grep -qxF "tsconfig: strict no" <<<"$out" \
+  || fail "allowJs con un .ts propio es TS: $out"
+rm "$j/social-apps/api/src/x.ts"
+# a versioned .ts deleted but not staged no longer counts
+echo 'export const x = 1;' > "$j/social-apps/api/src/old.ts"; git -C "$j" add social-apps/api/src/old.ts; rm "$j/social-apps/api/src/old.ts"
+run estado "$j"; grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" || fail "un .ts borrado sin preparar no cuenta: $out"
+# a JS project whose name starts with - is a directory, never a grep option
+cp -R "$j/social-apps" "$j/-js"
+run estado "$j"; grep -qxF "proyecto: -js (js, base completa)" <<<"$out" || fail "proyecto JS -js: $out"
+rm -rf "$j/-js"
+# the root as a JS project: the .ts of web/ are not its own
+cp "$j/social-apps/tsconfig.json" "$j/tsconfig.json"; echo '{}' > "$j/package.json"; echo 'export {};' > "$j/index.mjs"
+run estado "$j"; grep -qxF "proyecto: . (js, base incompleta)" <<<"$out" || fail "raíz JS: $out"
 
 # --- trinquete y blindado con la deuda de un proyecto (claves relativas a su directorio)
 limpia
