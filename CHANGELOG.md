@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Mejora: la base de reglas cubre cada app de un monorepo · [#PR](PR)
+### Mejora: la base de reglas cubre cada app de un monorepo · [#35](https://github.com/DruMoDev/agents-kit/pull/35)
 Con el kit en la raíz de un monorepo, la base de lint y tipos ya no se da por instalada solo porque la raíz no tiene TypeScript: el kit encuentra cada app TS (`web/`, `packages/<x>`...), comprueba su base en su carpeta y, si a alguna le falta, `kit-run` dice cuál. La deuda congelada de cada app solo puede bajar, igual que la de la raíz. Un repo de una sola app funciona como antes.
 
 La web de changelogs de este repo ya tiene su base: lint estricto con tipos y su deuda de hoy congelada.
