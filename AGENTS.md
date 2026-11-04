@@ -44,7 +44,7 @@ Lint, tipos y estructura que fallan solos, para que "terminado" sea "las comprob
 - `tests/e2e/github.sh DruMoDev/agents-kit-sandbox [--con-revisores]`: prueba de punta a punta contra GitHub de verdad (issue con eje, candado, PR, changelog, gate o CI, ronda, fichero blindado rechazado y aprobado respondiendo en el issue, fusión, limpieza, candado de un issue cerrado). Antes de cada versión; tarda minutos, lánzala con `scripts/kit-bg.sh`. Deshace lo suyo si falla.
 - `scripts/release.sh <semver>`: escribe la versión en los manifiestos y el marketplace.
 - `claude plugin validate .`: valida manifiestos y skills.
-- `cd web && npm test && npm run e2e`: tests de la web (no los lanza `tests/run.sh`). `npm run lint` y `npm run typecheck` (este hace antes `astro sync`) van en `verificar.completo`.
+- `cd web && npm test && npm run e2e`: tests de la web (no los lanza `tests/run.sh`). `npm run typecheck` y `npm run lint` van en `verificar.completo`, en ese orden: `typecheck` hace antes `astro sync`, que genera `web/.astro/` (sin versionar), y sin él el lint con tipos falla en un worktree nuevo con errores `no-unsafe-*` en `src/middleware.ts`.
 
 ## Mapa del código
 
