@@ -594,6 +594,8 @@ grep -qxF -- "--lint-fichero 'py=\"\$(git rev-parse --show-toplevel)/tools/py.sh
 run marcador "$mj" --python 'python3'; grep -qxF -- "--lint-fichero 'py=\"python3\" -m ruff check --quiet'" <<<"$out" || fail "--python del PATH en monorepo: $out"
 run marcador "$mj" --python '$(command -v python3)'
 grep -qxF -- "--lint-fichero 'py=\"\$(command -v python3)\" -m ruff check --quiet'" <<<"$out" || fail "--python \$(comando del PATH) en monorepo: $out"
+run marcador "$mj" --python 'my tools/python.sh'
+grep -qxF -- "--lint-fichero 'py=\"\$(git rev-parse --show-toplevel)/my tools/python.sh\" -m ruff check --quiet'" <<<"$out" || fail "--python ruta con espacios: $out"
 run marcador "$mj" --python '$(./tools/python.sh --ruta)'
 grep -qxF -- "--lint-fichero 'py=\"\$(\"\$(git rev-parse --show-toplevel)\"/./tools/python.sh --ruta)\" -m ruff check --quiet'" <<<"$out" || fail "--python \$(ruta con argumentos): $out"
 # and it really runs from the project directory: the fake interpreter of tools/ is found

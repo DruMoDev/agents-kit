@@ -445,14 +445,14 @@ case "$sub" in
       grep -Eqv '^(\.)?$' <<<"$projs" && raiz='$(git rev-parse --show-toplevel)'
       if [ -n "$opt_python" ]; then
         p="$opt_python"
-        # Only a relative path (its first word has a / and does not start with / or $), alone or as the whole
-        # $(...); a command of the PATH ($(command -v python3), python3) stays as it is.
+        # Only a relative path (with a / and not starting with / or $): the whole <comando>, which is quoted as one
+        # executable, or the first word of a whole $(...); a command of the PATH ($(command -v python3), python3)
+        # stays as it is.
         if [ -n "$raiz" ]; then
           case "$p" in
             '$('*')') i="${p#\$(}"; i="${i%)}"; w="${i%%[[:space:]]*}"
               case "$w" in [!/\$]*/*) p='$("'"$raiz"'"/'"$i)" ;; esac ;;
-            *) w="${p%%[[:space:]]*}"
-              case "$w" in [!/\$]*/*) p="$raiz/$p" ;; esac ;;
+            [!/\$]*/*) p="$raiz/$p" ;;
           esac
         fi
         c="\"$p\" -m ruff check --quiet"
