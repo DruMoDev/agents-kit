@@ -191,16 +191,20 @@ grows_tsb() {
 }
 
 # project_kind <dir> <projects> <files>: "js" when <dir>/tsconfig.json says "allowJs": true and none of the project's
-# own files (of <files>, not under another of <projects> nested in it) is TS source (declarations aside); "ts" otherwise.
+# own files (of <files> and still on disk, not under another of <projects> nested in it) is TS source (declarations
+# aside); "ts" otherwise. A versioned file deleted but not staged is in <files> and no longer counts.
 project_kind() {
-  grep -Eq '"allowJs"[[:space:]]*:[[:space:]]*true' "$1/tsconfig.json" 2>/dev/null || { echo ts; return 0; }
-  D="$1" P="$2" awk '
+  local f
+  grep -Eq '"allowJs"[[:space:]]*:[[:space:]]*true' "./$1/tsconfig.json" 2>/dev/null || { echo ts; return 0; }
+  while IFS= read -r f; do
+    [ -e "$f" ] && { echo ts; return 0; }
+  done < <(D="$1" P="$2" awk '
     BEGIN { d = ENVIRON["D"]; pre = (d == ".") ? "" : d "/"; n = split(ENVIRON["P"], ps, "\n")
       for (i = 1; i <= n; i++) if (ps[i] != "" && ps[i] != d && ps[i] != "." && (pre == "" || index(ps[i] "/", pre) == 1)) hijo[ps[i] "/"] = 1 }
     pre != "" && index($0, pre) != 1 { next }
     { for (h in hijo) if (index($0, h) == 1) next }
-    /\.(ts|tsx|mts|cts)$/ && !/\.d\.(ts|mts|cts)$/ { ts = 1; exit }
-    END { print (ts ? "ts" : "js") }' <<<"$3"
+    /\.(ts|tsx|mts|cts)$/ && !/\.d\.(ts|mts|cts)$/' <<<"$3")
+  echo js
 }
 
 # base_checks <lint> <ts|js>: the checks of the base for the project in the current directory, one line each; return 1

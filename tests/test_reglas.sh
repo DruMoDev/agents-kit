@@ -397,6 +397,13 @@ rm -rf "$j/social-apps/tools"; echo 'export const x = 1;' > "$j/social-apps/api/
 run estado "$j"; grep -qxF "proyecto: social-apps (ts, base incompleta)" <<<"$out" && grep -qxF "tsconfig: strict no" <<<"$out" \
   || fail "allowJs con un .ts propio es TS: $out"
 rm "$j/social-apps/api/src/x.ts"
+# a versioned .ts deleted but not staged no longer counts
+echo 'export const x = 1;' > "$j/social-apps/api/src/old.ts"; git -C "$j" add social-apps/api/src/old.ts; rm "$j/social-apps/api/src/old.ts"
+run estado "$j"; grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" || fail "un .ts borrado sin preparar no cuenta: $out"
+# a JS project whose name starts with - is a directory, never a grep option
+cp -R "$j/social-apps" "$j/-js"
+run estado "$j"; grep -qxF "proyecto: -js (js, base completa)" <<<"$out" || fail "proyecto JS -js: $out"
+rm -rf "$j/-js"
 # the root as a JS project: the .ts of web/ are not its own
 cp "$j/social-apps/tsconfig.json" "$j/tsconfig.json"; echo '{}' > "$j/package.json"; echo 'export {};' > "$j/index.mjs"
 run estado "$j"; grep -qxF "proyecto: . (js, base incompleta)" <<<"$out" || fail "raíz JS: $out"
