@@ -24,7 +24,7 @@ test.afterEach(async ({ page }) => {
 const seenPosts = (page: Page) => {
   const posts: number[][] = [];
   page.on("request", (r) => {
-    if (r.url().endsWith("/api/seen") && r.method() === "POST") posts.push(JSON.parse(r.postData() ?? "{}").prs);
+    if (r.url().endsWith("/api/seen") && r.method() === "POST") posts.push((JSON.parse(r.postData() ?? "{}") as { prs: number[] }).prs);
   });
   return posts;
 };
