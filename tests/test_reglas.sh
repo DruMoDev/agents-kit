@@ -329,10 +329,11 @@ run estado "$m"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "
   || fail "web con base debe ser completa: $out"
 mkdir -p "$m/web/.agents-kit"; echo '{"src/a.ts": 2}' > "$m/web/.agents-kit/tsc-base.json"
 run estado "$m"; grep -qxF "deuda-tsc: 1 ficheros" <<<"$out" || fail "deuda de web: $out"
-# two packages, one without the base; a directory name with spaces
-base_ts "$m/packages/a b"; mkdir -p "$m/packages/c"; echo '{}' > "$m/packages/c/package.json"; echo '{}' > "$m/packages/c/tsconfig.json"
+# two packages, one without the base; a directory name with repeated spaces and a tab
+base_ts "$m/packages/a  b"; base_ts "$m/packages/t	u"; mkdir -p "$m/packages/c"; echo '{}' > "$m/packages/c/package.json"; echo '{}' > "$m/packages/c/tsconfig.json"
 run estado "$m"; [ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "un paquete sin base: $out"
-for x in "proyecto: packages/a b (base completa)" "proyecto: packages/c (base incompleta)" "proyecto: web (base completa)"; do
+for x in "proyecto: packages/a  b (base completa)" "proyecto: packages/c (base incompleta)" "proyecto: web (base completa)" \
+  "proyecto: packages/t"$'\t'"u (base completa)"; do
   grep -qxF "$x" <<<"$out" || fail "monorepo sin '$x': $out"
 done
 rm -rf "$m/packages/c"
@@ -342,7 +343,9 @@ echo '{}' > "$m/tools/package.json"; echo '{}' > "$m/tools/tsconfig.build.json";
 for d in node_modules/x web/node_modules/y gen; do echo '{}' > "$m/$d/package.json"; echo '{}' > "$m/$d/tsconfig.json"; done
 echo 'gen/' > "$m/.gitignore"
 run estado "$m"; [ "$(last_line "$out")" = "FIN: base completa" ] || fail "nada de eso es un proyecto: $out"
-[ "$(grep -c '^proyecto:' <<<"$out")" = 2 ] || fail "solo web y packages/a b: $out"
+[ "$(grep -c '^proyecto:' <<<"$out")" = 3 ] || fail "solo web, packages/a  b y packages/t u: $out"
+# git failing is an environment error, never "no projects"
+mv "$m/.git" "$m/.git-off"; run estado "$m"; [ $rc -eq 2 ] || fail "estado con git roto debe dar 2: $rc $out"; mv "$m/.git-off" "$m/.git"
 # a single app in the root: the root is the project, its debt lines once
 s1="$(mk_repo)"; echo '{"lint": {"fichero": {"ts": "eslint"}}}' > "$s1/.agents-kit.json"; base_ts "$s1"
 run estado "$s1"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: . (base completa)" <<<"$out" \
@@ -377,6 +380,12 @@ run blindado "$r" origin/main; [ "$(last_line "$out")" = "FIN: 0" ] || fail "la 
 run trinquete "$r" origin/main; [ $rc -eq 0 ] || fail "encoger la deuda de web pasa: $out"
 limpia; git -C "$r" rm -q web/eslint-suppressions.json
 run trinquete "$r" origin/main; [ $rc -eq 0 ] || fail "borrar la deuda de web pasa: $out"
+limpia
+# a debt directory whose name has sed metacharacters (# and &) keeps its name in the reason
+mkdir -p "$r/w#&"; echo '{"src/x.ts": 1}' > "$r/w#&/eslint-suppressions.json.x"; mv "$r/w#&/eslint-suppressions.json.x" "$r/w#&/eslint-suppressions.json"
+printf '{"src/x.ts": {"r": {"count": 1}}}\n' > "$r/w#&/eslint-suppressions.json"
+run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "la deuda crece: w#&/src/x.ts r (w#&/eslint-suppressions.json)" <<<"$out" \
+  || fail "directorio con # y &: $out"
 limpia
 
 # --- abrir y cerrar

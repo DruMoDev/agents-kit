@@ -140,22 +140,28 @@ list_changed() {
 }
 
 # tree_files: newline-separated paths of the tree (versioned plus untracked not ignored), outside node_modules.
+# Return 2 if git fails (never an empty list that would let the gates pass).
 tree_files() {
-  { git -c core.quotepath=false ls-files --cached --others --exclude-standard || return 2; } | grep -v -E '(^|/)node_modules/' || :
+  local out
+  # -z: unquoted names, also with tabs or other control characters (a newline in a name is not supported)
+  out="$(git ls-files -z --cached --others --exclude-standard | tr '\0' '\n'; exit "${PIPESTATUS[0]}")" || return 2
+  printf '%s\n' "$out" | grep -v -E '(^|/)node_modules/' || :
 }
 
 # ts_projects: the TS projects of the tree, one directory per line ("." for the root), sorted. The root is one when it
-# has tsconfig.json or typescript in its package.json dependencies; any other directory, when it has both package.json
-# and tsconfig.json (versioned or new). A tsconfig.*.json or a tsconfig.json without its own package.json is not one.
+# has tsconfig.json or typescript in its package.json dependencies (as before monorepos: a single app in the root
+# behaves the same); any other directory, when it has both package.json and tsconfig.json (versioned or new). A
+# tsconfig.*.json or a tsconfig.json without its own package.json is not one. Directory names are kept as they are
+# (repeated, leading or trailing spaces, tabs).
 ts_projects() {
   local pkg files
   pkg="$(json_tree package.json)" || return 2
   if [ -f tsconfig.json ] || jq -e '[.dependencies, .devDependencies, .peerDependencies] | map(objects | has("typescript")) | any' \
       <<<"$pkg" >/dev/null; then echo "."; fi
   files="$(tree_files)" || return 2
-  printf '%s\n' "$files" | sed -n -E 's#^(.+)/(package|tsconfig)\.json$#\1 \2#p' | LC_ALL=C sort -u \
-    | awk '{ d = $1; for (i = 2; i < NF; i++) d = d " " $i; n[d]++ } END { for (d in n) if (n[d] == 2) print d }' \
-    | while IFS= read -r d; do [ -f "$d/package.json" ] && [ -f "$d/tsconfig.json" ] && echo "$d"; done | LC_ALL=C sort
+  LC_ALL=C comm -12 <(printf '%s\n' "$files" | sed -n 's#^\(.*\)/package\.json$#\1#p' | LC_ALL=C sort -u) \
+    <(printf '%s\n' "$files" | sed -n 's#^\(.*\)/tsconfig\.json$#\1#p' | LC_ALL=C sort -u) \
+    | while IFS= read -r d; do [ -n "$d" ] && [ -f "$d/package.json" ] && [ -f "$d/tsconfig.json" ] && printf '%s\n' "$d"; done
 }
 
 # debt_dirs: the directories with debt files to check ("." always, plus each directory of an eslint-suppressions.json
@@ -254,9 +260,12 @@ case "$sub" in
         jq -e --arg f "${f#"$p"}" 'has($f)' <<<"$tsb" >/dev/null && motivos="$motivos"$'\n'"deuda en fichero tocado: $f (tipos)"
       done < "$lst"
       c1="$(grows_sup "$d")" || exit 2; c2="$(grows_tsb "$d")" || exit 2
-      crece="$(printf '%s\n' "$c1" | sed '/^$/d' | sed "s#\$# ($p$SUP)#"; printf '%s\n' "$c2" | sed '/^$/d' | sed "s#\$# ($p$TSB)#")"
-      crece="$(printf '%s\n' "$crece" | sed '/^$/d' | tr '\t' ' ')"
-      [ -z "$crece" ] || motivos="$motivos"$'\n'"$(sed 's/^/la deuda crece: /' <<<"$crece")"
+      while IFS=$'\t' read -r k rg; do
+        [ -z "$k" ] || motivos="$motivos"$'\n'"la deuda crece: $k $rg ($p$SUP)"
+      done <<<"$c1"
+      while IFS=$'\t' read -r k rg; do
+        [ -z "$k" ] || motivos="$motivos"$'\n'"la deuda crece: $k $rg ($p$TSB)"
+      done <<<"$c2"
     done <<<"$dirs"
     if [ -n "$motivos" ]; then printf '%s\n' "${motivos#$'\n'}" >&2; exit 1; fi
     echo "FIN: ok"
