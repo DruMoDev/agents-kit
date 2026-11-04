@@ -363,6 +363,20 @@ kr_resolve() {
   KR_REL="${p:$((${#KR_ROOT} + 1))}"
 }
 
+# kr_proyecto <rel>: KR_PROY, the TS project of the file <rel> (relative to KR_ROOT): the nearest directory going up,
+# below the root, with package.json and tsconfig.json (the projects of scripts/kit-reglas.sh estado); empty for a file
+# of the root or of no project, and for anything under node_modules. Its lint runs inside it (kr_lint with KR_DIR):
+# its suppressions, tsc baseline and binaries are relative to it, and parsers like Astro's load typescript from the cwd.
+kr_proyecto() {
+  local d="$1"
+  KR_PROY=""
+  case "/$d" in */node_modules/*) return 0 ;; esac
+  while :; do
+    case "$d" in */*) d="${d%/*}" ;; *) return 0 ;; esac
+    if [ -f "$KR_ROOT/$d/package.json" ] && [ -f "$KR_ROOT/$d/tsconfig.json" ]; then KR_PROY="$d"; return 0; fi
+  done
+}
+
 # kr_codigo <ext>: return 0 when <ext> is a code extension (KR_CMD found a .lint.fichero entry, or KR_CODIGO).
 kr_codigo() {
   [ -n "$KR_CMD" ] || case "$KR_CODIGO" in *",$1,"*) [ -n "$1" ] ;; *) false ;; esac
@@ -437,13 +451,14 @@ kr_tope() {
   case "$1" in ''|*[!0-9]*|0*) echo "$2" ;; *) echo "$1" ;; esac
 }
 
-# kr_lint <tope> <qué> <comando> [args...]: run `<comando> <args>` from KR_ROOT under the lock (taken with <tope> on
+# kr_lint <tope> <qué> <comando> [args...]: run `<comando> <args>` from KR_DIR (a TS project of KR_ROOT, or KR_ROOT
+# when empty) under the lock of KR_ROOT's clone (taken with <tope> on
 # the first call; later calls reuse it) and return: 2 with the output on stderr when it fails; 0 when it passes, the
 # lock is busy, the tool is missing (126/127) or it times out.
 kr_lint() {
   local t="$1" what="$2" cmd="$3" rc; shift 3
   [ -n "${KR_LOCK_OK:-}" ] || { kr_lock "$t" || return 0; KR_LOCK_OK=1; }
-  kit_run_timeout "$KR_ROOT" "$t" /bin/sh -c "$cmd \"\$@\"" kit-lint "$@"; rc=$?
+  kit_run_timeout "${KR_DIR:-$KR_ROOT}" "$t" /bin/sh -c "$cmd \"\$@\"" kit-lint "$@"; rc=$?
   case $rc in
     0) return 0 ;;
     126|127) echo "agents-kit: el lint no se pudo ejecutar ($cmd, exit $rc); no bloquea" >&2; return 0 ;;

@@ -25,6 +25,9 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
+### Mejora: en un monorepo, el lint de cada edición y de cada turno corre dentro de su app · [#38](https://github.com/DruMoDev/agents-kit/pull/38)
+Mientras trabajan, los agentes ven el lint de cada app de un monorepo con su propia configuración y su deuda congelada, también la comprobación de tipos al terminar cada turno, y no solo la de la raíz. El kit busca la app de cada fichero cambiado y lanza los mismos comandos dentro de ella; los ficheros que no son de ninguna app siguen en la raíz. Un repo de una sola app funciona como antes.
+
 ### Interno: la web de changelogs sin código muerto, vigilada por knip · [#37](https://github.com/DruMoDev/agents-kit/pull/37)
 Quitados de la web un export y dos tipos que nadie usaba, y `knip` entra en la verificación completa: el código sin uso ya no puede volver a colarse. Los tres ficheros tocados quedan sin deuda de lint ni de tipos, sin cambiar lo que hace la web.
 

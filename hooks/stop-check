@@ -2,7 +2,9 @@
 # Stop hook. For the repo of the cwd and for every repo noted for this session by pre-edit/post-edit (kr_apunta: edits
 # in a repo that does not contain the cwd, such as a kit-run worktree), when it has .agents-kit.json and .lint.turno:
 # passes its changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as arguments to
-# .lint.turno (with ./ in front, so a name starting with - is not an option), run from that repo's root. In a repo
+# .lint.turno (with ./ in front, so a name starting with - is not an option), once per TS project (kr_proyecto in
+# hooks/lib-reglas.sh), from its directory and with paths relative to it, and once from the repo's root for the files
+# of no project (KIT_TURNO_TIMEOUT is the budget of all those runs together). In a repo
 # where the session noted the files it edited (kr_anota, lines in hooks/lib-reglas.sh), it passes those that are
 # still changed plus any other changed file that was not there when the session started (an edit by shell): not in
 # the baseline that hooks/session-start writes for the cwd's root, or with another hash since; in a root without a
@@ -60,7 +62,7 @@ if [ "$n" -ge "$max" ]; then
   exit 0
 fi
 t="$(kr_tope "${KIT_TURNO_TIMEOUT:-}" 120)"
-final=0; j=0
+final=0; j=0; empiezo=$SECONDS
 while [ $j -lt ${#roots[@]} ]; do
   KR_ROOT="${roots[$j]}"; KR_COMMON="${commons[$j]}"; j=$((j + 1))
   kr_config && [ -n "$KR_TURNO" ] || continue
@@ -91,10 +93,36 @@ while [ $j -lt ${#roots[@]} ]; do
   done
   shopt -u nocasematch
   [ ${#files[@]} -gt 0 ] || continue
-  what="los ficheros cambiados"
-  case "$KR_CWD/" in "$KR_ROOT"/*) ;; *) what="los ficheros cambiados de $KR_ROOT" ;; esac
+  # One run per TS project (kr_proyecto), from its directory and with paths relative to it; the files of no project
+  # from the root. KIT_TURNO_TIMEOUT is the budget of the whole check: each run gets what is left.
+  projs=(); for f in "${files[@]}"; do kr_proyecto "${f#./}"; projs+=("$KR_PROY"); done
   [ -z "${KR_LOCK_OK:-}" ] || { _kr_soltar; KR_LOCK_OK=""; }
-  kr_lint "$t" "$what" "$KR_TURNO" "${files[@]}" || final=2
+  vistos=$'\n'; k=0
+  while [ $k -lt ${#files[@]} ]; do
+    pr="${projs[$k]}"; k=$((k + 1))
+    case "$vistos" in *$'\n'"$pr"$'\n'*) continue ;; esac
+    vistos="$vistos$pr"$'\n'; args=(); m=0
+    while [ $m -lt ${#files[@]} ]; do
+      if [ "${projs[$m]}" = "$pr" ]; then
+        if [ -n "$pr" ]; then args+=("./${files[$m]#"./$pr/"}"); else args+=("${files[$m]}"); fi
+      fi
+      m=$((m + 1))
+    done
+    d="$KR_ROOT${pr:+/$pr}"
+    what="los ficheros cambiados"
+    case "$KR_CWD/" in
+      "$d"/*) ;;
+      "$KR_ROOT"/*) what="los ficheros cambiados de $pr" ;;
+      *) what="los ficheros cambiados de $d" ;;
+    esac
+    resto=$((t - (SECONDS - empiezo)))
+    if [ $resto -le 0 ]; then
+      echo "agents-kit: el lint del turno pasó de $t s; no se comprueban $what; no bloquea" >&2
+      continue
+    fi
+    KR_DIR="$d"
+    kr_lint "$resto" "$what" "$KR_TURNO" "${args[@]}" || final=2
+  done
 done
 if [ -z "$cuenta" ]; then :
 elif [ $final -eq 2 ]; then

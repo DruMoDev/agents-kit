@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # PostToolUse hook (Edit|Write|MultiEdit|NotebookEdit, and Codex's apply_patch: the files of the patch that exist,
-# one run per command with all of its files). Runs `<comando> <ruta>` from the repo root, where <comando>
-# is the .lint.fichero entry whose comma-separated keys include the file's extension (without case) and <ruta> is
-# relative to the root (with ./ in front, so a name starting with - is not an option). Exit 2 with the lint output on
+# one run per TS project and command with all of its files). Runs `<comando> <ruta>` from the directory of the file's TS project
+# (kr_proyecto: the nearest one with package.json and tsconfig.json, below the repo root) or else from the repo root,
+# where <comando> is the .lint.fichero entry whose comma-separated keys include the file's extension (without case)
+# and <ruta> is relative to that directory (with ./ in front, so a name starting with - is not an option). Exit 2 with the lint output on
 # stderr when it fails; 0 when it passes, when another lint holds the lock, when the tool is missing (126/127) or after
 # KIT_LINT_TIMEOUT (10 s, per command). Inert as described in hooks/lib-reglas.sh, and for
 # paths outside the repo, files that do not exist or extensions without a command.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input && [ ${#KR_ITEMS[@]} -gt 0 ] || exit 0
-roots=(); commons=(); cmds=(); rels=(); i=0
+roots=(); commons=(); cmds=(); rels=(); projs=(); i=0
 while [ $i -lt ${#KR_ITEMS[@]} ]; do
   ruta="${KR_ITEMS[$i]}"; [ "${KR_ITEMS[$((i + 1))]}" != '"ilegible"' ] || { i=$((i + 2)); continue; }; i=$((i + 2))
   kr_item "$ruta" && [ -f "$KR_ROOT/$KR_REL" ] && kr_confianza || continue
@@ -17,10 +18,12 @@ while [ $i -lt ${#KR_ITEMS[@]} ]; do
   kr_anota
   [ -n "$KR_EXT" ] && [ -n "$KR_CMD" ] || continue
   kr_apunta
-  roots+=("$KR_ROOT"); commons+=("$KR_COMMON"); cmds+=("$KR_CMD"); rels+=("$KR_REL")
+  kr_proyecto "$KR_REL"
+  roots+=("$KR_ROOT"); commons+=("$KR_COMMON"); cmds+=("$KR_CMD"); rels+=("$KR_REL"); projs+=("$KR_PROY")
 done
 [ ${#cmds[@]} -gt 0 ] || exit 0
-# One run per repo and command, with its files in the order of the input; each repo's lock covers all its runs.
+# One run per repo, TS project and command, with its files in the order of the input, from the project's directory
+# (the root for files of no project) and with paths relative to it; each repo's lock covers all its runs.
 t="$(kr_tope "${KIT_LINT_TIMEOUT:-}" 10)"
 final=0; hechos=$'\n'; j=0
 while [ $j -lt ${#cmds[@]} ]; do
@@ -30,7 +33,8 @@ while [ $j -lt ${#cmds[@]} ]; do
   vistos=$'\n'; n=0; k=0
   while [ $k -lt ${#cmds[@]} ]; do
     if [ "${roots[$k]}" = "$KR_ROOT" ]; then
-      case "$vistos" in *$'\n'"${cmds[$k]}"$'\n'*) ;; *) vistos="$vistos${cmds[$k]}"$'\n'; n=$((n + 1)) ;; esac
+      g="${projs[$k]}"$'\x1f'"${cmds[$k]}"
+      case "$vistos" in *$'\n'"$g"$'\n'*) ;; *) vistos="$vistos$g"$'\n'; n=$((n + 1)) ;; esac
     fi
     k=$((k + 1))
   done
@@ -38,16 +42,19 @@ while [ $j -lt ${#cmds[@]} ]; do
   kr_lock $((t * n)) || continue
   KR_LOCK_OK=1; vistos=$'\n'; k=0
   while [ $k -lt ${#cmds[@]} ]; do
-    c="${cmds[$k]}"; k=$((k + 1))
+    c="${cmds[$k]}"; pr="${projs[$k]}"; k=$((k + 1))
     [ "${roots[$((k - 1))]}" = "$KR_ROOT" ] || continue
-    case "$vistos" in *$'\n'"$c"$'\n'*) continue ;; esac
-    vistos="$vistos$c"$'\n'; args=(); what=""; m=0
+    g="$pr"$'\x1f'"$c"
+    case "$vistos" in *$'\n'"$g"$'\n'*) continue ;; esac
+    vistos="$vistos$g"$'\n'; args=(); what=""; m=0
     while [ $m -lt ${#cmds[@]} ]; do
-      if [ "${cmds[$m]}" = "$c" ] && [ "${roots[$m]}" = "$KR_ROOT" ]; then
-        args+=("./${rels[$m]}"); what="${what:+$what, }${rels[$m]}"
+      if [ "${cmds[$m]}" = "$c" ] && [ "${projs[$m]}" = "$pr" ] && [ "${roots[$m]}" = "$KR_ROOT" ]; then
+        if [ -n "$pr" ]; then args+=("./${rels[$m]#"$pr/"}"); else args+=("./${rels[$m]}"); fi
+        what="${what:+$what, }${rels[$m]}"
       fi
       m=$((m + 1))
     done
+    KR_DIR="$KR_ROOT${pr:+/$pr}"
     kr_lint "$t" "$what" "$c" "${args[@]}" || final=2
   done
 done

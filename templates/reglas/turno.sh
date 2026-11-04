@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # Usage: bash .agents-kit/turno.sh <fichero>...
-# End-of-turn check of agents-kit (the "lint.turno" of .agents-kit.json; the Stop hook runs it from the repo root with
-# the changed files that exist, each with ./ in front). Copied from templates/reglas/turno.sh by the kit-reglas skill.
+# End-of-turn check of agents-kit (the "lint.turno" of .agents-kit.json; the Stop hook runs it from the repo root, or
+# from the directory of a TS project of a monorepo, with its changed files that exist, each with ./ in front). Copied from templates/reglas/turno.sh by the kit-reglas skill.
 #   - Types: node .agents-kit/tsc-base.mjs comprobar --cambiados <the files with a TSC_EXT extension>: no new tsc errors
 #     against .agents-kit/tsc-base.json, and the changed files left at zero. A changed *tsconfig*.json (name without
 #     case) also runs it, with --cambiados only if there are such files. Without .agents-kit/tsc-base.mjs, exit 1.
 #   - Lint: typed ESLint, with cache, over the files with a LINT_EXT extension (compared without case).
 # Nothing runs when no file has either extension and no tsconfig changed. Local binaries only (never a download): without them, exit 127,
 # which the hook does not block on (the guarantee is kit-pr.sh fusionar and the CI).
-# Env: KIT_TSC (tsc command, default node_modules/.bin/tsc), KIT_ESLINT (default node_modules/.bin/eslint).
+# Env: KIT_TSC (tsc command, default $TSC), KIT_ESLINT (default node_modules/.bin/eslint).
 # Exit: 0 ok (FIN: ok, or FIN: nada que comprobar), 1 errors (printed) or no .agents-kit/tsc-base.mjs, 127 missing tools.
 set -u
 
-# Extensions of this repo (kit-reglas adjusts them; space separated, lower case).
+# Of this repo or TS project (kit-reglas adjusts them). Extensions space separated, lower case.
 TSC_EXT="ts tsx mts cts"
 LINT_EXT="ts tsx mts cts js jsx mjs cjs"
+# tsc when KIT_TSC is not set (TypeScript 7 next to the API of TS 6: node_modules/typescript7/bin/tsc).
+TSC="node_modules/.bin/tsc"
+# Run before the types, output hidden unless it fails (Astro: node_modules/.bin/astro sync, for .astro/types.d.ts).
+ANTES_TSC=""
 CACHE="node_modules/.cache/agents-kit/eslint-tipos"
 
 tipos=(); lint=(); tsconfig=false
@@ -38,8 +42,8 @@ fi
 falta=()
 command -v node >/dev/null 2>&1 || falta+=("node")
 if [ -z "${KIT_TSC:-}" ]; then
-  [ -x node_modules/.bin/tsc ] || falta+=("node_modules/.bin/tsc")
-  export KIT_TSC=node_modules/.bin/tsc
+  [ -x "$TSC" ] || falta+=("$TSC")
+  export KIT_TSC="$TSC"
 fi
 eslint="${KIT_ESLINT:-node_modules/.bin/eslint}"
 [ ${#lint[@]} -eq 0 ] || [ -n "${KIT_ESLINT:-}" ] || [ -x "$eslint" ] || falta+=("$eslint")
@@ -49,6 +53,11 @@ if [ ${#falta[@]} -gt 0 ]; then
 fi
 
 rc=0
+if [ -n "$ANTES_TSC" ] && ! salida="$($ANTES_TSC 2>&1)"; then
+  printf '%s\n' "$salida"
+  echo "agents-kit: falló '$ANTES_TSC', lo de antes de los tipos" >&2
+  exit 1
+fi
 if [ ${#tipos[@]} -gt 0 ]; then
   node .agents-kit/tsc-base.mjs comprobar --cambiados "${tipos[@]}" || rc=1
 else

@@ -613,6 +613,55 @@ if [ "$(uname)" = Darwin ]; then
 fi
 git -C "$r" checkout -q -- src/b.ts
 
+# --- monorepos: el lint de cada fichero corre en su proyecto TS (package.json y tsconfig.json), con rutas relativas a él
+rm2="$(mk_repo)"
+cat > "$bin/cwdlint" <<'EOF'
+#!/usr/bin/env bash
+printf 'cwd=%s args=%s\n' "$(pwd -P)" "$*" >> "$LOG"
+case "$(pwd -P)" in *"${FAKE_FALLA_EN:-/nunca}") echo "falla en $(pwd -P)"; exit 1 ;; esac
+exit 0
+EOF
+chmod +x "$bin/cwdlint"
+printf '{"lint": {"fichero": {"ts": "%s"}, "turno": "%s --turno"}}\n' "$bin/cwdlint" "$bin/cwdlint" > "$rm2/.agents-kit.json"
+for d in web apps/a apps/a/sub "-app"; do mkdir -p "$rm2/$d/src"; echo '{}' > "$rm2/$d/package.json"; echo '{}' > "$rm2/$d/tsconfig.json"; done
+mkdir -p "$rm2/lib" "$rm2/web/node_modules/p"; echo '{}' > "$rm2/lib/tsconfig.json"
+for f in x.ts web/src/a.ts web/src/b.ts apps/a/src/c.ts apps/a/sub/src/d.ts lib/e.ts -app/src/f.ts web/node_modules/p/g.ts; do echo 'x' > "$rm2/$f"; done
+(cd "$rm2" && git add -A && git commit -q -m base) >/dev/null 2>&1 || fail "monorepo: commit"
+R2="$(cd "$rm2" && pwd -P)"
+pj() { inp --arg c "$rm2" --arg f "$1" '{session_id: "mono", cwd: $c, tool_name: "Write", tool_input: {file_path: $f, content: "x"}}'; }
+: > "$LOG"; hook post-edit "$(pj web/src/a.ts)"; [ $rc -eq 0 ] || fail "monorepo post-edit web: $rc $out"
+grep -qxF "cwd=$R2/web args=./src/a.ts" "$LOG" || fail "post-edit en web: $(cat "$LOG")"
+: > "$LOG"; hook post-edit "$(pj x.ts)"; grep -qxF "cwd=$R2 args=./x.ts" "$LOG" || fail "post-edit en la raíz: $(cat "$LOG")"
+: > "$LOG"; hook post-edit "$(pj apps/a/sub/src/d.ts)"; grep -qxF "cwd=$R2/apps/a/sub args=./src/d.ts" "$LOG" || fail "el más cercano: $(cat "$LOG")"
+: > "$LOG"; hook post-edit "$(pj apps/a/src/c.ts)"; grep -qxF "cwd=$R2/apps/a args=./src/c.ts" "$LOG" || fail "apps/a: $(cat "$LOG")"
+: > "$LOG"; hook post-edit "$(pj lib/e.ts)"; grep -qxF "cwd=$R2 args=./lib/e.ts" "$LOG" || fail "tsconfig sin package.json no es proyecto: $(cat "$LOG")"
+: > "$LOG"; hook post-edit "$(pj web/node_modules/p/g.ts)"; grep -qxF "cwd=$R2 args=./web/node_modules/p/g.ts" "$LOG" || fail "node_modules: $(cat "$LOG")"
+: > "$LOG"; hook post-edit "$(pj -app/src/f.ts)"; grep -qxF "cwd=$R2/-app args=./src/f.ts" "$LOG" || fail "proyecto -app: $(cat "$LOG")"
+FAKE_FALLA_EN=/web hook post-edit "$(pj web/src/b.ts)"; [ $rc -eq 2 ] && grep -qF 'web/src/b.ts' <<<"$out" || fail "fallo en web bloquea y nombra la ruta: $rc $out"
+# Codex: one patch with files of two projects and the root -> one run per project, each with its files
+patch=$'*** Begin Patch\n*** Update File: web/src/a.ts\n@@\n-x\n+x\n*** Update File: web/src/b.ts\n@@\n-x\n+x\n*** Update File: x.ts\n@@\n-x\n+x\n*** End Patch'
+: > "$LOG"; hook post-edit "$(inp --arg c "$rm2" --arg p "$patch" '{session_id: "mono", cwd: $c, tool_name: "apply_patch", tool_input: {command: $p}}')"
+grep -qxF "cwd=$R2/web args=./src/a.ts ./src/b.ts" "$LOG" && grep -qxF "cwd=$R2 args=./x.ts" "$LOG" && [ "$(wc -l < "$LOG")" -eq 2 ] \
+  || fail "parche con dos proyectos: $(cat "$LOG")"
+# stop-check: changed files grouped by project
+for f in x.ts web/src/a.ts apps/a/src/c.ts; do echo 'y' > "$rm2/$f"; done
+sj() { inp --arg c "$rm2" '{session_id: "mono2", cwd: $c, hook_event_name: "Stop", stop_hook_active: false}'; }
+: > "$LOG"; hook stop-check "$(sj)"; [ $rc -eq 0 ] || fail "stop-check monorepo: $rc $out"
+for x in "cwd=$R2 args=--turno ./x.ts" "cwd=$R2/web args=--turno ./src/a.ts" "cwd=$R2/apps/a args=--turno ./src/c.ts"; do
+  grep -qxF "$x" "$LOG" || fail "stop-check sin '$x': $(cat "$LOG")"
+done
+[ "$(wc -l < "$LOG")" -eq 3 ] || fail "stop-check: una vez por proyecto: $(cat "$LOG")"
+FAKE_FALLA_EN=/apps/a hook stop-check "$(sj)"; [ $rc -eq 2 ] && grep -qF "falla en $R2/apps/a" <<<"$out" || fail "stop-check: falla un proyecto: $rc $out"
+# KIT_TURNO_TIMEOUT is the budget of all runs: once spent, the rest are skipped without blocking
+cat > "$bin/lentolint" <<'EOF'
+#!/usr/bin/env bash
+printf 'cwd=%s\n' "$(pwd -P)" >> "$LOG"; sleep 2
+EOF
+chmod +x "$bin/lentolint"
+printf '{"lint": {"fichero": {"ts": "true"}, "turno": "%s"}}\n' "$bin/lentolint" > "$rm2/.agents-kit.json"
+: > "$LOG"; KIT_TURNO_TIMEOUT=3 hook stop-check "$(sj)"; [ $rc -eq 0 ] || fail "tope del turno: $rc $out"
+[ "$(wc -l < "$LOG")" -lt 3 ] && grep -qF 'el lint del turno pasó de 3 s' <<<"$out" || fail "tope del turno total: $(cat "$LOG") $out"
+
 # --- pre-bash: saltarse los hooks de git
 bjson() { inp --arg c "${2:-$r}" --arg k "$1" '{session_id: "s1", cwd: $c, hook_event_name: "PreToolUse", tool_name: "Bash",
   tool_input: {command: $k}}'; }
