@@ -25,6 +25,9 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
+### Interno: la web de changelogs sin código muerto, vigilada por knip · [#37](https://github.com/DruMoDev/agents-kit/pull/37)
+Quitados de la web un export y dos tipos que nadie usaba, y `knip` entra en la verificación completa: el código sin uso ya no puede volver a colarse. Los tres ficheros tocados quedan sin deuda de lint ni de tipos, sin cambiar lo que hace la web.
+
 ### Mejora: la base de reglas cubre cada app de un monorepo · [#35](https://github.com/DruMoDev/agents-kit/pull/35)
 Con el kit en la raíz de un monorepo, la base de lint y tipos ya no se da por instalada solo porque la raíz no tiene TypeScript: el kit encuentra cada app TS (`web/`, `packages/<x>`...), comprueba su base en su carpeta y, si a alguna le falta, `kit-run` dice cuál. La deuda congelada de cada app solo puede bajar, igual que la de la raíz. Un repo de una sola app funciona como antes.
 

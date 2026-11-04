@@ -4,7 +4,7 @@
 export const ENTRY_TYPES = ["Nuevo", "Mejora", "Arreglo", "Interno"] as const;
 export type EntryType = (typeof ENTRY_TYPES)[number];
 
-export interface Entry {
+interface Entry {
   type: EntryType;
   title: string;
   pr: number;
@@ -27,27 +27,26 @@ const SEPARATOR = " · [#";
 function validDate(y: number, m: number, d: number): boolean {
   if (m < 1 || m > 12 || d < 1) return false;
   const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1] ?? 0;
   return d <= days;
 }
 
 function parseEntryLine(line: string, date: string): Entry | null {
-  const m = ENTRY_LINE.exec(line);
-  if (!m) return null;
-  const rest = m[2];
+  const [, type, rest] = ENTRY_LINE.exec(line) ?? [];
+  if (type === undefined || rest === undefined) return null;
   // el último " · [#" separa el título del enlace (el título puede contener " · ")
   const pos = rest.lastIndexOf(SEPARATOR);
   if (pos < 0) return null;
   const title = rest.slice(0, pos).trim();
   if (!title) return null;
-  const tail = LINK_TAIL.exec(rest.slice(pos + SEPARATOR.length));
-  if (!tail) return null;
-  const pr = Number(tail[1]);
-  if (pr !== Number(tail[3])) return null;
-  return { type: m[1] as EntryType, title, pr, url: tail[2], date, body: "" };
+  const [, prText, url, prInUrl] = LINK_TAIL.exec(rest.slice(pos + SEPARATOR.length)) ?? [];
+  if (prText === undefined || url === undefined || prInUrl === undefined) return null;
+  const pr = Number(prText);
+  if (pr !== Number(prInUrl)) return null;
+  return { type: type as EntryType, title, pr, url, date, body: "" };
 }
 
-export function parseChangelog(text: string): Day[] {
+export function parseChangelog(text: string | null | undefined): Day[] {
   const byDate = new Map<string, Entry[]>();
   let date: string | null = null; // fecha válida en curso (null = las entradas se descartan)
   let current: { entry: Entry; lines: string[] } | null = null;
@@ -57,13 +56,13 @@ export function parseChangelog(text: string): Day[] {
   const close = () => {
     if (!current) return;
     const lines = current.lines;
-    while (lines.length && lines[0].trim() === "") lines.shift();
-    while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+    while (lines[0]?.trim() === "") lines.shift();
+    while (lines.at(-1)?.trim() === "") lines.pop();
     current.entry.body = lines.join("\n");
     current = null;
   };
 
-  for (const raw of String(text ?? "").split("\n")) {
+  for (const raw of (text ?? "").split("\n")) {
     const line = raw.replace(/\r$/, "");
 
     // bloques de código: nada de dentro cuenta como fecha, entrada o comentario
@@ -104,16 +103,20 @@ export function parseChangelog(text: string): Day[] {
 
     if (vis.startsWith("## ")) {
       close();
-      const m = DATE_LINE.exec(vis);
-      date = m && validDate(Number(m[1]), Number(m[2]), Number(m[3])) ? `${m[1]}-${m[2]}-${m[3]}` : null;
+      const [, y, mo, d] = DATE_LINE.exec(vis) ?? [];
+      date = y && mo && d && validDate(Number(y), Number(mo), Number(d)) ? `${y}-${mo}-${d}` : null;
       continue;
     }
     if (vis.startsWith("### ")) {
       close();
       const entry = date ? parseEntryLine(vis, date) : null;
       if (entry && date) {
-        if (!byDate.has(date)) byDate.set(date, []);
-        byDate.get(date)!.push(entry);
+        let list = byDate.get(date);
+        if (!list) {
+          list = [];
+          byDate.set(date, list);
+        }
+        list.push(entry);
         current = { entry, lines: [] };
       }
       continue;

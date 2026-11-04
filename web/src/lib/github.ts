@@ -23,7 +23,7 @@ export class GitHubError extends Error {
 }
 
 /** Lo mínimo de KVNamespace que usa la caché de la lista. */
-export interface CacheKV {
+interface CacheKV {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
 }
@@ -82,7 +82,7 @@ interface GraphQLPage {
 }
 
 function toRepo(node: RepoNode): Repo {
-  let days: Day[] = [];
+  let days: Day[];
   try {
     days = parseChangelog(node.changelog?.text ?? "");
   } catch {
@@ -91,7 +91,9 @@ function toRepo(node: RepoNode): Repo {
   return { name: node.name, url: node.url, isPrivate: node.isPrivate, days, lastDate: days[0]?.date ?? null };
 }
 
-async function queryPage(token: string, after: string | null, doFetch: FetchLike): Promise<GraphQLPage> {
+type RepoPage = NonNullable<NonNullable<NonNullable<GraphQLPage["data"]>["viewer"]>["repositories"]>;
+
+async function queryPage(token: string, after: string | null, doFetch: FetchLike): Promise<RepoPage> {
   let res: Response;
   try {
     res = await doFetch(GRAPHQL_URL, {
@@ -109,30 +111,30 @@ async function queryPage(token: string, after: string | null, doFetch: FetchLike
   if (res.status === 401 || res.status === 403) {
     throw new GitHubError("GitHub rechazó el token: no es válido, ha caducado o no tiene permisos de lectura.");
   }
-  if (!res.ok) throw new GitHubError(`GitHub respondió con un error (${res.status}). Inténtalo de nuevo en unos minutos.`);
+  if (!res.ok) throw new GitHubError(`GitHub respondió con un error (${String(res.status)}). Inténtalo de nuevo en unos minutos.`);
   let body: GraphQLPage;
   try {
     body = (await res.json()) as GraphQLPage;
   } catch {
     throw new GitHubError("GitHub devolvió una respuesta ilegible.");
   }
-  if (!body.data?.viewer?.repositories) {
+  const repositories = body.data?.viewer?.repositories;
+  if (!repositories) {
     throw new GitHubError("GitHub no devolvió los repositorios: revisa que el token tenga permiso de lectura de contenidos y metadatos.");
   }
   // errores parciales: los repos que fallan llegan como null y se omiten; el resto se muestra
   if (body.errors?.length) {
     const detail = body.errors.map((e) => `${(e.path ?? []).join(".") || "?"}: ${e.message ?? e.type ?? "error"}`).join("; ");
-    console.warn(`GitHub devolvió ${body.errors.length} error(es) parciales; se omiten esos repos. ${detail}`);
+    console.warn(`GitHub devolvió ${String(body.errors.length)} error(es) parciales; se omiten esos repos. ${detail}`);
   }
-  return body;
+  return repositories;
 }
 
 async function queryRepos(token: string, doFetch: FetchLike): Promise<Repo[]> {
   const repos: Repo[] = [];
   let after: string | null = null;
   for (let i = 0; i < MAX_PAGES; i++) {
-    const page = await queryPage(token, after, doFetch);
-    const { pageInfo, nodes } = page.data!.viewer!.repositories!;
+    const { pageInfo, nodes } = await queryPage(token, after, doFetch);
     for (const node of nodes) if (node?.marker) repos.push(toRepo(node));
     if (!pageInfo.hasNextPage || !pageInfo.endCursor) break;
     after = pageInfo.endCursor;
@@ -141,7 +143,10 @@ async function queryRepos(token: string, doFetch: FetchLike): Promise<Repo[]> {
 }
 
 function isRepoList(v: unknown): v is Repo[] {
-  return Array.isArray(v) && v.every((r) => r && typeof r.name === "string" && Array.isArray(r.days));
+  return (
+    Array.isArray(v) &&
+    v.every((r: unknown) => typeof r === "object" && r !== null && "name" in r && typeof r.name === "string" && "days" in r && Array.isArray(r.days))
+  );
 }
 
 export async function fetchRepos(env: WebEnv, opts: FetchReposOptions = {}): Promise<Repo[]> {
