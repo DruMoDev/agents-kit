@@ -1,8 +1,6 @@
 {
   "src/lib/access.ts": 3,
-  "src/lib/changelog.ts": 7,
   "src/lib/images.ts": 3,
-  "src/lib/markdown.ts": 8,
   "test/changelog.test.ts": 15,
   "test/github.test.ts": 13,
   "test/seen-queue.test.ts": 5

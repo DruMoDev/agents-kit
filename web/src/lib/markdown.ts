@@ -3,7 +3,7 @@
 // párrafos, listas con guion, bloques de código (``` o ~~~), `código`, **negrita**,
 // enlaces http(s) e imágenes (relativas por imgUrl, o https directas).
 
-export function escapeHtml(s: string): string {
+function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -24,7 +24,7 @@ function renderInline(text: string, imgUrl: (path: string) => string, allowLinks
   let last = 0;
   for (const m of text.matchAll(INLINE)) {
     const [whole, code, alt, src, label, href, bold] = m;
-    const start = m.index ?? 0;
+    const start = m.index;
     out += escapeHtml(text.slice(last, start));
     last = start + whole.length;
     if (code !== undefined) {
@@ -38,8 +38,8 @@ function renderInline(text: string, imgUrl: (path: string) => string, allowLinks
         : escapeHtml(whole);
     } else if (label !== undefined) {
       out +=
-        allowLinks && HTTP_URL.test(href ?? "")
-          ? `<a href="${escapeHtml(href!)}" rel="noopener noreferrer" target="_blank">${renderInline(label, imgUrl, false)}</a>`
+        allowLinks && href !== undefined && HTTP_URL.test(href)
+          ? `<a href="${escapeHtml(href)}" rel="noopener noreferrer" target="_blank">${renderInline(label, imgUrl, false)}</a>`
           : escapeHtml(whole);
     } else if (bold !== undefined) {
       out += `<strong>${renderInline(bold, imgUrl, allowLinks)}</strong>`;
@@ -48,8 +48,8 @@ function renderInline(text: string, imgUrl: (path: string) => string, allowLinks
   return out + escapeHtml(text.slice(last));
 }
 
-export function renderMarkdown(body: string, imgUrl: (path: string) => string): string {
-  const lines = String(body ?? "").replace(/\r\n?/g, "\n").split("\n");
+export function renderMarkdown(body: string | null | undefined, imgUrl: (path: string) => string): string {
+  const lines = (body ?? "").replace(/\r\n?/g, "\n").split("\n");
   const blocks: string[] = [];
   let para: string[] = [];
   let list: string[] = [];
@@ -62,14 +62,17 @@ export function renderMarkdown(body: string, imgUrl: (path: string) => string): 
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const fence = /^(```|~~~)\s*([\w+-]*)/.exec(line);
-    if (fence) {
+    const line = lines[i] ?? "";
+    const [, marker, langName] = /^(```|~~~)\s*([\w+-]*)/.exec(line) ?? [];
+    if (marker !== undefined) {
       flush();
       const code: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith(fence[1])) code.push(lines[i++]);
-      const lang = fence[2] ? ` class="language-${escapeHtml(fence[2])}"` : "";
+      for (i++; i < lines.length; i++) {
+        const next = lines[i] ?? "";
+        if (next.startsWith(marker)) break;
+        code.push(next);
+      }
+      const lang = langName ? ` class="language-${escapeHtml(langName)}"` : "";
       blocks.push(`<pre><code${lang}>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
     }
@@ -77,10 +80,10 @@ export function renderMarkdown(body: string, imgUrl: (path: string) => string): 
       flush();
       continue;
     }
-    const item = /^\s*[-*] (.*)$/.exec(line);
-    if (item) {
+    const [, item] = /^\s*[-*] (.*)$/.exec(line) ?? [];
+    if (item !== undefined) {
       if (para.length) flush();
-      list.push(item[1]);
+      list.push(item);
       continue;
     }
     if (list.length) flush();
