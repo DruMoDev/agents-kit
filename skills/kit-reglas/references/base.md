@@ -209,6 +209,16 @@ Ficheros, exports y dependencias sin uso. Un `knip.json` mínimo:
 - Los entry points tienen que estar todos (scripts sueltos, tests, páginas de Astro o Next): un entry point que falta da falsos huérfanos. Muchos frameworks los detecta solo con sus plugins; comprueba la salida antes de dar un hallazgo por bueno.
 - Una dependencia que `knip` no ve (se carga por nombre, la usa una herramienta externa) va en `ignoreDependencies` con su porqué, nunca en una supresión en el código.
 
+### Sacar los entry points
+
+Si `knip` da casi todo como `Unused files`, casi nunca es código muerto: le faltan entry points, y todo lo que cuelga de ellos sale como huérfano. Medido con `knip` 6.44.1 en un proyecto JS real de 113 ficheros con dos Workers: sin `knip.json`, 112 `Unused files`. Antes de dar por bueno un hallazgo, saca los entry points, uno por cada forma en que se arranca el código:
+
+- **El `main` de cada Worker.** El plugin de Wrangler de `knip` lee `wrangler.json`, `wrangler.jsonc` o `wrangler.toml` y añade su `main` como entry, pero solo en la raíz de un workspace que tenga `wrangler` en su `package.json`: un `wrangler.toml` en un subdirectorio del proyecto (`<worker>/wrangler.toml`) lo lee y busca su `main` desde la raíz del workspace, no desde el directorio del `wrangler.toml`, así que no sirve (medido: el `main` seguía sin uso). Dos salidas: pon cada `main` en `entry` con la ruta desde el proyecto (`"<worker>/src/index.mjs"`, o `"*/src/index.mjs"` si todos siguen esa forma), o haz de cada Worker un workspace con su `package.json` y `wrangler` en sus dependencias (`workspaces` en `knip.json`). En la medición, con los `main` en `entry` quedaron 66; con un Worker como workspace, 83. Lo mismo con el punto de entrada de otras plataformas: el `main` o `bin` de un `package.json`, las funciones de un `netlify.toml` o `vercel.json`, el `entrypoint` de un `Dockerfile`; mira en la [lista de plugins de `knip`](https://knip.dev/reference/plugins) si alguno lo lee solo y, si no, añádelo a mano.
+- **Los scripts sueltos** que se lanzan con `node` (`scripts/*.mjs`, `<worker>/scripts/*.mjs`) y **los tests** (`**/*.test.mjs`) si su runner no tiene plugin (el de `node --test`, por ejemplo). En la medición, con estos y los `main`, quedaron 5.
+- **Los ficheros que se invocan por ruta** desde otro lenguaje (un `subprocess` de Python que lanza `node <fichero>.mjs`), desde la configuración (un `cron`, un `package.json` de otra app, un workflow de CI) o desde la documentación de uso. `knip` no los ve nunca. Búscalos por su nombre: por cada fichero que siga sin uso, `git grep -n '<nombre del fichero>'` en todo el repo (no solo en el proyecto); si alguien lo nombra para ejecutarlo, es un entry point. Busca el nombre suelto, no la ruta: el que lo lanza puede montarla por partes (`ROOT / "social-apps" / "tiktok" / "schedule.mjs"` en Python). En la medición, de los 5 que quedaban, tres los lanzaba Python y los otros dos solo los importaban esos tres: con los tres en `entry`, 0.
+
+Solo cuando cada `Unused files` que queda no lo nombra nadie es código muerto de verdad, y va al issue de limpieza (paso 8 de `SKILL.md`), nunca a `ignore`.
+
 ## Comandos para el marcador
 
 `kit-reglas.sh marcador <wt>` los imprime ya hechos, listos para `kit-activate.sh`; aquí, qué es cada uno. Con el binario local, nunca con algo que pueda descargar:
