@@ -25,6 +25,9 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
+### Mejora: en Codex, kit-run avisa al arrancar si el sandbox no le deja trabajar · [#PR](PR)
+Con el sandbox por defecto de Codex no hay red para GitHub ni permiso para escribir en el repositorio git, así que `kit-run` no podía reclamar, empujar ni fusionar y fallaba a mitad. Ahora para nada más empezar y dice cómo lanzar Codex (`--sandbox danger-full-access`). En OpenCode y en Claude Code no cambia nada: ninguno de los dos frena la fusión.
+
 ### Mejora: la base de reglas distingue los proyectos JavaScript de los TypeScript · [#42](https://github.com/DruMoDev/agents-kit/pull/42)
 Un proyecto JavaScript con `tsconfig.json` solo para que el lint infiera tipos ya no recibe la base de TypeScript, que lo dejaba inservible con miles de avisos de `any` imposibles de arreglar sin anotar tipos. `kit-reglas` lo reconoce, lo marca como JS y le propone su propia base: el lint estricto con tipos sin las reglas que solo hacen ruido en JS sin anotar, y sin las opciones estrictas del `tsconfig`, que ahí no comprueban nada. Con esa base, `kit-run` trabaja en el proyecto. Activar `checkJs` queda como migración aparte.
 

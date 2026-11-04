@@ -9,13 +9,15 @@ Activa el kit en el repo donde estás. Los scripts hacen lo mecánico; tú pregu
 
 Ejecuta los scripts como `"${CLAUDE_PLUGIN_ROOT}/scripts/<nombre>"`; si esa variable está vacía, la raíz del plugin está dos directorios por encima del directorio base de esta skill.
 
-Versión de esta skill: 3.11.0. Al empezar, `jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"` da la de los scripts en disco. Si no coincide, tu sesión cargó un SKILL.md viejo: relee `skills/kit-on/SKILL.md` de la raíz del plugin y sigue esa versión.
+Versión de esta skill: 3.11.1. Al empezar, `jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"` da la de los scripts en disco. Si no coincide, tu sesión cargó un SKILL.md viejo: relee `skills/kit-on/SKILL.md` de la raíz del plugin y sigue esa versión.
 
 Lee siempre la salida completa de cada script y su código de salida; nunca la recortes con `head` ni `tail`. Ante cada código distinto de 0, dile a Dru en español qué pasó y qué tiene que hacer, y para, salvo donde un paso diga otra cosa (`kit-changelog.sh validar` en el paso 5, `kit-skills-check.sh` en el paso 10).
 
 **El árbol de Dru no se toca.** Todo pasa en un worktree temporal de `origin/<rama por defecto>` que crea `kit-ship-pr.sh`; da igual que el clon principal tenga cambios, otra rama o commits sin publicar. Nunca hagas `git checkout`, `git stash`, `git pull` ni escribas ficheros en la raíz del repo: solo en `<wt>`.
 
 Las preguntas a Dru, una cada vez y solo lo que falte.
+
+En Codex, `kit-on` se lanza sin sandbox (`--sandbox danger-full-access`): con el sandbox de por defecto no hay red para `gh` ni `git push` y `.git` es de solo lectura. Si el entorno tiene `CODEX_SANDBOX_NETWORK_DISABLED=1`, díselo a Dru con eso y para antes de abrir nada.
 
 ## Pasos
 

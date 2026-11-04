@@ -43,6 +43,8 @@
 #   "reglas": false (with a project outside the root, "falta la base de reglas en <dir>, <dir>: ..." names each one, "la raíz" for the root);
 #   FIN: v3 otherwise.
 #   Its first line is "kit: <version>", the plugin version on disk: a session that loaded an older SKILL.md notices.
+#   Inside Codex's sandbox without network (CODEX_SANDBOX_NETWORK_DISABLED=1) it exits 1 before any gh call: kit-run
+#   in Codex runs without sandbox (AGENTS.md, "Fusión en Codex y OpenCode").
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
 # With "flujo": false in the marker, siguiente, reparto, aparcar, reclamar, comprobar, crear and tomar-eje exit 1
 # (kit_require_flow); leer and the subcommands that release an issue still work.
@@ -393,6 +395,12 @@ case "$sub" in
 
   comprobar)
     echo "kit: $(jq -r '.version // "desconocida"' "$here/../.claude-plugin/plugin.json" 2>/dev/null || echo desconocida)"
+    # Codex's sandbox without network (its default workspace-write, or read-only): every later gh and git push fails,
+    # and .git and ~/.agents-kit/worktrees are read-only. Stop here, before any gh call, with what to do.
+    if [ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ]; then
+      echo "Codex corre con el sandbox sin red (CODEX_SANDBOX_NETWORK_DISABLED=1): kit-run necesita red para gh y git push y escribir en .git y en ~/.agents-kit; relanza Codex sin sandbox (codex --sandbox danger-full-access, o codex exec --sandbox danger-full-access)" >&2
+      exit 1
+    fi
     v2="$(jq -r --argjson v "$V2_KEYS" 'if type == "object" then [keys_unsorted[] | select(. as $k | $v | index([$k]))] | join(", ") else error("") end' \
       "$root/.agents-kit.json" 2>/dev/null)" || { echo "error: .agents-kit.json no es JSON válido" >&2; exit 2; }
     have="$(gh label list --repo "$slug" --limit 1000 --json name)" || { echo "error: no se pudieron listar las etiquetas" >&2; exit 2; }
