@@ -2,7 +2,7 @@
   "changelog": true,
   "verificar": {
     "rapido": "claude plugin validate . && scripts/kit-skills-check.sh .",
-    "completo": "tests/run.sh && claude plugin validate . && (cd web && npm ci --no-audit --no-fund --loglevel=error && npm run lint && npm run typecheck)"
+    "completo": "tests/run.sh && claude plugin validate . && (cd web && npm ci --no-audit --no-fund --loglevel=error && npm run lint && npm run typecheck && node_modules/.bin/knip)"
   },
   "lint": {
     "fichero": {
