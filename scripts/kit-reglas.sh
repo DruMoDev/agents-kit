@@ -110,7 +110,7 @@ PKG_JQ='
 # json_tree <fichero>: print the file of the tree as a JSON object ({} if missing); return 2 if it is not one.
 json_tree() {
   if [ ! -e "$1" ]; then echo '{}'; return 0; fi
-  jq -ce 'if type == "object" then . else error end' "$1" 2>/dev/null || { echo "error: $1 no es un objeto JSON válido" >&2; return 2; }
+  jq -ce 'if type == "object" then . else error end' < "$1" 2>/dev/null || { echo "error: $1 no es un objeto JSON válido" >&2; return 2; }
 }
 
 # json_base <fichero>: same, for the file at the merge base $mb.
@@ -237,11 +237,11 @@ case "$sub" in
     case "$projs" in .|.$'\n'*) ;; *) debt_lines || exit 2 ;; esac
     while IFS= read -r d; do
       [ -n "$d" ] || continue
-      blk="$(cd "$d" || exit 2; ts_checks "$l")"; rc=$?
+      blk="$(cd "./$d" || exit 2; ts_checks "$l")"; rc=$?
       [ $rc -le 1 ] || exit 2
       if [ $rc -eq 0 ]; then echo "proyecto: $d (base completa)"; else echo "proyecto: $d (base incompleta)"; completa=0; fi
       printf '%s\n' "$blk"
-      (cd "$d" || exit 2; debt_lines) || exit 2
+      (cd "./$d" || exit 2; debt_lines) || exit 2
     done <<<"$projs"
     if [ $completa -eq 1 ]; then echo "FIN: base completa"; else echo "FIN: base incompleta"; fi
     ;;

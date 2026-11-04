@@ -337,6 +337,11 @@ for x in "proyecto: packages/a  b (base completa)" "proyecto: packages/c (base i
   grep -qxF "$x" <<<"$out" || fail "monorepo sin '$x': $out"
 done
 rm -rf "$m/packages/c"
+# a name that starts with - is a directory, never an option
+base_ts "$m/-app"; run estado "$m"; [ $rc -eq 0 ] && grep -qxF "proyecto: -app (base completa)" <<<"$out" || fail "proyecto -app: $rc $out"
+mkdir -p "$m/-app/.agents-kit"; echo '{"src/a.ts": 1}' > "$m/-app/.agents-kit/tsc-base.json"
+run estado "$m"; [ $rc -eq 0 ] || fail "deuda de -app: $rc $out"
+rm -rf "$m/-app"
 # not projects: a tsconfig.*.json alone, a tsconfig.json without package.json, node_modules, ignored directories
 mkdir -p "$m/tools" "$m/lib" "$m/node_modules/x" "$m/web/node_modules/y" "$m/gen"
 echo '{}' > "$m/tools/package.json"; echo '{}' > "$m/tools/tsconfig.build.json"; echo '{}' > "$m/lib/tsconfig.json"
