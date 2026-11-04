@@ -6,7 +6,7 @@ Cada ronda `r` revisa el head de la PR con todos los puestos de `revision.puesto
 
 - Cada puesto tiene un foco, un nivel (`profundo` o `rapido`) y una familia: `otra` (la primera familia de `proveedores` distinta de la que implementó), `misma` (la del implementador) o un nombre. `kit-review-all.sh` elige el candidato: solo cuentan los proveedores cuyo CLI está en el PATH; si no hay otra familia disponible, el puesto lo cubre la del implementador y la línea del puesto lo dice (`ok (misma familia: no hay otra familia disponible)`). Anótalo en el fichero de ronda.
 - `kit-review.sh` corre cada candidato en un clon aislado, valida su respuesta JSON contra `revision-schema.json`, la publica en la PR renderizada en markdown (`<!-- kit-revision: puesto <i> <familia>/<modelo> ronda <r> -->`), la imprime y acaba en `FIN: <total> hallazgos`. Les pasa el historial de rondas, así que no deberían repetir lo ya decidido. Si un puesto ya publicó su revisión en esa ronda, se reimprime sin volver a lanzarlo.
-- `kit-review-all.sh` imprime por puesto `puesto <i> (<familia>/<modelo>): ok`, `sin-confirmar (<motivo>: <detalle>)` o `fallback a <familia>/<modelo>`, más líneas `aviso: ...`. La salida de cada puesto está en `<dir>/rev-<i>.out` y el resumen en `<dir>/puestos.tsv`.
+- `kit-review-all.sh` imprime por puesto `puesto <i> (<familia>/<modelo>): ok`, `sin-confirmar (<motivo>: <detalle>)` o `fallback a <familia>/<modelo>`, más líneas `aviso: ...` (Dru tiene que actuar: login o modelo, o una cuota que dejó el puesto sin confirmar) e `info: <proveedor> sin cuota (vuelve sola), cubierto por <familia>/<modelo>` (nada que hacer: el límite de uso se renueva solo y otro candidato revisó el puesto). La salida de cada puesto está en `<dir>/rev-<i>.out` y el resumen en `<dir>/puestos.tsv`.
 
 ## Modo de cada puesto
 
@@ -19,7 +19,7 @@ Cada ronda `r` revisa el head de la PR con todos los puestos de `revision.puesto
 
 Un puesto queda "sin confirmar" cuando no entrega una revisión válida: tiempo agotado, respuesta vacía o fuera del esquema tras el reintento de reparación, el revisor dice `bloqueado`, el worktree cambió mientras corría, o todos sus candidatos fallaron por login, modelo o cuota (eso pasa al siguiente candidato sin reintentar en bucle). Nunca equivale a "sin hallazgos". `kit-review-all.sh` lo publica en la PR (`<!-- kit-revision: puesto <i> sin-confirmar ronda <r> -->`), y `fusionar` no acepta una ronda en la que algún puesto no tenga su revisión confirmada.
 
-- Relanza una vez solo ese puesto, antes de publicar la ronda: `KIT_REVIEW_MODO=<modo> "$PLUGIN/scripts/kit-review.sh" <wt> <pr> <i> <familia> <cli> <modelo> "<foco>" <r> <N>` con los valores de su línea en `puestos.tsv` (el modo es la columna 8; o con el candidato siguiente si el fallo fue de acceso).
+- Relanza una vez solo ese puesto, antes de publicar la ronda: `KIT_REVIEW_MODO=<modo> "$PLUGIN/scripts/kit-review.sh" <wt> <pr> <i> <familia> <cli> <modelo> "<foco>" <r> <N>` con los valores de su línea en `puestos.tsv` (el modo es la columna 8; o con el candidato siguiente si el fallo fue de acceso o de cuota).
 - Si sigue sin confirmar: publica la ronda con lo que llegó (decide sobre esos hallazgos como siempre y escribe qué puesto falta y por qué) y bloquea el issue con el motivo; si es un login pendiente (`aviso: ... revisa el login, el modelo o la cuota`), di a Dru qué CLI tiene que autenticar. Cuando Dru quite `bloqueado`, el siguiente `kit-run` hará una ronda nueva con todos los puestos.
 
 ## Decidir

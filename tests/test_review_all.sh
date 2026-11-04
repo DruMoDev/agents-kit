@@ -147,6 +147,28 @@ df="$(sed -n 's/^salidas: //p' <<<"$out")"
 grep -q "^args: .* 1 claude claude opus " "$df/rev-1.out" || fail "rev-1.out no es el último intento"
 grep -q "sin confirmar (acceso)" "$df/rev-1-1.out" || fail "falta la salida del intento que cayó al siguiente candidato"
 [ ! -e "$df/rev-1-2.out" ] && [ ! -e "$df/rev-3-1.out" ] || fail "salidas duplicadas: $(ls "$df" | tr "\n" " ")"
+# a spent usage limit covered by the fallback is only information: no action for Dru, no "aviso:" line
+STUB_FAIL="opencode/openai/x=cuota" run
+[ $rc -eq 0 ] || fail "cuota: exit $rc ($out)"
+has "puesto 1 (gpt/openai/x): fallback a claude/opus"
+has "puesto 1 (claude/opus): ok (misma familia: no hay otra familia disponible)"
+has "info: gpt/openai/x (opencode) sin cuota (vuelve sola), cubierto por claude/opus"
+[ "$(grep -c '^info: ' <<<"$out")" = 1 ] || fail "cuota: info repetido: $out"
+grep -q "^aviso: " <<<"$out" && fail "cuota cubierta con aviso de acción: $out"
+[ "$(printf '%s\n' "$out" | sed -n '$p')" = "FIN: 3 puestos, 0 sin confirmar" ] || fail "cuota FIN: $out"
+# without a fallback that answers, the seat stays unconfirmed and the warning is the same as for login or model
+st '.prs[0].comments = []'
+STUB_FAIL="opencode/openai/x=cuota claude/opus=acceso" run
+has "puesto 2 (claude/opus): sin-confirmar (acceso: detalle de claude/opus)"
+has "aviso: gpt/openai/x (opencode) no respondió: revisa el login, el modelo o la cuota (detalle de opencode/openai/x)"
+grep -q "^info: " <<<"$out" && fail "cuota sin cubrir como info: $out"
+[ "$(ncom)" = 2 ] || fail "cuota sin cubrir: comentarios $(ncom)"
+st '.prs[0].comments = []'
+STUB_FAIL="opencode/openai/x=cuota claude/opus=tiempo" run
+has "puesto 1 (claude/opus): sin-confirmar (tiempo: detalle de claude/opus)"
+has "aviso: gpt/openai/x (opencode) no respondió: revisa el login, el modelo o la cuota (detalle de opencode/openai/x)"
+grep -q "^info: " <<<"$out" && fail "cuota con fallback caído como info: $out"
+st '.prs[0].comments = []'
 # a timeout never falls back: the seat stays unconfirmed, posted on the PR so the round is not complete
 STUB_FAIL="opencode/openai/x=tiempo" run
 [ $rc -eq 0 ] || fail "tiempo: exit $rc ($out)"

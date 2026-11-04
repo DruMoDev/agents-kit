@@ -257,9 +257,20 @@ rm -f "$REVIEW_DUMP"/opencode.*
 expect_fail invalido2 opencode salida "no cumple el esquema"
 [ "$(wc -l < "$REVIEW_DUMP/opencode.calls" | tr -d ' ')" = 2 ] || fail "invalido2: más de un reintento"
 expect_fail bloqueado claude bloqueado "No pude leer el diff."
-expect_fail login claude acceso "Invalid API key"
+# login and model (Dru has to act) are acceso; a spent usage limit (it comes back on its own) is cuota.
+# The stub replies with the real texts of each CLI (see fail_real in tests/stubs/review/claude).
+expect_fail login claude acceso "Not logged in"
 expect_fail login opencode acceso "not logged in"
-expect_fail login codex acceso "not logged in"
+expect_fail login codex acceso "401 Unauthorized"
+expect_fail modelo claude acceso "issue with the selected model"
+expect_fail modelo codex acceso "model_not_found"
+expect_fail cuota claude cuota "límite de uso agotado: You've hit your 5-hour limit · resets 1:40am (Europe/Madrid)"
+expect_fail cuota codex cuota "límite de uso agotado: You’ve hit your usage limit."
+# codex echoes the prompt to stderr: a quota line in the PR text is not the CLI's error
+st0="$(cat "$GH_STATE/state.json")"
+jq '.prs[0].body = "Arregla esto:\nERROR: You’ve hit your usage limit. try again at 1:50 PM."' <<<"$st0" > "$GH_STATE/state.json"
+expect_fail login codex acceso "401 Unauthorized"
+printf '%s\n' "$st0" > "$GH_STATE/state.json"
 expect_fail evento opencode acceso "ProviderModelNotFoundError"
 expect_fail falla opencode acceso "terminó con código 3"
 # the reviewer writes into the real worktree: integrity check

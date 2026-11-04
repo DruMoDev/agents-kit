@@ -2,14 +2,16 @@
 # Usage: scripts/kit-review-all.sh <wt> <pr> <ronda> <N> [--implementador <familia>] [--completa]
 #        scripts/kit-review-all.sh <dir> --local [--base <ref>] [--contexto <fichero>] [--estricto] [--implementador <familia>]
 # Runs every review seat of revision.puestos in parallel with kit-review.sh and waits for all. Each seat tries its
-# candidates (lib/review-seats.sh: CLI in the PATH, other family first) in order: a login, model or quota failure
-# (motivo acceso) moves on to the next candidate; any other failure, or no candidate left, leaves the seat
-# unconfirmed, and a "<!-- kit-revision: puesto <i> sin-confirmar ronda <r> -->" comment says so on the PR.
+# candidates (lib/review-seats.sh: CLI in the PATH, other family first) in order: a login or model failure (motivo
+# acceso) or a spent usage limit (motivo cuota) moves on to the next candidate; any other failure, or no candidate
+# left, leaves the seat unconfirmed, and a "<!-- kit-revision: puesto <i> sin-confirmar ronda <r> -->" comment says so on the PR.
 # The seats come from the marker of origin/<default branch> (fetched once here, before launching; each seat gets its
 # SHA in KIT_REVIEW_BASE and never fetches), the same source fusionar counts them from. INT/TERM/HUP stop every seat.
 # The implementer family comes from --implementador or the environment (CODEX_THREAD_ID -> gpt, CLAUDECODE -> claude).
 # Prints per seat "puesto <i> (<familia>/<modelo>): ok | sin-confirmar (<motivo>) | fallback a <familia>/<modelo>"
-# (plus "aviso: ..." lines), then "salidas: <dir>" (rev-<i>.out, the output of the seat's last attempt; rev-<i>-<j>.out
+# (plus "aviso: ..." lines, for Dru to act: a login or model failure, or a spent quota whose seat stayed
+# unconfirmed; and "info: <who> sin cuota (vuelve sola), cubierto por <familia>/<modelo>" lines, nothing to do:
+# the limit comes back on its own and another candidate reviewed), then "salidas: <dir>" (rev-<i>.out, the output of the seat's last attempt; rev-<i>-<j>.out
 # only for earlier attempts that fell back to the next candidate; and
 # puestos.tsv: i, familia, cli, modelo, foco, estado, detalle, modo) and "FIN: <n> puestos, <m> sin confirmar".
 # Mode per seat (KIT_REVIEW_MODO for kit-review.sh): with revision.rondas "mezcla" (global config, the default), from
@@ -130,8 +132,20 @@ seat_mode() { if [ -z "$indep" ] || [ "$1" = "$indep" ]; then echo completa; els
 # run_seat <i>: try the seat's candidates in order; writes puesto-<i>.log (lines to print) and puesto-<i>.tsv
 run_seat() {
   local i="$1" s j fam cli model focus nota prev="" rc motivo detalle out
-  local log="$d/puesto-$i.log"
-  : > "$log"; : > "$d/puesto-$i.avisos"
+  local log="$d/puesto-$i.log" cuota="$d/puesto-$i.cuota"
+  : > "$log"; : > "$d/puesto-$i.avisos"; : > "$d/puesto-$i.info"; : > "$cuota"
+  # cuota_out <ok-by|"">: the candidates without quota (<who>\t<detalle> in $cuota) are information when another
+  # candidate covered the seat, and the usual warning when it stayed unconfirmed
+  cuota_out() {
+    local who det
+    while IFS=$'\t' read -r who det; do
+      if [ -n "$1" ]; then
+        echo "info: $who sin cuota (vuelve sola), cubierto por $1" >> "$d/puesto-$i.info"
+      else
+        echo "aviso: $who no respondió: revisa el login, el modelo o la cuota ($det)" >> "$d/puesto-$i.avisos"
+      fi
+    done < "$cuota"
+  }
   while IFS=$'\t' read -r s j fam cli model focus nota; do
     [ "$s" = "$i" ] || continue
     if [ "$j" = 0 ]; then
@@ -148,6 +162,7 @@ run_seat() {
       echo "puesto $i ($fam/$model): ok${nota:+ (misma familia: no hay otra familia disponible)}" >> "$log"
       printf '%s\t%s\t%s\t%s\t%s\tok\t%s\n' "$i" "$fam" "$cli" "$model" "$focus" "$nota" > "$d/puesto-$i.tsv"
       rm -f "$out" # rev-<i>.out holds it: only attempts that fell back keep their own rev-<i>-<j>.out
+      cuota_out "$fam/$model"
       return
     fi
     motivo="$(sed -n 's/^sin confirmar (\([a-z]*\)): .*/\1/p' "$out" | sed -n '$p')"
@@ -157,6 +172,11 @@ run_seat() {
       detalle="kit-review.sh terminó con código $rc"
     fi
     printf '%s\t%s\t%s\t%s\t%s\tsin-confirmar\t%s: %s\n' "$i" "$fam" "$cli" "$model" "$focus" "$motivo" "$detalle" > "$d/puesto-$i.tsv"
+    if [ "$motivo" = cuota ]; then
+      printf '%s\t%s\n' "$fam/$model ($cli)" "$detalle" >> "$cuota"
+      prev="$fam/$model"
+      continue
+    fi
     if [ "$motivo" = acceso ]; then
       echo "aviso: $fam/$model ($cli) no respondió: revisa el login, el modelo o la cuota ($detalle)" >> "$d/puesto-$i.avisos"
       prev="$fam/$model"
@@ -164,9 +184,11 @@ run_seat() {
     fi
     echo "puesto $i ($fam/$model): sin-confirmar ($motivo: $detalle)" >> "$log"
     rm -f "$out"
+    cuota_out ""
     return
   done < "$d/candidatos.tsv"
-  # every candidate failed with acceso
+  # every candidate failed with acceso or cuota
+  cuota_out ""
   echo "puesto $i ($prev): sin-confirmar ($(cut -f7 "$d/puesto-$i.tsv"))" >> "$log"
 }
 
@@ -199,6 +221,7 @@ for i in $seats; do
 done
 # one warning per failing provider, however many seats hit it
 for i in $seats; do cat "$d/puesto-$i.avisos"; done | awk '!seen[$0]++'
+for i in $seats; do cat "$d/puesto-$i.info"; done | awk '!seen[$0]++'
 # unconfirmed seats are said on the PR (best effort: fusionar asks for a confirmed review per seat in any case)
 unconf="$(awk -F'\t' '$6 == "sin-confirmar"' "$d/puestos.tsv")"
 if [ "$local_mode" = true ]; then

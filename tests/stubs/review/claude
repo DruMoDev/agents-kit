@@ -10,7 +10,9 @@
 #   REVIEW_STUB_MODE  ok (2 findings), cero (no findings), bloqueado (veredicto bloqueado),
 #                     invalido (claude: no structured_output; opencode: bad JSON, fixed on the repair call;
 #                     codex: bad JSON), invalido2 (opencode: still bad after the repair), mudo (no output),
-#                     login (auth error, exit 1), evento (opencode error event, exit 0), falla (exit 3),
+#                     login, modelo, cuota (exit 1 with the real texts of each CLI: login expired, model that does
+#                     not exist, usage limit spent; codex echoes the prompt to stderr first, as the real one does),
+#                     evento (opencode error event, exit 0), falla (exit 3),
 #                     lento (sleeps), hijo (background child writing its PID to $REVIEW_DUMP/hijo.pid, then waits),
 #                     toca (touches $REVIEW_STUB_TOUCH, then ok)
 #   REVIEW_STUB_VERSION  what --version prints (opencode 2.x: "opencode v2.1.4")
@@ -70,6 +72,29 @@ reply() { # <text>: answer in the CLI's own format
   esac
 }
 
+# fail_real <login|modelo|cuota>: what each real CLI printed ($prev: the prompt, the last argument) (claude 2.1.318, codex-cli 0.165.0; opencode: generic)
+fail_real() {
+  case "$tool" in
+    claude)
+      case "$1" in
+        login) m="Not logged in · Please run /login" ;;
+        modelo) m="There's an issue with the selected model (mod). It may not exist or you may not have access to it. Run --model to pick a different model." ;;
+        cuota) m="You've hit your 5-hour limit · resets 1:40am (Europe/Madrid)" ;;
+      esac
+      jq -cn --arg m "$m" '{type: "result", subtype: "success", is_error: true, result: $m, terminal_reason: "api_error"}' ;;
+    codex)
+      printf 'Reading additional input from stdin...\nOpenAI Codex v0.165.0\n--------\nuser\n%s\n' "$prev" >&2
+      case "$1" in
+        login) m="unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, request id: req_1" ;;
+        modelo) m='{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '"'"'mod'"'"' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}' ;;
+        cuota) m="You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 1:50 PM." ;;
+      esac
+      printf 'ERROR: %s\nERROR: %s\n' "$m" "$m" >&2 ;;
+    opencode) echo "Error: not logged in" >&2 ;;
+  esac
+  exit 1
+}
+
 case "${REVIEW_STUB_MODE:-ok}" in
   ok) reply "$ok_json" ;;
   cero) reply "$cero_json" ;;
@@ -78,9 +103,7 @@ case "${REVIEW_STUB_MODE:-ok}" in
     if [ "$repair" = true ]; then reply "$ok_json"; else reply "no es JSON"; fi ;;
   invalido2) reply "$bad_json" ;;
   mudo) ;;
-  login)
-    [ "$tool" = claude ] && jq -cn '{type: "result", is_error: true, subtype: "error", result: "Invalid API key · Please run /login"}'
-    echo "Error: not logged in" >&2; exit 1 ;;
+  login|modelo|cuota) fail_real "$REVIEW_STUB_MODE" ;;
   evento) echo '{"type":"error","sessionID":"ses_1","error":{"name":"ProviderModelNotFoundError"}}' ;;
   falla) reply "$cero_json"; exit 3 ;;
   lento) exec sleep 20 ;;
