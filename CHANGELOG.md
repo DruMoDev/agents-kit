@@ -25,6 +25,9 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
+### Mejora: kit-reglas reconoce los repos Python y prepara solo los comandos del lint · [#PR](PR)
+Un repo Python con `ruff.toml`, `requirements.txt`, `setup.py` o ficheros `.py` ya cuenta como Python, aunque no tenga `pyproject.toml`, y el estado de sus reglas dice si usa `ruff` (y qué reglas tiene activadas) y `pyright`. Al instalar la base, el kit saca solo los comandos de lint que van en el marcador (ESLint, `ruff` con el intérprete del repo, `shellcheck`), así que ya no tienes que aprobar líneas de comandos: te explica en una frase qué se comprueba al editar y al acabar cada turno.
+
 ### Mejora: la base de reglas JS pide strictNullChecks y avisa de directivas en línea y plantillas viejas · [#49](https://github.com/DruMoDev/agents-kit/pull/49)
 En un proyecto JavaScript, la base exige ahora `strict` (o `strictNullChecks`) en el `tsconfig`: sin él, varias reglas del lint estricto fallaban en cada fichero con un aviso que no dice nada del código. `kit-reglas` cuenta además los `eslint-disable` y compañía que ya había en cada proyecto, que con la base dejan de funcionar, y los migra a la configuración, con su porqué, antes de congelar la deuda. Y dice si las copias de `turno.sh` o `tsc-base.mjs` de un proyecto son de una versión vieja del kit, para volver a copiarlas.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-reglas.sh <subcomando> <wt> [args...]
 #   estado    <wt>
+#   marcador  <wt> [--python <comando>]
 #   trinquete <wt> <ref>
 #   blindado  <wt> <ref>
 #   abrir     <wt> <session_id>
@@ -9,8 +10,12 @@
 # kit-reglas skill. "Changed" is the working tree of <wt> (committed or not, plus untracked files not ignored) against
 # git merge-base <ref> HEAD, without rename detection: a renamed file counts as its old path deleted. So it serves both
 # fusionar (ref=origin/<base>, clean tree) and a local review (ref = the review base, or HEAD for only the uncommitted).
-#   estado: one line per fact, for kit-reglas to propose what is missing: "lenguajes: ts,js,py,sh|ninguno",
-#     "lint: declarado|sin declarar" (marker of <wt>), then each project ("." for the root, which is one when it has
+#   estado: one line per fact, for kit-reglas to propose what is missing: "lenguajes: ts,js,py,sh|ninguno" (py: in
+#     the root pyproject.toml, ruff.toml, .ruff.toml, requirements*.txt, setup.py or setup.cfg, or any versioned .py),
+#     "lint: declarado|sin declarar" (marker of <wt>), with py the informative "ruff: sí|no" (ruff.toml, .ruff.toml or
+#     [tool.ruff...] in pyproject.toml, of the root), "ruff select: <códigos>|por defecto" (lint.select or select;
+#     [tool.ruff.lint] or [tool.ruff] in pyproject.toml) and "pyright: sí|no" (pyrightconfig.json or [tool.pyright]),
+#     which never change the base, then each project ("." for the root, which is one when it has
 #     tsconfig.json or typescript in its package.json; any other directory of the tree outside node_modules, when it
 #     has both package.json and tsconfig.json) as "proyecto: <dir> (ts|js, base completa|base incompleta)". A project
 #     is js when its tsconfig.json says "allowJs": true and none of its own files (those not under a nested project)
@@ -29,6 +34,14 @@
 #     eslint-suppressions.json, one entry per file and rule) and "deuda-tsc: <n> ficheros|ninguna" (its
 #     .agents-kit/tsc-base.json). The root's debt lines always appear: right after "lint:" when the root is not a TS
 #     project. FIN: base completa (lint declared and every project complete, or no TS project) or FIN: base incompleta.
+#   marcador: the flags of kit-activate.sh for the "lint" of the marker, one per line and quoted for the shell, so
+#     they work as they are after "kit-activate.sh <wt>": with a TS or JS project, --lint-fichero of ESLint without
+#     types (ts,tsx,mts,cts,js,jsx,mjs,cjs with a TS project, js,jsx,mjs,cjs with only JS ones, plus astro, vue or
+#     svelte when a project has such files); with py, --lint-fichero 'py=<ruff>' (--python <comando>:
+#     "<comando>" -m ruff check --quiet, a value without double quotes, $(...) allowed; else .venv/bin/ruff check
+#     --quiet when it is executable, else ruff check --quiet; never uvx nor pipx); with versioned .sh, 'sh,bash=shellcheck';
+#     with a TS or JS project, --lint-turno 'bash .agents-kit/turno.sh' when the root is a project or has that file,
+#     else '[ ! -f .agents-kit/turno.sh ] || bash .agents-kit/turno.sh'. FIN: <n> (the number of flags).
 #   trinquete: exit 1 with one line per reason on stderr when a changed or deleted file still has entries in the
 #     suppressions or the tsc baseline of the root or of a directory that contains it ("deuda en fichero tocado:
 #     <ruta> (lint|tipos)"; the keys of a directory's debt files are relative to it), or when one of those files adds
@@ -68,11 +81,18 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/config.sh"
 source "$here/lib/blindado.sh"
 
-usage() { echo "uso: $0 estado <wt> | trinquete <wt> <ref> | blindado <wt> <ref> | abrir <wt> <session_id> | cerrar <wt>" >&2; exit 1; }
+usage() { echo "uso: $0 estado <wt> | marcador <wt> [--python <comando>] | trinquete <wt> <ref> | blindado <wt> <ref> | abrir <wt> <session_id> | cerrar <wt>" >&2; exit 1; }
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
+opt_python=""
 case "$sub" in
   estado|cerrar) [ $# -eq 1 ] || usage ;;
+  marcador)
+    if [ $# -gt 1 ]; then
+      [ $# -eq 3 ] && [ "$2" = --python ] && [ -n "$3" ] || usage
+      case "$3" in *'"'*|*$'\n'*) echo "valor de --python inválido: '$3' (sin comillas dobles ni saltos de línea)" >&2; exit 1 ;; esac
+      opt_python="$3"; set -- "$1"
+    fi ;;
   trinquete|blindado|abrir) [ $# -eq 2 ] && [ -n "$2" ] || usage ;;
   *) usage ;;
 esac
@@ -84,6 +104,8 @@ cd "$wt" || exit 2
 
 SUP=eslint-suppressions.json
 TSB=.agents-kit/tsc-base.json
+# lint.fichero of ESLint: each edit, without types, with cache (references/base.md of kit-reglas says why each flag).
+ESLINT_RAPIDO='KIT_LINT_RAPIDO=1 node_modules/.bin/eslint --cache --cache-location node_modules/.cache/agents-kit/eslint-rapido --no-warn-ignored --pass-on-unpruned-suppressions'
 PLANTILLAS="$here/../templates/reglas"
 # Extensions whose files can carry ESLint directives (directivas-en-linea).
 DIR_EXT='js|jsx|mjs|cjs|ts|tsx|mts|cts|astro|vue|svelte'
@@ -243,6 +265,71 @@ directives() {
   echo "$n"
 }
 
+# scan: set projs, files, kinds, dirs_n (one line per project, as projs without empty lines) and extras (the
+# extensions astro, vue and svelte present in the own files of any project, comma separated).
+scan() {
+  local d own e
+  projs="$(ts_projects)" || { echo "error: no pude listar los proyectos TS (git falló)" >&2; exit 2; }
+  files="$(tree_files)" || { echo "error: no pude listar los ficheros (git falló)" >&2; exit 2; }
+  kinds=""; dirs_n=""; extras=""
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    own="$(own_files "$d" "$projs" "$files")"
+    kinds="$kinds$(project_kind "$d" "$own")"$'\n'
+    dirs_n="$dirs_n$(directives "$own")"$'\n'
+    for e in astro vue svelte; do
+      case ",$extras," in *",$e,"*) continue ;; esac
+      grep -Eqi "\.$e\$" <<<"$own" && extras="${extras:+$extras,}$e"
+    done
+  done <<<"$projs"
+}
+
+# has_py: the repo has Python (in its root: pyproject.toml, ruff.toml, .ruff.toml, requirements*.txt, setup.py,
+# setup.cfg; or any versioned .py).
+has_py() {
+  local f
+  for f in pyproject.toml ruff.toml .ruff.toml setup.py setup.cfg requirements*.txt; do [ -f "$f" ] && return 0; done
+  [ -n "$(git ls-files -- '*.py')" ]
+}
+
+# toml_ruff_select <fichero> <secciones>: the codes of "select" (in one line or several) of the first of <secciones>
+# (separated by |, "" for the top level) that sets it, comma separated; empty if none.
+toml_ruff_select() {
+  S="$2" perl -ne '
+    BEGIN { @orden = split /\|/, $ENV{S}, -1; %ok = map { $_ => 1 } @orden; $sec = "" }
+    s/#.*//;
+    if (!$in && /^\s*\[\s*([^\]]*?)\s*\]\s*$/) { $sec = $1; next }
+    if (!$in) { next unless $ok{$sec} && !exists $res{$sec} && /^\s*select\s*=\s*\[(.*)/s; $in = 1; $buf = $1 } else { $buf .= $_ }
+    if ($buf =~ /\]/) { $buf =~ s/\].*//s; $res{$sec} = join(",", $buf =~ /["\x27]([^"\x27]*)["\x27]/g); $in = 0 }
+    END { for (@orden) { if (exists $res{$_}) { print "$res{$_}\n"; last } } }
+  ' -- "$1"
+}
+
+# python_lines: "ruff: sí|no", "ruff select: <códigos>|por defecto" (only with ruff) and "pyright: sí|no", from the
+# config files of the root (ruff.toml, .ruff.toml or [tool.ruff] in pyproject.toml; pyrightconfig.json or
+# [tool.pyright]). Informative: they never change the base.
+python_lines() {
+  local f="" sel=""
+  if [ -f ruff.toml ]; then f=ruff.toml; elif [ -f .ruff.toml ]; then f=.ruff.toml
+  elif [ -f pyproject.toml ] && grep -Eq '^[[:space:]]*\[tool\.ruff(\.|\])' pyproject.toml; then f=pyproject.toml; fi
+  if [ -n "$f" ]; then
+    echo "ruff: sí"
+    if [ "$f" = pyproject.toml ]; then sel="$(toml_ruff_select "$f" "tool.ruff.lint|tool.ruff")"
+    else sel="$(toml_ruff_select "$f" "lint|")"; fi
+    echo "ruff select: ${sel:-por defecto}"
+  else
+    echo "ruff: no"
+  fi
+  if [ -f pyrightconfig.json ] || { [ -f pyproject.toml ] && grep -Eq '^[[:space:]]*\[tool\.pyright\]' pyproject.toml; }; then
+    echo "pyright: sí"
+  else
+    echo "pyright: no"
+  fi
+}
+
+# q <texto>: <texto> quoted for the shell, between single quotes.
+q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
 # templates_lines: "plantilla: ..." for the kit templates copied into the project in the current directory.
 templates_lines() {
   local q='^(TSC_EXT|LINT_EXT|TSC|ANTES_TSC)='
@@ -311,24 +398,17 @@ debt_lines() {
 
 case "$sub" in
   estado)
-    projs="$(ts_projects)" || { echo "error: no pude listar los proyectos TS (git falló)" >&2; exit 2; }
-    files="$(tree_files)" || { echo "error: no pude listar los ficheros (git falló)" >&2; exit 2; }
-    kinds=""; dirs_n=""
-    while IFS= read -r d; do
-      [ -n "$d" ] || continue
-      own="$(own_files "$d" "$projs" "$files")"
-      kinds="$kinds$(project_kind "$d" "$own")"$'\n'
-      dirs_n="$dirs_n$(directives "$own")"$'\n'
-    done <<<"$projs"
+    scan
     langs=""
     grep -qx ts <<<"$kinds" && langs="ts"
     grep -qx js <<<"$kinds" && langs="${langs:+$langs,}js"
-    [ -f pyproject.toml ] && langs="${langs:+$langs,}py"
+    has_py && langs="${langs:+$langs,}py"
     [ -n "$(git ls-files -- '*.sh')" ] && langs="${langs:+$langs,}sh"
     echo "lenguajes: ${langs:-ninguno}"
     l="$(kit_config "$wt" 'if .lint == null then "" else "sí" end')" || exit 2
     completa=1
     if [ -n "$l" ]; then echo "lint: declarado"; else echo "lint: sin declarar"; fi
+    has_py && python_lines
     # The root's debt goes first when the root is not a TS project; each project prints its own after its checks.
     case "$projs" in .|.$'\n'*) ;; *) debt_lines || exit 2 ;; esac
     while IFS= read -r d && IFS= read -r t <&3 && IFS= read -r nd <&4; do
@@ -341,6 +421,30 @@ case "$sub" in
       (cd "./$d" || exit 2; templates_lines; debt_lines) || exit 2
     done <<<"$(grep -v '^$' <<<"$projs")" 3<<<"$kinds" 4<<<"$dirs_n"
     if [ $completa -eq 1 ]; then echo "FIN: base completa"; else echo "FIN: base incompleta"; fi
+    ;;
+
+  marcador)
+    scan
+    n=0
+    if [ -n "$kinds" ]; then
+      if grep -qx ts <<<"$kinds"; then ex="ts,tsx,mts,cts,js,jsx,mjs,cjs"; else ex="js,jsx,mjs,cjs"; fi
+      echo "--lint-fichero $(q "$ex${extras:+,$extras}=$ESLINT_RAPIDO")"; n=$((n + 1))
+    fi
+    if has_py; then
+      if [ -n "$opt_python" ]; then c="\"$opt_python\" -m ruff check --quiet"
+      elif [ -x .venv/bin/ruff ]; then c=".venv/bin/ruff check --quiet"
+      else c="ruff check --quiet"; fi
+      echo "--lint-fichero $(q "py=$c")"; n=$((n + 1))
+    fi
+    if [ -n "$(git ls-files -- '*.sh')" ]; then echo "--lint-fichero $(q "sh,bash=shellcheck")"; n=$((n + 1)); fi
+    if [ -n "$kinds" ]; then
+      case "$projs" in
+        .|.$'\n'*) t="bash .agents-kit/turno.sh" ;;
+        *) if [ -f .agents-kit/turno.sh ]; then t="bash .agents-kit/turno.sh"; else t="[ ! -f .agents-kit/turno.sh ] || bash .agents-kit/turno.sh"; fi ;;
+      esac
+      echo "--lint-turno $(q "$t")"; n=$((n + 1))
+    fi
+    echo "FIN: $n"
     ;;
 
   trinquete)

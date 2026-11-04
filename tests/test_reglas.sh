@@ -510,6 +510,88 @@ run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "la deuda crece: w#&/
   || fail "directorio con # y &: $out"
 limpia
 
+# --- estado: Python, detectado por sus ficheros, con sus líneas informativas
+py="$(mk_repo)"; echo '{}' > "$py/.agents-kit.json"
+echo 'line-length = 100' > "$py/ruff.toml"; echo 'print(1)' > "$py/app.py"; git -C "$py" add -A
+run estado "$py"; [ $rc -eq 0 ] || fail "estado py: $out"
+for x in "lenguajes: py" "ruff: sí" "ruff select: por defecto" "pyright: no"; do grep -qxF "$x" <<<"$out" || fail "py con ruff.toml sin '$x': $out"; done
+[ "$(last_line "$out")" = "FIN: base completa" ] || fail "Python no cambia la base: $out"
+# only requirements.txt, only setup.py, only setup.cfg, only .ruff.toml: py; nothing of that, not py
+for f in requirements-dev.txt setup.py setup.cfg .ruff.toml; do
+  p2="$(mk_repo)"; echo '{}' > "$p2/.agents-kit.json"; echo 'x' > "$p2/$f"
+  run estado "$p2"; grep -qxF "lenguajes: py" <<<"$out" || fail "py por $f: $out"
+done
+p2="$(mk_repo)"; echo '{}' > "$p2/.agents-kit.json"; mkdir -p "$p2/src"; echo 'x = 1' > "$p2/src/m.py"
+run estado "$p2"; grep -qxF "lenguajes: ninguno" <<<"$out" || fail "un .py sin versionar no es py: $out"
+git -C "$p2" add src/m.py; run estado "$p2"; grep -qxF "lenguajes: py" <<<"$out" && grep -qxF "ruff: no" <<<"$out" || fail "py por .py versionado: $out"
+# ruff and pyright in pyproject.toml; select in one line or several, in [lint] or at the top
+cat > "$py/pyproject.toml" <<'EOF2'
+[project]
+name = "x"
+select = ["NO"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F",
+  "B",  # bugbear
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+EOF2
+rm "$py/ruff.toml"
+run estado "$py"; for x in "ruff: sí" "ruff select: E,F,B" "pyright: sí"; do grep -qxF "$x" <<<"$out" || fail "pyproject sin '$x': $out"; done
+rm "$py/pyproject.toml"; printf '[lint]\nselect = ["E", "UP"]\n' > "$py/ruff.toml"; echo '{}' > "$py/pyrightconfig.json"
+run estado "$py"; for x in "ruff: sí" "ruff select: E,UP" "pyright: sí"; do grep -qxF "$x" <<<"$out" || fail "ruff.toml [lint] sin '$x': $out"; done
+printf 'select = ["I"]\n' > "$py/ruff.toml"
+run estado "$py"; grep -qxF "ruff select: I" <<<"$out" || fail "select arriba del todo: $out"
+echo '[tool.black]' > "$py/pyproject.toml"; rm "$py/ruff.toml" "$py/pyrightconfig.json"
+run estado "$py"; grep -qxF "ruff: no" <<<"$out" && grep -qxF "pyright: no" <<<"$out" || fail "pyproject sin ruff ni pyright: $out"
+grep -q '^ruff select' <<<"$out" && fail "sin ruff no hay select: $out"
+run estado "$r"; grep -q '^ruff:' <<<"$out" && fail "sin py no hay líneas de Python: $out"
+
+# --- marcador: los flags exactos de kit-activate.sh
+ESL='KIT_LINT_RAPIDO=1 node_modules/.bin/eslint --cache --cache-location node_modules/.cache/agents-kit/eslint-rapido --no-warn-ignored --pass-on-unpruned-suppressions'
+run marcador; [ $rc -eq 1 ] || fail "marcador sin wt: exit $rc"
+# a TS project in the root
+mt="$(mk_repo)"; echo '{}' > "$mt/.agents-kit.json"; echo '{}' > "$mt/package.json"; echo '{}' > "$mt/tsconfig.json"
+mkdir -p "$mt/src"; echo 'export {};' > "$mt/src/a.ts"
+run marcador "$mt"; [ $rc -eq 0 ] || fail "marcador TS: $out"
+[ "$out" = "--lint-fichero 'ts,tsx,mts,cts,js,jsx,mjs,cjs=$ESL'"$'\n'"--lint-turno 'bash .agents-kit/turno.sh'"$'\n'"FIN: 2" ] \
+  || fail "marcador TS en la raíz: $out"
+# a monorepo: a JS project in a subdirectory (with .astro files), the root without turno.sh, plus bash
+mj="$(mk_repo)"; echo '{}' > "$mj/.agents-kit.json"; mkdir -p "$mj/app/src"
+echo '{}' > "$mj/app/package.json"; echo '{"compilerOptions": {"allowJs": true}}' > "$mj/app/tsconfig.json"
+echo 'export {};' > "$mj/app/src/a.mjs"; echo '---' > "$mj/app/src/p.astro"; echo 'echo' > "$mj/x.sh"; git -C "$mj" add -A
+run marcador "$mj"
+[ "$out" = "--lint-fichero 'js,jsx,mjs,cjs,astro=$ESL'"$'\n'"--lint-fichero 'sh,bash=shellcheck'"$'\n'"--lint-turno '[ ! -f .agents-kit/turno.sh ] || bash .agents-kit/turno.sh'"$'\n'"FIN: 3" ] \
+  || fail "marcador monorepo JS: $out"
+# the root with its own turno.sh: no guard
+mkdir -p "$mj/.agents-kit"; echo 'x' > "$mj/.agents-kit/turno.sh"
+run marcador "$mj"; grep -qxF -- "--lint-turno 'bash .agents-kit/turno.sh'" <<<"$out" || fail "raíz con turno.sh: $out"
+# Python: ruff of the PATH, of .venv, or through the interpreter given with --python
+run marcador "$py"; [ "$out" = "--lint-fichero 'py=ruff check --quiet'"$'\n'"FIN: 1" ] || fail "marcador py: $out"
+mkdir -p "$py/.venv/bin"; printf '#!/bin/sh\n' > "$py/.venv/bin/ruff"; chmod +x "$py/.venv/bin/ruff"
+run marcador "$py"; grep -qxF -- "--lint-fichero 'py=.venv/bin/ruff check --quiet'" <<<"$out" || fail "marcador py con .venv: $out"
+run marcador "$py" --python "tools/python 3.sh"
+grep -qxF -- "--lint-fichero 'py=\"tools/python 3.sh\" -m ruff check --quiet'" <<<"$out" || fail "marcador py con --python: $out"
+run marcador "$py" --python 'a"b'; [ $rc -eq 1 ] && grep -q 'valor de --python inválido' <<<"$out" || fail "--python con comillas: exit $rc $out"
+# an interpreter decided by a script of the repo, evaluated when the hook runs
+run marcador "$py" --python '$(tools/python.sh)'
+grep -qxF -- "--lint-fichero 'py=\"\$(tools/python.sh)\" -m ruff check --quiet'" <<<"$out" || fail "marcador py con \$(...): $out"
+run marcador "$py" --otra x; [ $rc -eq 1 ] || fail "opción desconocida: exit $rc"
+# nothing to lint
+mn="$(mk_repo)"; echo '{}' > "$mn/.agents-kit.json"; run marcador "$mn"; [ "$out" = "FIN: 0" ] || fail "marcador vacío: $out"
+# what it prints works as it is with kit-activate.sh
+cp -R "$mj" "$mj-act"; run marcador "$mj-act"
+flags="$(sed '$d' <<<"$out" | tr '\n' ' ')"
+eval "bash \"$REPO_ROOT/scripts/kit-activate.sh\" \"$mj-act\" $flags" >/dev/null 2>&1 || fail "kit-activate con los flags: exit $?"
+[ "$(jq -c '.lint' "$mj-act/.agents-kit.json")" = "$(jq -cn --arg e "$ESL" '{fichero: {"js,jsx,mjs,cjs,astro": $e, "sh,bash": "shellcheck"}, turno: "bash .agents-kit/turno.sh"}')" ] \
+  || fail "marcador escrito por kit-activate: $(jq -c .lint "$mj-act/.agents-kit.json")"
+cp -R "$py" "$py-act"; run marcador "$py-act" --python '$(tools/python.sh)'; flags="$(sed '$d' <<<"$out" | tr '\n' ' ')"
+eval "bash \"$REPO_ROOT/scripts/kit-activate.sh\" \"$py-act\" $flags" >/dev/null 2>&1 || fail "kit-activate con --python: exit $?"
+[ "$(jq -r '.lint.fichero.py' "$py-act/.agents-kit.json")" = '"$(tools/python.sh)" -m ruff check --quiet' ] || fail "py escrito: $(cat "$py-act/.agents-kit.json")"
+
 # --- abrir y cerrar
 w="$(mktemp -d)/wt"; git -C "$r" worktree add -q -b otra "$w" >/dev/null 2>&1 || fail "worktree"
 f="$r/.git/agents-kit/reglas-abiertas"
