@@ -394,6 +394,11 @@ js_tsc() {
 js_tsc '"strict": true, "strictNullChecks": false'
 run estado "$j"; grep -qxF "proyecto: social-apps (js, base incompleta)" <<<"$out" && grep -qxF "tsconfig: strictNullChecks no" <<<"$out" \
   || fail "strict con strictNullChecks false no cuenta: $out"
+# tsconfig.json is JSONC: a commented out option does not count, a // inside a string is not a comment
+js_tsc '"strict": false, "x": "http://a", // "strictNullChecks": true
+    /* "strict": true */ "y": 1'
+run estado "$j"; grep -qxF "proyecto: social-apps (js, base incompleta)" <<<"$out" && grep -qxF "tsconfig: strictNullChecks no" <<<"$out" \
+  || fail "una opción comentada no cuenta: $out"
 js_tsc '"strictNullChecks": true'
 run estado "$j"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" \
   && grep -qxF "tsconfig: strictNullChecks sí" <<<"$out" || fail "JS con strictNullChecks debe ser completa: $out"
@@ -413,6 +418,9 @@ console.log(1); // eslint-disable-line no-console
 /*eslint no-alert: "off"*/
 // antes había un eslint-disable aquí: esto no es una directiva
 export const re = /\x00/; /* eslint-enable no-control-regex */
+/*
+  eslint-disable no-alert
+*/
 EOF2
 mkdir -p "$j/social-apps/node_modules/x" "$j/social-apps/sub"
 echo '// eslint-disable-next-line' > "$j/social-apps/node_modules/x/i.js"
@@ -422,7 +430,7 @@ echo '// eslint-disable-next-line' > "$j/web/src/b.ts"
 echo '// eslint-disable-next-line' > "$j/social-apps/notas.md"
 run estado "$j"
 blk() { awk -v p="proyecto: $1 (" 'index($0, p) == 1 { on = 1; next } /^proyecto: |^FIN: / { on = 0 } on' <<<"$out"; }
-grep -qxF "directivas-en-linea: 5" <<<"$(blk social-apps)" || fail "directivas de social-apps: $out"
+grep -qxF "directivas-en-linea: 6" <<<"$(blk social-apps)" || fail "directivas de social-apps: $out"
 grep -qxF "directivas-en-linea: 1" <<<"$(blk social-apps/sub)" || fail "directivas del proyecto anidado: $out"
 grep -qxF "directivas-en-linea: 1" <<<"$(blk web)" || fail "directivas del proyecto TS: $out"
 grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" || fail "las directivas no cambian la base: $out"

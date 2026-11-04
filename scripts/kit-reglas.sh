@@ -17,13 +17,13 @@
 #     is TS source (.ts, .tsx, .mts, .cts; declarations .d.ts, .d.mts, .d.cts aside): its tsconfig only feeds types to
 #     typescript-eslint. Then a ts project gets "tsconfig: <flag> sí|no" for each flag of the base (grep over its
 #     tsconfig.json; "extends" is not followed), and a js one "tsconfig: strictNullChecks sí|no" (sí with
-#     "strictNullChecks": true, or "strict": true without "strictNullChecks": false: several strictTypeChecked rules
+#     "strictNullChecks": true, or "strict": true without "strictNullChecks": false, comments aside: several strictTypeChecked rules
 #     need it, also in JS) and "tsconfig: checkJs sí|no (opcional)" (the other strict flags go with checkJs, a
 #     migration apart, never part of its base). Both: "eslint: strictTypeChecked sí|no", "eslint: noInlineConfig sí|no"
 #     (grep over its eslint.config.*), "knip: sí|no", then the informative lines that never change the base:
 #     "directivas-en-linea: <n>" (ESLint directive comments, // or /* followed by eslint, eslint-disable,
 #     eslint-disable-line, eslint-disable-next-line or eslint-enable, in its own files with a lint extension, those
-#     not under a nested project) and, for each of .agents-kit/turno.sh and .agents-kit/tsc-base.mjs that exists,
+#     not under a nested project; text in a string that looks like one also counts) and, for each of .agents-kit/turno.sh and .agents-kit/tsc-base.mjs that exists,
 #     "plantilla: <fichero> al día|desfasada: <qué hacer>" against templates/reglas/ of this kit (turno.sh without its
 #     TSC_EXT=, LINT_EXT=, TSC= and ANTES_TSC= lines). Last, its "deuda-lint: <n> entradas|ninguna" (its
 #     eslint-suppressions.json, one entry per file and rule) and "deuda-tsc: <n> ficheros|ninguna" (its
@@ -87,9 +87,10 @@ TSB=.agents-kit/tsc-base.json
 PLANTILLAS="$here/../templates/reglas"
 # Extensions whose files can carry ESLint directives (directivas-en-linea).
 DIR_EXT='js|jsx|mjs|cjs|ts|tsx|mts|cts|astro|vue|svelte'
-# An ESLint directive comment: // or /* and then eslint (inline config), eslint-disable[-line|-next-line] or
-# eslint-enable, followed by a space, the end of the comment or the end of the line.
-DIR_RE='(//|/\*)[[:space:]]*eslint(-disable(-next-line|-line)?|-enable)?([[:space:]]|\*/|$)'
+# An ESLint directive comment (perl, over the whole file): // or /* (then any blank, line breaks included) and eslint
+# (inline config), eslint-disable[-line|-next-line] or eslint-enable, followed by a blank, the end of the comment or
+# the end of the file. Text inside strings that looks like one also counts (no JS lexer here).
+DIR_RE='(?://[ \t]*|/\*\s*)eslint(?:-disable(?:-next-line|-line)?|-enable)?(?=\s|\*/|\z)'
 FLAGS="strict noUncheckedIndexedAccess exactOptionalPropertyTypes verbatimModuleSyntax noImplicitOverride noFallthroughCasesInSwitch"
 LINT_DEP='eslint|typescript|knip|dependency-cruiser'
 # PKG_JQ (jq -n, $b/$h = package.json of the base/tree, $re = LINT_DEP): the package.json changes that count, as
@@ -203,6 +204,12 @@ grows_tsb() {
   jq -rn --argjson b "$b" --argjson h "$h" --arg p "$p" '$h | to_entries[] | select((.value // 0) > ($b[.key] // -1)) | "\($p)\(.key)\ttipos"'
 }
 
+# jsonc <fichero>: the file without its // and /* */ comments (tsconfig.json is JSONC), strings kept as they are, so a
+# commented out option never counts.
+jsonc() {
+  perl -0777 -pe 's{("(?:[^"\\]|\\.)*")|//[^\n]*|/\*.*?\*/}{defined $1 ? $1 : ""}gse' -- "$1" 2>/dev/null
+}
+
 # own_files <dir> <projects> <files>: the files of <files> that are the project's own (under <dir>, not under another
 # of <projects> nested in it), one per line, paths from the repo root.
 own_files() {
@@ -219,7 +226,7 @@ own_files() {
 # in the list and no longer counts.
 project_kind() {
   local f
-  grep -Eq '"allowJs"[[:space:]]*:[[:space:]]*true' "./$1/tsconfig.json" 2>/dev/null || { echo ts; return 0; }
+  jsonc "./$1/tsconfig.json" | grep -Eq '"allowJs"[[:space:]]*:[[:space:]]*true' || { echo ts; return 0; }
   while IFS= read -r f; do
     [ -e "$f" ] && { echo ts; return 0; }
   done < <(grep -E '\.(ts|tsx|mts|cts)$' <<<"$2" | grep -Ev '\.d\.(ts|mts|cts)$')
@@ -231,8 +238,9 @@ project_kind() {
 directives() {
   local n
   n="$(grep -Ei "\.($DIR_EXT)\$" <<<"$1" | while IFS= read -r f; do [ -f "$f" ] && printf '%s\0' "$f"; done \
-    | xargs -0 grep -Eoh -- "$DIR_RE" /dev/null | wc -l)"
-  echo "$((n + 0))"
+    | DIR_RE="$DIR_RE" xargs -0 perl -0777 -ne 'BEGIN { $n = 0 } $n += () = /$ENV{DIR_RE}/g; END { print "$n\n" }' /dev/null \
+    | awk '{ n += $1 } END { print n + 0 }')"
+  echo "$n"
 }
 
 # templates_lines: "plantilla: ..." for the kit templates copied into the project in the current directory.
@@ -257,21 +265,22 @@ templates_lines() {
 # base_checks <lint> <ts|js>: the checks of the base for the project in the current directory, one line each; return 1
 # if any says no (or <lint> is empty: the marker does not declare lint). A js project has no tsconfig flags in its base.
 base_checks() {
-  local ok=0 flag k v f pkg
+  local ok=0 flag k v f pkg tsc=""
   [ -n "$1" ] || ok=1
   pkg="$(json_tree package.json)" || return 2
+  [ -f tsconfig.json ] && tsc="$(jsonc tsconfig.json)"
   if [ "$2" = js ]; then
     v="no"
-    if grep -Eq '"strictNullChecks"[[:space:]]*:[[:space:]]*true' tsconfig.json; then v="sí"
-    elif grep -Eq '"strict"[[:space:]]*:[[:space:]]*true' tsconfig.json \
-      && ! grep -Eq '"strictNullChecks"[[:space:]]*:[[:space:]]*false' tsconfig.json; then v="sí"; fi
+    if grep -Eq '"strictNullChecks"[[:space:]]*:[[:space:]]*true' <<<"$tsc"; then v="sí"
+    elif grep -Eq '"strict"[[:space:]]*:[[:space:]]*true' <<<"$tsc" \
+      && ! grep -Eq '"strictNullChecks"[[:space:]]*:[[:space:]]*false' <<<"$tsc"; then v="sí"; fi
     [ "$v" = "sí" ] || ok=1
     echo "tsconfig: strictNullChecks $v"
-    if grep -Eq '"checkJs"[[:space:]]*:[[:space:]]*true' tsconfig.json; then v="sí"; else v="no"; fi
+    if grep -Eq '"checkJs"[[:space:]]*:[[:space:]]*true' <<<"$tsc"; then v="sí"; else v="no"; fi
     echo "tsconfig: checkJs $v (opcional)"
   else
     for flag in $FLAGS; do
-      if [ -f tsconfig.json ] && grep -Eq "\"$flag\"[[:space:]]*:[[:space:]]*true" tsconfig.json; then v="sí"; else v="no"; ok=1; fi
+      if grep -Eq "\"$flag\"[[:space:]]*:[[:space:]]*true" <<<"$tsc"; then v="sí"; else v="no"; ok=1; fi
       echo "tsconfig: $flag $v"
     done
   fi
