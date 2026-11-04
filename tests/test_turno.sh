@@ -94,4 +94,22 @@ out="$(bash .agents-kit/turno.sh ./src/b.ts 2>&1)"; rc=$?
 grep -q 'node_modules' <<<"$out" || fail "sin node_modules debe decir qué falta: $out"
 [ ! -e "$d/tsc-calls" ] || fail "sin node_modules no debe lanzar tsc"
 grep -q 'npx' "$T" && ! grep -q 'npx --no-install' "$T" && fail "turno.sh no puede usar npx sin --no-install"
+
+# TSC and ANTES_TSC, set by kit-reglas in the copy (TypeScript 7 next to TS 6, Astro): ANTES_TSC runs before the types,
+# its failure stops with exit 1 and its output
+reset; mkdir -p node_modules/typescript7/bin; cp "$d/fake-tsc" node_modules/typescript7/bin/tsc
+cat > "$d/antes" <<EOS
+#!/usr/bin/env bash
+echo antes >> "$d/tsc-calls"
+[ -f "$d/antes-falla" ] && { echo "sync roto"; exit 3; }
+exit 0
+EOS
+chmod +x "$d/antes"
+sed -e 's#^TSC=.*#TSC="node_modules/typescript7/bin/tsc"#' -e "s#^ANTES_TSC=.*#ANTES_TSC=\"$d/antes\"#" "$T" > .agents-kit/turno.sh
+out="$(KIT_ESLINT="$d/fake-eslint" bash .agents-kit/turno.sh ./src/b.ts 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$d/tsc-calls")" = $'antes\nx' ] || fail "ANTES_TSC y TSC: rc=$rc $(cat "$d/tsc-calls" 2>/dev/null) $out"
+reset; touch "$d/antes-falla"
+out="$(KIT_ESLINT="$d/fake-eslint" bash .agents-kit/turno.sh ./src/b.ts 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -qF 'sync roto' <<<"$out" && [ "$(cat "$d/tsc-calls")" = antes ] || fail "ANTES_TSC que falla: rc=$rc $out"
+rm -rf node_modules; cp "$T" .agents-kit/turno.sh
 echo "ok"

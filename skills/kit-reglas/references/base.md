@@ -125,20 +125,11 @@ Los scripts `lint*` y `typecheck*` están blindados (cambiarlos pide la aprobaci
 
 ### Un proyecto fuera de la raíz
 
-En un monorepo, cada app (`web/`, `packages/<x>`) lleva su base en su directorio. Los hooks lanzan los comandos del marcador desde la raíz con rutas desde la raíz, así que el `lint.fichero` de esa app es un script suyo que entra en su directorio. Por ejemplo, `web/.agents-kit/lint-fichero.sh`:
+En un monorepo, cada app (`web/`, `packages/<x>`) lleva su base en su directorio, con su `.agents-kit/turno.sh`. Los hooks lanzan los comandos del marcador dentro del proyecto de cada fichero (el directorio más cercano con `package.json` y `tsconfig.json`), con las rutas relativas a ese directorio, y en la raíz para los ficheros que no son de ninguno: `lint.fichero` y `lint.turno` son los de arriba, los mismos para todas las apps. Si la raíz no es un proyecto TS y no tiene su `turno.sh`: `--lint-turno '[ ! -f .agents-kit/turno.sh ] || bash .agents-kit/turno.sh'`.
 
-```bash
-#!/usr/bin/env bash
-cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
-args=()
-for f in "$@"; do f="${f#./}"; case "$f" in web/*) args+=("./${f#web/}") ;; esac; done
-[ ${#args[@]} -gt 0 ] || exit 0
-[ -x node_modules/.bin/eslint ] || { echo "falta web/node_modules: ejecuta npm ci en web/" >&2; exit 127; }
-KIT_LINT_RAPIDO=1 exec node_modules/.bin/eslint --cache --cache-location node_modules/.cache/agents-kit/eslint-rapido \
-  --no-warn-ignored --pass-on-unpruned-suppressions "${args[@]}"
-```
+Tiene que ser dentro del proyecto: desde la raíz, ESLint 10 encuentra el `eslint.config.*` del directorio del fichero, pero lee las supresiones del `cwd` (`--suppressions-location` no lo arregla: sus claves son relativas a la app) y el parser de Astro no encuentra `typescript`.
 
-con `--lint-fichero 'ts,tsx,mts,cts,astro=bash web/.agents-kit/lint-fichero.sh'`. Desde la raíz, ESLint 10 sí encuentra el `eslint.config.*` del directorio del fichero, pero lee las supresiones del `cwd` (`--suppressions-location` no lo arregla: sus claves son relativas a la app) y el parser de Astro no encuentra `typescript`.
+En `turno.sh` de un proyecto con TypeScript 7: `TSC="node_modules/typescript7/bin/tsc"`; en Astro, `ANTES_TSC="node_modules/.bin/astro sync"` y `astro` en `LINT_EXT`.
 
 ## `knip`: código muerto
 
