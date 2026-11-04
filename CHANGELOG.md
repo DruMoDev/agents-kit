@@ -25,6 +25,9 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
+### Interno: kit-reglas explica cómo sacar los entry points de knip en monorepos con Workers · [#52](https://github.com/DruMoDev/agents-kit/pull/52)
+Cuando `knip` da casi todo como código sin uso, la guía de la base de reglas explica ya que casi siempre le faltan puntos de entrada, no que el código esté muerto, y cómo encontrarlos: el `main` de cada Worker (y por qué el plugin de Wrangler de `knip` no lo ve si el `wrangler.toml` está en un subdirectorio), los scripts sueltos, los tests y los ficheros que se lanzan por su ruta desde otro lenguaje o desde la configuración.
+
 ### Mejora: kit-reglas reconoce los repos Python y prepara solo los comandos del lint · [#51](https://github.com/DruMoDev/agents-kit/pull/51)
 Un repo Python con `ruff.toml`, `requirements.txt`, `setup.py` o ficheros `.py` ya cuenta como Python, aunque no tenga `pyproject.toml`, y el estado de sus reglas dice si usa `ruff` (y qué reglas tiene activadas) y `pyright`. Al instalar la base, el kit saca solo los comandos de lint que van en el marcador (ESLint, `ruff` con el intérprete del repo, `shellcheck`), así que ya no tienes que aprobar líneas de comandos: te explica en una frase qué se comprueba al editar y al acabar cada turno.
 
