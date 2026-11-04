@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Interno: la web de changelogs sin código muerto, vigilada por knip · [#PR](PR)
+### Interno: la web de changelogs sin código muerto, vigilada por knip · [#37](https://github.com/DruMoDev/agents-kit/pull/37)
 Quitados de la web un export y dos tipos que nadie usaba, y `knip` entra en la verificación completa: el código sin uso ya no puede volver a colarse. Los tres ficheros tocados quedan sin deuda de lint ni de tipos, sin cambiar lo que hace la web.
 
 ### Mejora: la base de reglas cubre cada app de un monorepo · [#35](https://github.com/DruMoDev/agents-kit/pull/35)
