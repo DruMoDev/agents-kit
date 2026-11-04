@@ -6,7 +6,8 @@
   },
   "lint": {
     "fichero": {
-      "ts,tsx,mts,cts,astro": "bash web/.agents-kit/lint-fichero.sh"
-    }
+      "ts,tsx,mts,cts,astro": "KIT_LINT_RAPIDO=1 node_modules/.bin/eslint --cache --cache-location node_modules/.cache/agents-kit/eslint-rapido --no-warn-ignored --pass-on-unpruned-suppressions"
+    },
+    "turno": "[ ! -f .agents-kit/turno.sh ] || bash .agents-kit/turno.sh"
   }
 }
