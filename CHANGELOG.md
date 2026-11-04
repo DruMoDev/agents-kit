@@ -23,6 +23,11 @@ ya existía con ese email, se vincula sola.
 ![Pantalla de acceso](docs/changelog/12-login.png)
 -->
 
+## 2026-11-04
+
+### Mejora: un revisor sin cuota ya no te pide nada si otro cubre su puesto · [#34](https://github.com/DruMoDev/agents-kit/pull/34)
+Cuando un revisor se queda sin su límite de uso (las 5 horas de Codex o de Claude, por ejemplo) y otro modelo revisa su puesto, el resumen ya no lo cuenta como un problema que tengas que arreglar: sale una línea informativa ("sin cuota, vuelve sola, cubierto por ...") y no llega como aviso de acción. Un login caducado o un modelo que no existe siguen avisándote como antes, y también una cuota que deja un puesto sin revisar.
+
 ## 2026-11-03
 
 ### Arreglo: kit-run fusiona también en el modo auto de Claude Code · [#31](https://github.com/DruMoDev/agents-kit/pull/31)

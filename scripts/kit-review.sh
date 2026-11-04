@@ -16,8 +16,8 @@
 #   git diff $KIT_REVIEW_BASE...$KIT_REVIEW_HEAD (both commits of <wt>, required) in full mode, with KIT_REVIEW_CONTEXTO
 #   (optional text: what the change is for) in place of the issue, and only prints the report (nothing is posted).
 # Exit: 0 ok (last line "FIN: <n> hallazgos"), 1 usage or rejected, 2 the seat stays unconfirmed: the last stderr
-# line is "sin confirmar (<motivo>): <detalle>", motivo = acceso (CLI missing, login, model, quota or crash: another
-# candidate may answer), tiempo, salida (empty or off-schema answer), bloqueado (the reviewer could not review),
+# line is "sin confirmar (<motivo>): <detalle>", motivo = acceso (CLI missing, login, model or crash: another
+# candidate may answer), cuota (a spent usage limit, which comes back on its own: another candidate may answer), tiempo, salida (empty or off-schema answer), bloqueado (the reviewer could not review),
 # integridad (the real worktree changed during the run) or entorno (git, gh or the comment failed).
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,6 +66,17 @@ unconfirmed() {
   fi
   echo "sin confirmar ($1): $2" >&2
   exit 2
+}
+# access_fail <detalle> [<mensaje del CLI>]: a login, model or crash failure (acceso), or a spent usage limit (cuota).
+# The CLI's message is claude's is_error result or, by default, the last line of the reviewer's stderr when it is an
+# "ERROR: " line (codex prints the prompt to stderr first: a quota text in the PR must not count). Texts seen in real
+# runs: claude "You've hit your 5-hour limit · resets ..." and "You've hit your session limit · resets ...", codex
+# "ERROR: You’ve hit your usage limit. ... try again at 1:50 PM.". Anything else (a 429 never seen) stays acceso.
+access_fail() {
+  local m="${2:-}"
+  [ -n "$m" ] || m="$(strip "$tmpd/err" 2>/dev/null | sed '/^[[:space:]]*$/d' | sed -n '$p' | sed -n 's/^ERROR: //p')"
+  printf '%s' "$m" | grep -Eqi 'hit your [[:alnum:] -]*limit' && unconfirmed cuota "límite de uso agotado: ${m:0:300}"
+  unconfirmed acceso "$1"
 }
 envfail() { echo "error: $1" >&2; echo "sin confirmar (entorno): $1" >&2; exit 2; }
 strip() { sed $'s/\x1b\\[[0-9;?]*[A-Za-z]//g; s/\r$//' "$1"; }
@@ -263,7 +274,7 @@ after_run() {
   if [ "$rc" -ne 0 ]; then
     local why
     why="$(strip "$tmpd/out" | jq -r 'select(type == "object" and .is_error == true) | .result // empty' 2>/dev/null | sed -n '$p')"
-    unconfirmed acceso "terminó con código $rc${why:+: $why} (¿login, modelo o cuota?)"
+    access_fail "terminó con código $rc${why:+: $why} (¿login, modelo o cuota?)" "$why"
   fi
 }
 
@@ -306,7 +317,7 @@ case "$tool" in
     [ -s "$tmpd/out" ] || unconfirmed salida "respuesta vacía"
     res="$(strip "$tmpd/out" | jq -s -c 'map(objects) | last // {}' 2>/dev/null)" || res='{}'
     why="$(printf '%s' "$res" | jq -r 'select(.is_error == true) | .result // "error sin detalle"')"
-    [ -z "$why" ] || unconfirmed acceso "$why"
+    [ -z "$why" ] || access_fail "$why" "$why"
     printf '%s' "$res" | jq -c '.structured_output // null' > "$tmpd/json"
     ;;
   opencode)
