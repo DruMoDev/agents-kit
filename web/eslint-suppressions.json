@@ -1,12 +1,4 @@
 {
-  "e2e/changelogs.spec.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
   "e2e/shots.spec.ts": {
     "@typescript-eslint/no-confusing-void-expression": {
       "count": 1
