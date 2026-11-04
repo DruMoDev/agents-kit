@@ -211,7 +211,8 @@ test("cabeceras: sin caché, CSP sin inline libre, nosniff y referrer-policy", a
 
 test("DEV_BYPASS_ACCESS solo vale en localhost: con otro host se exige Access", async ({ request }) => {
   // un host por IP llega al worker (Vite bloquea nombres desconocidos antes): el bypass se ignora
+  // y, con Access configurado en wrangler.jsonc, falta el JWT
   const res = await request.get("/", { headers: { host: "192.168.1.50:4329" } });
-  expect(res.status()).toBe(503);
-  expect(await res.text()).toContain("Access sin configurar");
+  expect(res.status()).toBe(403);
+  expect(await res.text()).toContain("Acceso denegado");
 });
