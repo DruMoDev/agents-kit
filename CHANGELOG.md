@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Mejora: la base de reglas JS pide strictNullChecks y avisa de directivas en línea y plantillas viejas · [#PR](PR)
+### Mejora: la base de reglas JS pide strictNullChecks y avisa de directivas en línea y plantillas viejas · [#49](https://github.com/DruMoDev/agents-kit/pull/49)
 En un proyecto JavaScript, la base exige ahora `strict` (o `strictNullChecks`) en el `tsconfig`: sin él, varias reglas del lint estricto fallaban en cada fichero con un aviso que no dice nada del código. `kit-reglas` cuenta además los `eslint-disable` y compañía que ya había en cada proyecto, que con la base dejan de funcionar, y los migra a la configuración, con su porqué, antes de congelar la deuda. Y dice si las copias de `turno.sh` o `tsc-base.mjs` de un proyecto son de una versión vieja del kit, para volver a copiarlas.
 
 ### Interno: la verificación completa del repo pasa en un worktree recién creado · [#45](https://github.com/DruMoDev/agents-kit/pull/45)
