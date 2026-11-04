@@ -854,5 +854,30 @@ err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
 case "$err" in *"  - la deuda crece: src/a.ts no-unused-vars"*) ;; *) fail "deuda fuera del blindado: $err";; esac
 case "$err" in *"ficheros de reglas"*) fail "deuda fuera del blindado: la regla no quedó aprobada: $err";; esac
 [ "$(pr_q '.state')" = OPEN ] || fail "deuda fuera del blindado: fusionó"
+# the debt of a TS project in a subdirectory: its growth goes through only when its own debt file is approved
+echo '{"revision":{"puestos":[]},"lint":{"fichero":{"ts":"true"}},"blindado":["eslint.config.*", "*/eslint.config.*"]}' > "$rr/.agents-kit.json"
+(cd "$rr" && git add -A && git commit -q -m "blindado sin la deuda de web" && git push -q origin main) >/dev/null 2>&1 || fail "reglas: blindado sin web"
+(cd "$w2" && git fetch -q origin && git reset -q --hard origin/main && mkdir -p web/src web/.agents-kit \
+  && echo '{}' > web/package.json && echo '{}' > web/tsconfig.json && echo 'export default [{rules: {y: 1}}];' > web/eslint.config.mjs \
+  && printf '{"src/b.ts":{"no-console":{"count":1}}}\n' > web/eslint-suppressions.json && printf '{"src/b.ts": 1}\n' > web/.agents-kit/tsc-base.json \
+  && git add -A && git commit -q -m "web con su deuda" && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 || fail "reglas: deuda de web"
+bash "$pr" regla "$w2" "$p2" "$tmp/regla" >/dev/null 2>&1 || fail "regla de web"
+flow_add_comment 7 "Vale lo de web."
+bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 7)" >/dev/null 2>&1 || fail "aprobar web"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 9"
+err="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "deuda de web fuera del blindado: exit $rc ($err)"
+case "$err" in *"  - la deuda crece: web/src/b.ts no-console (web/eslint-suppressions.json)"*"  - la deuda crece: web/src/b.ts tipos (web/.agents-kit/tsc-base.json)"*) ;;
+  *) fail "deuda de web fuera del blindado: $err";; esac
+# with the default blindado (which has */eslint-suppressions.json and */.agents-kit/*), approving it lets it merge
+echo '{"revision":{"puestos":[]},"lint":{"fichero":{"ts":"true"}}}' > "$rr/.agents-kit.json"
+(cd "$rr" && git add -A && git commit -q -m "blindado por defecto" && git push -q origin main) >/dev/null 2>&1 || fail "reglas: blindado por defecto"
+(cd "$w2" && git fetch -q origin && git rebase -q origin/main && git push -q --force origin HEAD:issue-7-reglas) >/dev/null 2>&1 || fail "reglas: rebase web"
+bash "$pr" regla "$w2" "$p2" "$tmp/regla" >/dev/null 2>&1 || fail "regla de web 2"
+flow_add_comment 7 "Vale lo de web, con su deuda."
+bash "$pr" aprobar-regla "$w2" "$p2" "$(dbid_last 7)" >/dev/null 2>&1 || fail "aprobar web 2"
+bash "$pr" gate-local "$w2" "$p2" "$tmp/gate" >/dev/null 2>&1 || fail "reglas: gate-local 10"
+out="$(bash "$pr" fusionar "$w2" "$p2" 7 2>&1)" || fail "deuda de web aprobada: $out"
+[ "$(pr_q '.state')" = MERGED ] || fail "deuda de web aprobada: no fusionó"
 
 echo "OK test_pr"

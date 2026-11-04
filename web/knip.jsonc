@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // typescript7 es el tsc de TS 7 al lado de la API de TS 6 (typescript); lo usa el script typecheck por su ruta,
+  // node_modules/typescript7/bin/tsc, que knip no ve.
+  "ignoreDependencies": ["typescript7"]
+}

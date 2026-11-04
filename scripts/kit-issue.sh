@@ -39,7 +39,8 @@
 # comprobar: kit-run's start check (one gh label list): exit 1 "kit en versión anterior: ejecuta kit-on para actualizar"
 #   (plus what is missing) when a kit v3 label is missing in the repo or the marker still has v2 keys, and (with the
 #   other reasons, if any) "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el
-#   clon)" when kit-reglas.sh estado finds ts and says base incompleta, unless the marker says "reglas": false;
+#   clon)" when kit-reglas.sh estado finds ts and says base incompleta, unless the marker says "reglas": false (with a TS
+#   project outside the root, "falta la base de reglas en <dir>, <dir>: ..." names each one, "la raíz" for the root);
 #   FIN: v3 otherwise.
 #   Its first line is "kit: <version>", the plugin version on disk: a session that loaded an older SKILL.md notices.
 # decision/bloquear avisan a Dru con kit-notify.sh; si el aviso falla, solo lo dicen en stderr (salen 0).
@@ -404,7 +405,11 @@ case "$sub" in
       est="$(bash "$here/kit-reglas.sh" estado "$root" 2>"$tmpd/estado.err")" \
         || { echo "error: kit-reglas.sh estado falló: $(cat "$tmpd/estado.err")" >&2; exit 2; }
       case "$(printf '%s\n' "$est" | sed -n 's/^lenguajes: //p')" in
-        ts|ts,*) [ "$(printf '%s\n' "$est" | sed -n '$p')" != "FIN: base incompleta" ] || base=falta ;;
+        ts|ts,*) if [ "$(printf '%s\n' "$est" | sed -n '$p')" = "FIN: base incompleta" ]; then
+            # the TS projects without the base, "." being the root; only the root keeps the message of one app
+            base="$(printf '%s\n' "$est" | sed -n 's/^proyecto: \(.*\) (base incompleta)$/\1/p' | paste -sd, - | sed 's/,/, /g')"
+            [ -n "$base" ] || base=.
+          fi ;;
       esac
     fi
     if [ -n "$miss" ] || [ -n "$v2" ] || [ -n "$base" ]; then
@@ -414,7 +419,12 @@ case "$sub" in
           [ -z "$miss" ] || echo "faltan etiquetas del kit en el repo: $miss"
           [ -z "$v2" ] || echo "el marcador .agents-kit.json tiene claves de la v2: $v2"
         fi
-        [ -z "$base" ] || echo "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)"
+        case "$base" in
+          "") ;;
+          .) echo "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ;;
+          .,*) echo "falta la base de reglas en la raíz${base#.}: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ;;
+          *) echo "falta la base de reglas en $base: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ;;
+        esac
       } >&2
       exit 1
     fi

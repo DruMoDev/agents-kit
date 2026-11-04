@@ -25,6 +25,11 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
+### Mejora: la base de reglas cubre cada app de un monorepo · [#35](https://github.com/DruMoDev/agents-kit/pull/35)
+Con el kit en la raíz de un monorepo, la base de lint y tipos ya no se da por instalada solo porque la raíz no tiene TypeScript: el kit encuentra cada app TS (`web/`, `packages/<x>`...), comprueba su base en su carpeta y, si a alguna le falta, `kit-run` dice cuál. La deuda congelada de cada app solo puede bajar, igual que la de la raíz. Un repo de una sola app funciona como antes.
+
+La web de changelogs de este repo ya tiene su base: lint estricto con tipos y su deuda de hoy congelada.
+
 ### Mejora: un revisor sin cuota ya no te pide nada si otro cubre su puesto · [#34](https://github.com/DruMoDev/agents-kit/pull/34)
 Cuando un revisor se queda sin su límite de uso (las 5 horas de Codex o de Claude, por ejemplo) y otro modelo revisa su puesto, el resumen ya no lo cuenta como un problema que tengas que arreglar: sale una línea informativa ("sin cuota, vuelve sola, cubierto por ...") y no llega como aviso de acción. Un login caducado o un modelo que no existe siguen avisándote como antes, y también una cuota que deja un puesto sin revisar.
 

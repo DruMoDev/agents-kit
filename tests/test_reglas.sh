@@ -78,12 +78,12 @@ run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "deuda en fichero toc
 limpia; git -C "$r" branch -qD pr
 echo '{"src/a.ts": {"no-explicit-any": {"count": 2}}, "src/b.ts": {"no-console": {"count": 1}}}' > "$r/eslint-suppressions.json"
 run trinquete "$r" origin/main; [ $rc -eq 1 ] || fail "entrada nueva en b.ts debe fallar: $out"
-grep -qxF "la deuda crece: src/b.ts no-console" <<<"$out" || fail "motivo b.ts: $out"
+grep -qxF "la deuda crece: src/b.ts no-console (eslint-suppressions.json)" <<<"$out" || fail "motivo b.ts: $out"
 echo '{"src/a.ts": {"no-explicit-any": {"count": 3}}}' > "$r/eslint-suppressions.json"
-run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "la deuda crece: src/a.ts no-explicit-any" <<<"$out" || fail "count mayor: $out"
+run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "la deuda crece: src/a.ts no-explicit-any (eslint-suppressions.json)" <<<"$out" || fail "count mayor: $out"
 limpia
 echo '{"src/c.ts": 2}' > "$r/.agents-kit/tsc-base.json"
-run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "la deuda crece: src/c.ts tipos" <<<"$out" || fail "tsc mayor: $out"
+run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "la deuda crece: src/c.ts tipos (.agents-kit/tsc-base.json)" <<<"$out" || fail "tsc mayor: $out"
 limpia
 git -C "$r" rm -q src/a.ts
 run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "deuda en fichero tocado: src/a.ts (lint)" <<<"$out" || fail "borrado con deuda: $out"
@@ -302,6 +302,95 @@ for x in "packages/a/.eslintignore" "packages/a/.npmrc" "patches/x.patch" ".yarn
   grep -qxF "$x" <<<"$out" || fail "glob sin '$x': $out"
 done
 [ "$(last_line "$out")" = "FIN: 8" ] || fail "foo.eslintignore y .yarn/cache no son blindados: $out"
+limpia
+
+# --- estado por proyecto TS (monorepos): cada directorio con package.json y tsconfig.json, fuera de node_modules
+m="$(mk_repo)"; echo '{}' > "$m/.agents-kit.json"
+# base_ts <dir>: the whole base in <dir> (tsconfig with the six flags, eslint config, knip)
+base_ts() {
+  mkdir -p "$1"; echo '{}' > "$1/package.json"
+  printf '{"compilerOptions": {%s}}\n' '"strict": true, "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true, "verbatimModuleSyntax": true, "noImplicitOverride": true, "noFallthroughCasesInSwitch": true' > "$1/tsconfig.json"
+  printf 'export default [strictTypeChecked, { linterOptions: { noInlineConfig: true } }];\n' > "$1/eslint.config.mjs"
+  echo '{}' > "$1/knip.json"
+}
+mkdir -p "$m/web"; echo '{}' > "$m/web/package.json"; echo '{}' > "$m/web/tsconfig.json"
+run estado "$m"; [ $rc -eq 0 ] || fail "estado web: $out"
+[ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "web sin base debe ser incompleta: $out"
+for x in "lenguajes: ts" "proyecto: web (base incompleta)" "tsconfig: strict no" "knip: no"; do
+  grep -qxF "$x" <<<"$out" || fail "estado web sin '$x': $out"
+done
+[ "$(grep -c '^deuda-lint:' <<<"$out")" = 2 ] || fail "deuda de la raíz y de web: $out"
+grep -q '^proyecto: \.' <<<"$out" && fail "la raíz sin TS no es proyecto: $out"
+rm -rf "$m/web"; base_ts "$m/web"
+run estado "$m"; [ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "sin lint declarado debe ser incompleta: $out"
+grep -qxF "proyecto: web (base incompleta)" <<<"$out" || fail "sin lint, web incompleta: $out"
+echo '{"lint": {"fichero": {"ts": "eslint"}}}' > "$m/.agents-kit.json"
+run estado "$m"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: web (base completa)" <<<"$out" \
+  || fail "web con base debe ser completa: $out"
+mkdir -p "$m/web/.agents-kit"; echo '{"src/a.ts": 2}' > "$m/web/.agents-kit/tsc-base.json"
+run estado "$m"; grep -qxF "deuda-tsc: 1 ficheros" <<<"$out" || fail "deuda de web: $out"
+# two packages, one without the base; a directory name with repeated spaces and a tab
+base_ts "$m/packages/a  b"; base_ts "$m/packages/t	u"; mkdir -p "$m/packages/c"; echo '{}' > "$m/packages/c/package.json"; echo '{}' > "$m/packages/c/tsconfig.json"
+run estado "$m"; [ "$(last_line "$out")" = "FIN: base incompleta" ] || fail "un paquete sin base: $out"
+for x in "proyecto: packages/a  b (base completa)" "proyecto: packages/c (base incompleta)" "proyecto: web (base completa)" \
+  "proyecto: packages/t"$'\t'"u (base completa)"; do
+  grep -qxF "$x" <<<"$out" || fail "monorepo sin '$x': $out"
+done
+rm -rf "$m/packages/c"
+# a name that starts with - is a directory, never an option
+base_ts "$m/-app"; run estado "$m"; [ $rc -eq 0 ] && grep -qxF "proyecto: -app (base completa)" <<<"$out" || fail "proyecto -app: $rc $out"
+mkdir -p "$m/-app/.agents-kit"; echo '{"src/a.ts": 1}' > "$m/-app/.agents-kit/tsc-base.json"
+run estado "$m"; [ $rc -eq 0 ] || fail "deuda de -app: $rc $out"
+rm -rf "$m/-app"
+# not projects: a tsconfig.*.json alone, a tsconfig.json without package.json, node_modules, ignored directories
+mkdir -p "$m/tools" "$m/lib" "$m/node_modules/x" "$m/web/node_modules/y" "$m/gen"
+echo '{}' > "$m/tools/package.json"; echo '{}' > "$m/tools/tsconfig.build.json"; echo '{}' > "$m/lib/tsconfig.json"
+for d in node_modules/x web/node_modules/y gen; do echo '{}' > "$m/$d/package.json"; echo '{}' > "$m/$d/tsconfig.json"; done
+echo 'gen/' > "$m/.gitignore"
+run estado "$m"; [ "$(last_line "$out")" = "FIN: base completa" ] || fail "nada de eso es un proyecto: $out"
+[ "$(grep -c '^proyecto:' <<<"$out")" = 3 ] || fail "solo web, packages/a  b y packages/t u: $out"
+# git failing is an environment error, never "no projects"
+mv "$m/.git" "$m/.git-off"; run estado "$m"; [ $rc -eq 2 ] || fail "estado con git roto debe dar 2: $rc $out"; mv "$m/.git-off" "$m/.git"
+# a single app in the root: the root is the project, its debt lines once
+s1="$(mk_repo)"; echo '{"lint": {"fichero": {"ts": "eslint"}}}' > "$s1/.agents-kit.json"; base_ts "$s1"
+run estado "$s1"; [ "$(last_line "$out")" = "FIN: base completa" ] && grep -qxF "proyecto: . (base completa)" <<<"$out" \
+  || fail "app en la raíz: $out"
+[ "$(grep -c '^deuda-lint:' <<<"$out")" = 1 ] || fail "deuda de la raíz una vez: $out"
+
+# --- trinquete y blindado con la deuda de un proyecto (claves relativas a su directorio)
+limpia
+mkdir -p "$r/web/src" "$r/web/.agents-kit"
+for f in a b c; do echo "export const $f = 1;" > "$r/web/src/$f.ts"; done
+echo '{}' > "$r/web/package.json"; echo '{}' > "$r/web/tsconfig.json"
+echo '{"src/a.ts": {"no-explicit-any": {"count": 1}}}' > "$r/web/eslint-suppressions.json"
+echo '{"src/b.ts": 1}' > "$r/web/.agents-kit/tsc-base.json"
+push_main web
+run trinquete "$r" origin/main; [ $rc -eq 0 ] || fail "web sin cambios: $out"
+echo "// cambio" >> "$r/web/src/a.ts"; echo "// cambio" >> "$r/web/src/b.ts"
+run trinquete "$r" origin/main; [ $rc -eq 1 ] || fail "tocar la deuda de web debe fallar: $out"
+grep -qxF "deuda en fichero tocado: web/src/a.ts (lint)" <<<"$out" && grep -qxF "deuda en fichero tocado: web/src/b.ts (tipos)" <<<"$out" \
+  || fail "motivos de web: $out"
+grep -q 'src/c.ts\|^deuda en fichero tocado: src/' <<<"$out" && fail "web/src/a.ts no es src/a.ts de la raíz: $out"
+limpia
+echo '{"src/a.ts": {"no-explicit-any": {"count": 1}}, "src/c.ts": {"no-console": {"count": 1}}}' > "$r/web/eslint-suppressions.json"
+echo '{"src/b.ts": 2}' > "$r/web/.agents-kit/tsc-base.json"
+run trinquete "$r" origin/main; [ $rc -eq 1 ] || fail "la deuda de web crece: $out"
+grep -qxF "la deuda crece: web/src/c.ts no-console (web/eslint-suppressions.json)" <<<"$out" \
+  && grep -qxF "la deuda crece: web/src/b.ts tipos (web/.agents-kit/tsc-base.json)" <<<"$out" || fail "crece en web: $out"
+run blindado "$r" origin/main
+grep -qxF "web/eslint-suppressions.json" <<<"$out" && grep -qxF "web/.agents-kit/tsc-base.json" <<<"$out" || fail "blindado de la deuda de web: $out"
+limpia
+echo '{}' > "$r/web/eslint-suppressions.json"; echo '{}' > "$r/web/.agents-kit/tsc-base.json"
+run blindado "$r" origin/main; [ "$(last_line "$out")" = "FIN: 0" ] || fail "la deuda de web que encoge no cuenta: $out"
+run trinquete "$r" origin/main; [ $rc -eq 0 ] || fail "encoger la deuda de web pasa: $out"
+limpia; git -C "$r" rm -q web/eslint-suppressions.json
+run trinquete "$r" origin/main; [ $rc -eq 0 ] || fail "borrar la deuda de web pasa: $out"
+limpia
+# a debt directory whose name has sed metacharacters (# and &) keeps its name in the reason
+mkdir -p "$r/w#&"; echo '{"src/x.ts": 1}' > "$r/w#&/eslint-suppressions.json.x"; mv "$r/w#&/eslint-suppressions.json.x" "$r/w#&/eslint-suppressions.json"
+printf '{"src/x.ts": {"r": {"count": 1}}}\n' > "$r/w#&/eslint-suppressions.json"
+run trinquete "$r" origin/main; [ $rc -eq 1 ] && grep -qxF "la deuda crece: w#&/src/x.ts r (w#&/eslint-suppressions.json)" <<<"$out" \
+  || fail "directorio con # y &: $out"
 limpia
 
 # --- abrir y cerrar

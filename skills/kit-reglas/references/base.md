@@ -92,7 +92,8 @@ TypeScript 7 es nativo y su paquete `typescript` ya no trae la API de JS que usa
 
 El montaje, lado a lado:
 - `typescript` en `node_modules` es la API de TS 6, para ESLint: `"typescript": "npm:@typescript/typescript6@<versión>"` en `devDependencies`. Tiene que ser `typescript` en la raíz, no un paquete anidado bajo `typescript-eslint`: algunos parsers (el de Astro) cargan `typescript` desde el directorio del proyecto.
-- El `tsc` de TS 7 queda aparte para `tsc-base.mjs` y `turno.sh`, con otro nombre: `"typescript7": "npm:typescript@<versión que ya usa el repo>"`, que deja su `tsc` en `node_modules/.bin/tsc` (el `typescript` de TS 6 solo trae `tsc6`). Comprueba después de instalar que `node_modules/.bin/tsc --version` da la 7 y que `node -e "console.log(require('typescript').version)"` da la 6.
+- El `tsc` de TS 7 queda aparte para `tsc-base.mjs` y `turno.sh`, con otro nombre: `"typescript7": "npm:typescript@<versión que ya usa el repo>"`. Llámalo por su ruta, `node_modules/typescript7/bin/tsc` (en `KIT_TSC`), nunca por `node_modules/.bin/tsc`: `@typescript/typescript6` 6.0.2 depende de `typescript` 6 con el alias `@typescript/old`, y su `tsc` puede quedarse con `node_modules/.bin/tsc` (visto el 2026-11-04 con npm 11.6.0). Comprueba después de instalar que `node_modules/typescript7/bin/tsc --version` da la 7 y que `node -e "console.log(require('typescript').version)"` da la 6.
+- `knip` no ve `typescript7` (se usa por su ruta): va en `ignoreDependencies` de `knip.jsonc`, con su porqué en un comentario.
 - Explícaselo a Dru como pieza propia: cambia cómo se declara `typescript` en `package.json`, y hay que deshacerlo cuando `typescript-eslint` soporte la 7.
 
 ### Scripts de `package.json`
@@ -106,6 +107,8 @@ El montaje, lado a lado:
 }
 ```
 
+En un proyecto con TypeScript 7, `KIT_TSC=node_modules/typescript7/bin/tsc` (ver arriba). En Astro, `typecheck` empieza por `astro sync`: sin `.astro/types.d.ts` (no versionado), los módulos `astro:*` no tienen tipos y `tsc` da errores que no son del código; la deuda se congela también después de `astro sync`.
+
 Los scripts `lint*` y `typecheck*` están blindados (cambiarlos pide la aprobación de Dru). Dentro de `npm run`, `tsc` y `eslint` son los de `node_modules/.bin`.
 
 ### Deuda de un repo empezado
@@ -115,6 +118,27 @@ Los scripts `lint*` y `typecheck*` están blindados (cambiarlos pide la aprobaci
 - Las dos solo encogen con el trabajo normal (`kit-reglas.sh trinquete` en `kit-pr.sh fusionar`):
   - una PR que toca un fichero con deuda lo deja a cero, siempre, también con la aprobación de Dru;
   - una PR que las hace crecer (una regla nueva que congela con `--suppress-rule` lo que rompe en ficheros que no toca) solo se fusiona con la aprobación de Dru de esa regla (`kit-regla-aprobada`).
+
+### Astro
+
+`eslint-plugin-astro` (`astro.configs.recommended`, detrás de `strictTypeChecked`) y `extraFileExtensions: [".astro"]` en `parserOptions`. `astro-eslint-parser` no admite `projectService` (avisa en cada fichero y usa `project: true`): en los `.astro`, `{ files: ["**/*.astro"], languageOptions: { parserOptions: { projectService: false, project: true } } }`. Su ESLint tiene que correr desde el directorio del proyecto: el parser carga `typescript` desde el `cwd` (desde otro directorio, el lint sin tipos falla con `Parsing error` en los tipos del frontmatter).
+
+### Un proyecto fuera de la raíz
+
+En un monorepo, cada app (`web/`, `packages/<x>`) lleva su base en su directorio. Los hooks lanzan los comandos del marcador desde la raíz con rutas desde la raíz, así que el `lint.fichero` de esa app es un script suyo que entra en su directorio. Por ejemplo, `web/.agents-kit/lint-fichero.sh`:
+
+```bash
+#!/usr/bin/env bash
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
+args=()
+for f in "$@"; do f="${f#./}"; case "$f" in web/*) args+=("./${f#web/}") ;; esac; done
+[ ${#args[@]} -gt 0 ] || exit 0
+[ -x node_modules/.bin/eslint ] || { echo "falta web/node_modules: ejecuta npm ci en web/" >&2; exit 127; }
+KIT_LINT_RAPIDO=1 exec node_modules/.bin/eslint --cache --cache-location node_modules/.cache/agents-kit/eslint-rapido \
+  --no-warn-ignored --pass-on-unpruned-suppressions "${args[@]}"
+```
+
+con `--lint-fichero 'ts,tsx,mts,cts,astro=bash web/.agents-kit/lint-fichero.sh'`. Desde la raíz, ESLint 10 sí encuentra el `eslint.config.*` del directorio del fichero, pero lee las supresiones del `cwd` (`--suppressions-location` no lo arregla: sus claves son relativas a la app) y el parser de Astro no encuentra `typescript`.
 
 ## `knip`: código muerto
 
@@ -141,7 +165,7 @@ Con el binario local, nunca con algo que pueda descargar:
   Sin tipos no salen los errores de las reglas con tipos, y ESLint daría por sobrantes sus supresiones (exit 2, "suppressions left that do not occur anymore"): por eso `--pass-on-unpruned-suppressions` aquí, y solo aquí. `lint.turno` y `npm run lint` sí exigen podarlas.
   Con oxlint o Biome, su binario en su lugar (`node_modules/.bin/oxlint`, `node_modules/.bin/biome lint`).
 - `lint.turno` (fin de turno: tipos y lint con tipos de lo cambiado): `--lint-turno 'bash .agents-kit/turno.sh'`. El script recibe los ficheros cambiados y lanza `node .agents-kit/tsc-base.mjs comprobar --cambiados <los .ts/.tsx>` más ESLint con tipos y `--cache` sobre los que tengan extensión de lint (`LINT_EXT`). Sin `node_modules`, sale con 127 y el hook no bloquea.
-- `verificar.completo` (CI o gate local), detrás de lo que ya tuviera: `npm run lint && npm run typecheck && node_modules/.bin/knip`. `knip` entra solo cuando no tiene hallazgos (en un repo empezado, al fusionar su issue de limpieza).
+- `verificar.completo` (CI o gate local), detrás de lo que ya tuviera: `npm run lint && npm run typecheck && node_modules/.bin/knip`; para una app de un subdirectorio, `(cd <app> && npm ci && npm run lint && npm run typecheck)` (un worktree nuevo no tiene su `node_modules`). `knip` entra solo cuando no tiene hallazgos (en un repo empezado, al fusionar su issue de limpieza).
 
 ## Python
 

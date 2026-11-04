@@ -160,6 +160,21 @@ err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
 echo '{"reglas": false}' > "$rt/.agents-kit.json"
 out="$(bash "$issue" comprobar "$rt" 2>&1)" || fail "comprobar TS con reglas false: exit $? ($out)"
 [ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar TS con reglas false: '$out'"
+# TS projects in subdirectories: each one without the base is named ("la raíz" for the root)
+mkdir -p "$rt/web" "$rt/packages/a"
+for d in web packages/a; do echo '{}' > "$rt/$d/package.json"; echo '{}' > "$rt/$d/tsconfig.json"; done
+echo '{}' > "$rt/.agents-kit.json"
+err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] || fail "comprobar subproyectos sin base: exit $rc ($err)"
+[ "$err" = "falta la base de reglas en la raíz, packages/a, web: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ] \
+  || fail "comprobar subproyectos sin base: '$err'"
+rm "$rt/tsconfig.json"
+err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"
+[ "$err" = "falta la base de reglas en packages/a, web: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ] \
+  || fail "comprobar sin TS en la raíz: '$err'"
+echo '{"reglas": false}' > "$rt/.agents-kit.json"
+out="$(bash "$issue" comprobar "$rt" 2>&1)" || fail "subproyectos con reglas false: exit $? ($out)"
+rm -rf "$rt/web" "$rt/packages"; echo '{}' > "$rt/tsconfig.json"
 # with v3 labels missing too, both reasons
 echo '{}' > "$rt/.agents-kit.json"
 t="$(mktemp)"; jq '.labels = ["en-curso"]' "$GH_STATE/state.json" > "$t" && mv "$t" "$GH_STATE/state.json"
