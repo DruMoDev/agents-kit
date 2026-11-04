@@ -9,12 +9,15 @@
 # kit-reglas skill. "Changed" is the working tree of <wt> (committed or not, plus untracked files not ignored) against
 # git merge-base <ref> HEAD, without rename detection: a renamed file counts as its old path deleted. So it serves both
 # fusionar (ref=origin/<base>, clean tree) and a local review (ref = the review base, or HEAD for only the uncommitted).
-#   estado: one line per fact, for kit-reglas to propose what is missing: "lenguajes: ts,py,sh|ninguno",
-#     "lint: declarado|sin declarar" (marker of <wt>), then each TS project ("." for the root, which is one when it has
+#   estado: one line per fact, for kit-reglas to propose what is missing: "lenguajes: ts,js,py,sh|ninguno",
+#     "lint: declarado|sin declarar" (marker of <wt>), then each project ("." for the root, which is one when it has
 #     tsconfig.json or typescript in its package.json; any other directory of the tree outside node_modules, when it
-#     has both package.json and tsconfig.json) as "proyecto: <dir> (base completa|base incompleta)" followed by
-#     "tsconfig: <flag> sí|no" for each flag of the base (grep over its tsconfig.json; "extends" is not followed),
-#     "eslint: strictTypeChecked sí|no", "eslint: noInlineConfig sí|no" (grep over its eslint.config.*), "knip: sí|no"
+#     has both package.json and tsconfig.json) as "proyecto: <dir> (ts|js, base completa|base incompleta)". A project
+#     is js when its tsconfig.json says "allowJs": true and none of its own files (those not under a nested project)
+#     is TS source (.ts, .tsx, .mts, .cts; declarations .d.ts, .d.mts, .d.cts aside): its tsconfig only feeds types to
+#     typescript-eslint. Then a ts project gets "tsconfig: <flag> sí|no" for each flag of the base (grep over its
+#     tsconfig.json; "extends" is not followed), and a js one "tsconfig: checkJs sí|no (opcional)" (the strict flags go
+#     with checkJs, a migration apart, never part of its base). Both: "eslint: strictTypeChecked sí|no", "eslint: noInlineConfig sí|no" (grep over its eslint.config.*), "knip: sí|no"
 #     and its "deuda-lint: <n> entradas|ninguna" (its eslint-suppressions.json, one entry per file and rule) and
 #     "deuda-tsc: <n> ficheros|ninguna" (its .agents-kit/tsc-base.json). The root's debt lines always appear: right
 #     after "lint:" when the root is not a TS project. FIN: base completa (lint declared and every project complete,
@@ -187,16 +190,34 @@ grows_tsb() {
   jq -rn --argjson b "$b" --argjson h "$h" --arg p "$p" '$h | to_entries[] | select((.value // 0) > ($b[.key] // -1)) | "\($p)\(.key)\ttipos"'
 }
 
-# ts_checks <lint>: the checks of the base for the TS project in the current directory, one line each; return 1 if
-# any says no (or <lint> is empty: the marker does not declare lint).
-ts_checks() {
+# project_kind <dir> <projects> <files>: "js" when <dir>/tsconfig.json says "allowJs": true and none of the project's
+# own files (of <files>, not under another of <projects> nested in it) is TS source (declarations aside); "ts" otherwise.
+project_kind() {
+  grep -Eq '"allowJs"[[:space:]]*:[[:space:]]*true' "$1/tsconfig.json" 2>/dev/null || { echo ts; return 0; }
+  D="$1" P="$2" awk '
+    BEGIN { d = ENVIRON["D"]; pre = (d == ".") ? "" : d "/"; n = split(ENVIRON["P"], ps, "\n")
+      for (i = 1; i <= n; i++) if (ps[i] != "" && ps[i] != d && ps[i] != "." && (pre == "" || index(ps[i] "/", pre) == 1)) hijo[ps[i] "/"] = 1 }
+    pre != "" && index($0, pre) != 1 { next }
+    { for (h in hijo) if (index($0, h) == 1) next }
+    /\.(ts|tsx|mts|cts)$/ && !/\.d\.(ts|mts|cts)$/ { ts = 1; exit }
+    END { print (ts ? "ts" : "js") }' <<<"$3"
+}
+
+# base_checks <lint> <ts|js>: the checks of the base for the project in the current directory, one line each; return 1
+# if any says no (or <lint> is empty: the marker does not declare lint). A js project has no tsconfig flags in its base.
+base_checks() {
   local ok=0 flag k v f pkg
   [ -n "$1" ] || ok=1
   pkg="$(json_tree package.json)" || return 2
-  for flag in $FLAGS; do
-    if [ -f tsconfig.json ] && grep -Eq "\"$flag\"[[:space:]]*:[[:space:]]*true" tsconfig.json; then v="sí"; else v="no"; ok=1; fi
-    echo "tsconfig: $flag $v"
-  done
+  if [ "$2" = js ]; then
+    if grep -Eq '"checkJs"[[:space:]]*:[[:space:]]*true' tsconfig.json; then v="sí"; else v="no"; fi
+    echo "tsconfig: checkJs $v (opcional)"
+  else
+    for flag in $FLAGS; do
+      if [ -f tsconfig.json ] && grep -Eq "\"$flag\"[[:space:]]*:[[:space:]]*true" tsconfig.json; then v="sí"; else v="no"; ok=1; fi
+      echo "tsconfig: $flag $v"
+    done
+  fi
   for k in strictTypeChecked noInlineConfig; do
     v="no"
     for f in eslint.config.*; do [ -f "$f" ] && grep -q "$k" "$f" && v="sí"; done
@@ -225,8 +246,14 @@ debt_lines() {
 case "$sub" in
   estado)
     projs="$(ts_projects)" || { echo "error: no pude listar los proyectos TS (git falló)" >&2; exit 2; }
+    files="$(tree_files)" || { echo "error: no pude listar los ficheros (git falló)" >&2; exit 2; }
+    kinds=""
+    while IFS= read -r d; do
+      [ -n "$d" ] && kinds="$kinds$(project_kind "$d" "$projs" "$files")"$'\n'
+    done <<<"$projs"
     langs=""
-    [ -n "$projs" ] && langs="ts"
+    grep -qx ts <<<"$kinds" && langs="ts"
+    grep -qx js <<<"$kinds" && langs="${langs:+$langs,}js"
     [ -f pyproject.toml ] && langs="${langs:+$langs,}py"
     [ -n "$(git ls-files -- '*.sh')" ] && langs="${langs:+$langs,}sh"
     echo "lenguajes: ${langs:-ninguno}"
@@ -235,14 +262,14 @@ case "$sub" in
     if [ -n "$l" ]; then echo "lint: declarado"; else echo "lint: sin declarar"; fi
     # The root's debt goes first when the root is not a TS project; each project prints its own after its checks.
     case "$projs" in .|.$'\n'*) ;; *) debt_lines || exit 2 ;; esac
-    while IFS= read -r d; do
+    while IFS= read -r d && IFS= read -r t <&3; do
       [ -n "$d" ] || continue
-      blk="$(cd "./$d" || exit 2; ts_checks "$l")"; rc=$?
+      blk="$(cd "./$d" || exit 2; base_checks "$l" "$t")"; rc=$?
       [ $rc -le 1 ] || exit 2
-      if [ $rc -eq 0 ]; then echo "proyecto: $d (base completa)"; else echo "proyecto: $d (base incompleta)"; completa=0; fi
+      if [ $rc -eq 0 ]; then echo "proyecto: $d ($t, base completa)"; else echo "proyecto: $d ($t, base incompleta)"; completa=0; fi
       printf '%s\n' "$blk"
       (cd "./$d" || exit 2; debt_lines) || exit 2
-    done <<<"$projs"
+    done <<<"$projs" 3<<<"$kinds"
     if [ $completa -eq 1 ]; then echo "FIN: base completa"; else echo "FIN: base incompleta"; fi
     ;;
 

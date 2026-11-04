@@ -112,4 +112,15 @@ reset; touch "$d/antes-falla"
 out="$(KIT_ESLINT="$d/fake-eslint" bash .agents-kit/turno.sh ./src/b.ts 2>&1)"; rc=$?
 [ "$rc" = 1 ] && grep -qF 'sync roto' <<<"$out" && [ "$(cat "$d/tsc-calls")" = antes ] || fail "ANTES_TSC que falla: rc=$rc $out"
 rm -rf node_modules; cp "$T" .agents-kit/turno.sh
+
+# a JS project without checkJs (TSC_EXT=""): only typed ESLint, no tsc and no tsc-base.mjs needed
+sed 's/^TSC_EXT=.*/TSC_EXT=""/' "$T" > .agents-kit/turno.sh; mv .agents-kit/tsc-base.mjs "$d/tsc-base.mjs"
+reset; out="$(KIT_ESLINT="$d/fake-eslint" bash .agents-kit/turno.sh ./src/w.mjs ./tsconfig.json 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$d/tsc-calls" ] && grep -qxF ./src/w.mjs "$d/eslint-args" && [ "$(tail -n 1 <<<"$out")" = "FIN: ok" ] \
+  || fail "JS sin checkJs: rc=$rc $out"
+reset; touch "$d/eslint-falla"; out="$(KIT_ESLINT="$d/fake-eslint" bash .agents-kit/turno.sh ./src/w.mjs 2>&1)"; rc=$?
+[ "$rc" = 1 ] || fail "JS con lint que falla: rc=$rc $out"
+reset; out="$(KIT_ESLINT="$d/fake-eslint" bash .agents-kit/turno.sh ./tsconfig.json 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "$(tail -n 1 <<<"$out")" = "FIN: nada que comprobar" ] || fail "JS con solo tsconfig: rc=$rc $out"
+mv "$d/tsc-base.mjs" .agents-kit/tsc-base.mjs; cp "$T" .agents-kit/turno.sh
 echo "ok"
