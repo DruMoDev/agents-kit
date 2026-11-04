@@ -112,6 +112,20 @@ En un proyecto con TypeScript 7, `KIT_TSC=node_modules/typescript7/bin/tsc` (ver
 
 Los scripts `lint*` y `typecheck*` están blindados (cambiarlos pide la aprobación de Dru). Dentro de `npm run`, `tsc` y `eslint` son los de `node_modules/.bin`.
 
+### Directivas en línea
+
+Con `noInlineConfig`, los comentarios `eslint-disable`, `eslint-enable` y `/* eslint ... */` que ya hubiera en el código dejan de funcionar: cada uno da el warning "has no effect because you have 'noInlineConfig'" (con `--max-warnings 0`, el lint falla) y la regla que desactivaban empieza a dar errores, que acabarían congelados en la deuda como si fueran código por arreglar. `kit-reglas.sh estado` los cuenta por proyecto (`directivas-en-linea: <n>`, informativo). Antes de congelar la deuda, cada uno pasa a la configuración y se quita del código:
+
+```js
+  {
+    // Las expresiones regulares de este parser buscan caracteres de control a propósito.
+    files: ["src/parser.mjs"],
+    rules: { "no-control-regex": "off" },
+  },
+```
+
+Acotado con `files` a los ficheros que lo necesitan, nunca la regla apagada en todo el proyecto, y con el porqué en un comentario.
+
 ### Deuda de un repo empezado
 
 - Lint: `node_modules/.bin/eslint . --suppress-all` escribe `eslint-suppressions.json` (supresiones nativas de ESLint; comprueba en su documentación que la versión que instalas las tiene), que ESLint aplica solo. Se versiona. Cuando un fichero se limpia, `node_modules/.bin/eslint . --prune-suppressions` quita las entradas que sobran.
@@ -119,6 +133,10 @@ Los scripts `lint*` y `typecheck*` están blindados (cambiarlos pide la aprobaci
 - Las dos solo encogen con el trabajo normal (`kit-reglas.sh trinquete` en `kit-pr.sh fusionar`):
   - una PR que toca un fichero con deuda lo deja a cero, siempre, también con la aprobación de Dru;
   - una PR que las hace crecer (una regla nueva que congela con `--suppress-rule` lo que rompe en ficheros que no toca) solo se fusiona con la aprobación de Dru de esa regla (`kit-regla-aprobada`).
+
+### Plantillas del kit
+
+`.agents-kit/turno.sh` y `.agents-kit/tsc-base.mjs` son copias de `templates/reglas/` del kit y no se actualizan solas. `kit-reglas.sh estado` compara las de cada proyecto con las del kit instalado (`plantilla: <fichero> al día|desfasada: ...`; en `turno.sh`, sin contar las líneas `TSC_EXT`, `LINT_EXT`, `TSC` y `ANTES_TSC`, que ajusta cada proyecto). Una copia desfasada puede fallar con lo que el kit ya soporta: un `turno.sh` de antes de `TSC_EXT=""` sale con "falta .agents-kit/tsc-base.mjs" en un proyecto JS. Se vuelve a copiar, conservando esas cuatro líneas, con el OK de Dru (están blindadas).
 
 ### Astro
 
@@ -134,9 +152,11 @@ En `turno.sh` de un proyecto con TypeScript 7: `TSC="node_modules/typescript7/bi
 
 ## JavaScript con `tsconfig` de solo inferencia
 
-Un proyecto JS cuyo `tsconfig.json` existe solo para que `typescript-eslint` infiera tipos (`allowJs: true`, `checkJs: false`, `noEmit: true`). `kit-reglas.sh estado` lo marca `(js, ...)`. Su base: el lint declarado, `strictTypeChecked`, `noInlineConfig` y `knip`; las seis opciones del `tsconfig` no entran.
+Un proyecto JS cuyo `tsconfig.json` existe solo para que `typescript-eslint` infiera tipos (`allowJs: true`, `checkJs: false`, `noEmit: true`). `kit-reglas.sh estado` lo marca `(js, ...)`. Su base: el lint declarado, `strictNullChecks` en el `tsconfig`, `strictTypeChecked`, `noInlineConfig` y `knip`; las otras opciones estrictas del `tsconfig` no entran.
 
 Por qué otra base: en JS sin anotar casi todo es `any`, y la base TS lo deja inservible. La familia `no-unsafe-*` y `restrict-template-expressions` marcan casi cada línea (en un proyecto real de 113 ficheros, el 85% de 18.875 errores; sin ellas quedaron 530 en 70 ficheros, hallazgos útiles como `require-await` o `no-unnecessary-condition`). Congelarlos con el trinquete dejaría el proyecto intocable: cada fichero tocado tendría que quedar a cero, y esos errores no se arreglan sin anotar tipos. Y con `checkJs: false`, `tsc` no comprueba nada: las opciones estrictas del `tsconfig` y `tsc-base.mjs` serían teatro.
+
+Salvo una: `"strict": true` (o solo `"strictNullChecks": true`) en `compilerOptions`. No es para `tsc`, sino para el lint: varias reglas de `strictTypeChecked` (`no-unnecessary-condition`, `no-unnecessary-boolean-literal-compare`, `no-useless-default-assignment`) exigen `strictNullChecks` y, sin esa opción, fallan en cada fichero con "This rule requires the strictNullChecks compiler option to be turned on to function correctly". Medido con ESLint 10.8.0 en un proyecto real de 113 ficheros JS (con la configuración de abajo y sin supresiones): sin ninguna de las dos, 1.071 errores en 112 ficheros, 336 de ellos ese aviso (una vez por fichero y regla); con `"strict": true`, 520 en 68; con solo `"strictNullChecks": true`, 519 en 68. Las otras opciones estrictas no cambian lo que infiere el lint. `"strict": true` con `"strictNullChecks": false` no vale: lo apaga (`estado` da `tsconfig: strictNullChecks no`).
 
 `eslint.config.mjs` (o `.js`), la misma de TS con dos cambios: las reglas de abajo apagadas y ningún `disableTypeChecked` para `**/*.{js,mjs,cjs}`, que apagaría las reglas con tipos (`no-floating-promises`) en todo el código, justo lo que protegen:
 
@@ -169,6 +189,7 @@ export default defineConfig(
 
 - Las reglas con tipos solo ven lo que el `tsconfig` deja tipar, y una que no puede tipar una expresión se calla en vez de fallar: `include` cubre todas las extensiones que se lintan (`**/*.mjs`, `**/*.js`, `**/*.cjs`), `lib` las APIs del entorno (`webworker` para `fetch` en un Worker) y `types` los de Node (`["node"]`, con `@types/node`). Compruébalo con un fichero de prueba que deja una promesa sin esperar (`fetch(...)` sin `await`): el lint tiene que fallar.
 - Un fichero que el `include` no recoge (los de un directorio que empieza por punto, por ejemplo) da `was not found by the project service`: añádelo al `include` o a `ignores`.
+- Las directivas en línea que ya tuviera (`eslint-disable`...) se migran a la configuración antes de congelar la deuda (ver "Directivas en línea").
 - Sin `typecheck` ni `tsc-base.mjs`: `npm run lint` y `knip` en `verificar.completo`. `turno.sh` con `TSC_EXT=""` (sin tipos: solo ESLint con tipos) y en `LINT_EXT` las extensiones del proyecto. La deuda de lint que quede se congela igual (`--suppress-all`).
 - **Pieza opcional, aparte: `checkJs`.** Activarlo es una migración (anotar tipos con JSDoc), no parte de la base: se propone a Dru como issue propio. Con `checkJs: true` entran las seis opciones del `tsconfig` de arriba, `tsc-base.mjs` con su deuda, el script `typecheck` y `TSC_EXT="js jsx mjs cjs"` en `turno.sh`; y cuando el código ya esté anotado, se pueden volver a encender las `no-unsafe-*`.
 

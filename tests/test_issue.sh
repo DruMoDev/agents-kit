@@ -196,6 +196,10 @@ err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
   || fail "comprobar JS sin base: $rc '$err'"
 printf 'export default [strictTypeChecked, { linterOptions: { noInlineConfig: true } }];\n' > "$rt/app/eslint.config.js"
 echo '{}' > "$rt/app/knip.json"
+err="$(bash "$issue" comprobar "$rt" 2>&1 >/dev/null)"; rc=$?
+[ $rc -eq 1 ] && [ "$err" = "falta la base de reglas en app: ejecuta kit-reglas (si ya está fusionada, haz git pull en el clon)" ] \
+  || fail "comprobar JS sin strictNullChecks: $rc '$err'"
+echo '{"compilerOptions": {"allowJs": true, "checkJs": false, "noEmit": true, "strict": true}}' > "$rt/app/tsconfig.json"
 out="$(bash "$issue" comprobar "$rt" 2>&1)" || fail "comprobar con la base JS: exit $? ($out)"
 [ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar con la base JS: '$out'"
 rm -rf "$rt/app"; echo '{}' > "$rt/tsconfig.json"
