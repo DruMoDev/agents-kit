@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Interno: la verificación completa del repo pasa en un worktree recién creado · [#PR](PR)
+### Interno: la verificación completa del repo pasa en un worktree recién creado · [#45](https://github.com/DruMoDev/agents-kit/pull/45)
 La verificación completa genera los tipos de la web antes de pasarle el lint, así que ya no sale en rojo en un worktree nuevo por algo que el cambio no ha tocado.
 
 ### Mejora: en Codex, kit-run avisa al arrancar si el sandbox no le deja trabajar · [#44](https://github.com/DruMoDev/agents-kit/pull/44)
