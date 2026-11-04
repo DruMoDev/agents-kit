@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Interno: la web vuelve a usar la comprobación de fin de turno actual del kit · [#PR](PR)
+### Interno: la web vuelve a usar la comprobación de fin de turno actual del kit · [#53](https://github.com/DruMoDev/agents-kit/pull/53)
 La comprobación de fin de turno de la web era una copia de una versión anterior del kit. Ahora es la de la plantilla actual, con sus ajustes propios de la web (ficheros `.astro`, TypeScript 7 y la generación de tipos de Astro), y el estado de las reglas ya no la marca como desfasada. No cambia nada de lo que se comprueba.
 
 ### Interno: kit-reglas explica cómo sacar los entry points de knip en monorepos con Workers · [#52](https://github.com/DruMoDev/agents-kit/pull/52)
