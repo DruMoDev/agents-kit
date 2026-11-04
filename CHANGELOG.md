@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Mejora: kit-reglas reconoce los repos Python y prepara solo los comandos del lint · [#PR](PR)
+### Mejora: kit-reglas reconoce los repos Python y prepara solo los comandos del lint · [#51](https://github.com/DruMoDev/agents-kit/pull/51)
 Un repo Python con `ruff.toml`, `requirements.txt`, `setup.py` o ficheros `.py` ya cuenta como Python, aunque no tenga `pyproject.toml`, y el estado de sus reglas dice si usa `ruff` (y qué reglas tiene activadas) y `pyright`. Al instalar la base, el kit saca solo los comandos de lint que van en el marcador (ESLint, `ruff` con el intérprete del repo, `shellcheck`), así que ya no tienes que aprobar líneas de comandos: te explica en una frase qué se comprueba al editar y al acabar cada turno.
 
 ### Mejora: la base de reglas JS pide strictNullChecks y avisa de directivas en línea y plantillas viejas · [#49](https://github.com/DruMoDev/agents-kit/pull/49)
