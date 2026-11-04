@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Mejora: en Codex, kit-run avisa al arrancar si el sandbox no le deja trabajar · [#PR](PR)
+### Mejora: en Codex, kit-run avisa al arrancar si el sandbox no le deja trabajar · [#44](https://github.com/DruMoDev/agents-kit/pull/44)
 Con el sandbox por defecto de Codex no hay red para GitHub ni permiso para escribir en el repositorio git, así que `kit-run` no podía reclamar, empujar ni fusionar y fallaba a mitad. Ahora para nada más empezar y dice cómo lanzar Codex (`--sandbox danger-full-access`). En OpenCode y en Claude Code no cambia nada: ninguno de los dos frena la fusión.
 
 ### Mejora: la base de reglas distingue los proyectos JavaScript de los TypeScript · [#42](https://github.com/DruMoDev/agents-kit/pull/42)
