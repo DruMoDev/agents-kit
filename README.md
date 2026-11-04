@@ -20,6 +20,8 @@ codex plugin add agents-kit@agents-kit
 
 Después, aprueba el hook una vez con `/hooks` dentro de Codex interactivo. Codex omite en silencio los hooks de plugin que no son de confianza. Si el hook cambia, hay que aprobarlo otra vez.
 
+`kit-run` y `kit-on` necesitan red para `gh` y `git push` y escribir en `.git` y en `~/.agents-kit`: en Codex, lánzalos sin sandbox (`codex --sandbox danger-full-access`, o `codex exec --sandbox danger-full-access`). Con el sandbox de por defecto, `kit-run` para al arrancar y dice por qué.
+
 ### OpenCode
 
 ```

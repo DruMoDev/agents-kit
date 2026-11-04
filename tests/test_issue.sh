@@ -6,6 +6,8 @@ issue="$REPO_ROOT/scripts/kit-issue.sh"
 export PATH="$TESTS_DIR/stubs/notify:$PATH"
 export HOME="$(mktemp -d)" CURL_LOG="$(mktemp)" KIT_NTFY_TOPIC=tema-test
 unset CURL_FAIL KIT_NTFY_SERVER
+# the suite may run inside Codex's sandbox (a reviewer): comprobar would refuse it
+unset CODEX_SANDBOX_NETWORK_DISABLED
 
 mk_kit_repo() {
   local r; r="$(mk_repo)"
@@ -151,6 +153,16 @@ err="$(bash "$issue" comprobar "$r2" 2>&1 >/dev/null)"; rc=$?
 case "$err" in "kit en versión anterior: ejecuta kit-on para actualizar"*"reviewers"*"notify"*) ;; *) fail "comprobar claves v2: $err";; esac
 GH_FAIL_ON="label list" bash "$issue" comprobar "$r" >/dev/null 2>&1; [ $? -eq 2 ] || fail "comprobar con gh roto debe salir 2"
 bash "$issue" comprobar "$r" x >/dev/null 2>&1; [ $? -eq 1 ] || fail "comprobar con argumentos debe salir 1"
+# inside Codex's sandbox without network: exit 1 with what to do, before any gh call
+: > "$GH_LOG"
+out="$(CODEX_SANDBOX_NETWORK_DISABLED=1 bash "$issue" comprobar "$r" 2>&1)"; rc=$?
+[ $rc -eq 1 ] || fail "comprobar en el sandbox de Codex sin red: exit $rc ($out)"
+case "$out" in "kit: "*"Codex corre con el sandbox sin red (CODEX_SANDBOX_NETWORK_DISABLED=1)"*"danger-full-access"*) ;;
+  *) fail "comprobar en el sandbox de Codex sin red: '$out'";; esac
+case "$out" in *"FIN:"*) fail "comprobar en el sandbox de Codex sin red con FIN: '$out'";; esac
+[ ! -s "$GH_LOG" ] || fail "comprobar en el sandbox de Codex sin red llamó a gh: $(cat "$GH_LOG")"
+out="$(CODEX_SANDBOX_NETWORK_DISABLED=0 bash "$issue" comprobar "$r" 2>&1)" || fail "comprobar con la red de Codex activa: exit $? ($out)"
+[ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar con la red de Codex activa: '$out'"
 # a TS repo without the rule base (kit-reglas.sh estado: base incompleta) is refused, unless the marker says "reglas": false
 use_flow_gh
 rt="$(mk_kit_repo)"; echo '{}' > "$rt/tsconfig.json"
