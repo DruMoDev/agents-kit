@@ -250,6 +250,23 @@ Visto el 2026-10-27 (2.1.311) y el 2026-11-03 (2.1.317): en el modo auto, el cla
 - Las reglas `allow` del `.claude/settings.json` versionado solo valen en una carpeta de confianza (aceptada en interactivo). Si no, sale `Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace has not been trusted` (`settings.local.json`, sin versionar, no lo necesita).
 - Según la documentación (sin verificar contra el clasificador real): una acción que casa con una regla `allow` se resuelve sin el clasificador del modo auto; un plugin no puede traer reglas de permisos (su `settings.json` solo admite `agent` y `subagentStatusLine`); un hook `PreToolUse` que devuelve `allow` no consta como vía para saltarse el clasificador.
 - Por eso la regla nombra `kit-fusionar` sin comodín delante: con un `*` delante del comando (por ejemplo `Bash(*kit-pr.sh fusionar *)`) casaría cualquier programa cuya línea contenga ese texto.
+- En uso real, el 2026-11-04 (Claude Code de una sesión de Dru en modo auto): `kit-fusionar` como comando suelto pasó el clasificador y fusionó las PRs #35, #37 y #38.
+
+#### Fusión en Codex y OpenCode
+
+Visto el 2026-11-04 con codex-cli 0.165.0, opencode 2.1.4 (`run --standalone`) y opencode 1.19.4, aislados como en "Hooks de reglas en Codex y OpenCode" (`HOME`, `CODEX_HOME` y `XDG_*` temporales, modelo falso local que pide una sola llamada a la herramienta de shell). El comando, en un clon de `DruMoDev/agents-kit-sandbox`: una sonda (escribir fuera del repo y en su `.git`, `curl` a `api.github.com`, `gh api user`, `git ls-remote`), `kit-pr.sh fusionar <clon> 999999 12` y `kit-ship-pr.sh fusionar <clon> kit-on`. Con acceso completo, el primero llega a GitHub y sale con 2 (`no se pudo leer la PR #999999`) y el segundo con 1 (`no hay un PR abierto desde 'kit-on'`): así se ve hasta dónde llegan sin fusionar nada.
+- Ninguna de las tres herramientas tiene un clasificador ni pide aprobación para ese comando: lo ejecutan.
+- OpenCode V1 y V2, con permisos por defecto, con y sin el plugin del kit: ejecuta con red, `gh` autenticado y escritura fuera del repo y en `.git`. Los dos scripts llegan a GitHub. No frena la fusión.
+- Codex (`codex exec -c 'approval_policy="never"'`): lo frena el sandbox, no un permiso. Sin preguntar, ejecuta el comando dentro del sandbox, y el comando falla:
+  - El sandbox por defecto fue `read-only` con el repo sin confianza y `workspace-write` con el repo de confianza (`trust_level = "trusted"` en `config.toml`, como los repos de Dru; tras las primeras ejecuciones, Codex lo escribió solo en el `config.toml` temporal).
+  - En los dos: sin red (`Could not resolve host`, `CODEX_SANDBOX_NETWORK_DISABLED=1`), sin escribir fuera del directorio de trabajo, `/tmp` y `$TMPDIR`, y con el `.git` del repo en solo lectura aunque esté dentro.
+  - `kit-pr.sh fusionar` sale con 2 en `gh api user` y `kit-ship-pr.sh fusionar` con 2 (`gh no autenticado`). Lo mismo le pasaría a cualquier paso de `kit-run` que use `gh` o `git push`, y a todo lo que escribe en `~/.agents-kit/worktrees`.
+  - Con `-c sandbox_workspace_write.network_access=true`, `gh` tiene red y está autenticado, pero `kit-ship-pr.sh fusionar` falla en `git fetch` (`cannot open '.git/FETCH_HEAD': Operation not permitted`).
+  - Con `--dangerously-bypass-approvals-and-sandbox` (`danger-full-access`) la sonda escribe en todas partes y tiene red.
+- Codex, dos vías por repo, probadas con `codex exec` en el sandbox por defecto (de confianza):
+  - Un `.codex/config.toml` del repo se aplica: con `[sandbox_workspace_write]`, `network_access = true` y `writable_roots` (rutas absolutas; el `.git` del repo vale si se nombra), los dos scripts llegan a GitHub. Abre la red a cualquier comando del agente en ese repo.
+  - Un `.codex/rules/<nombre>.rules` del repo se aplica: `prefix_rule(pattern = ["<ruta del script>"], decision = "allow")` ejecuta ese comando fuera del sandbox, con red y escritura, y lo demás sigue dentro. Pero Codex no pone el `bin/` del plugin en el PATH (`kit-fusionar` no está), así que la regla tiene que nombrar la ruta absoluta del script, y en Codex esa ruta lleva la versión del plugin (`~/.codex/plugins/cache/agents-kit/agents-kit/<versión>/scripts/`).
+- Sin verificar: la aprobación interactiva de Codex (`on-request`, la que pide subir de sandbox), un modelo real que pide `sandbox_permissions: require_escalated`, y los modos de aprobación de OpenCode configurados por el usuario.
 
 #### Sin minutos de Actions
 
