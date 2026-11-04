@@ -211,7 +211,7 @@ Ficheros, exports y dependencias sin uso. Un `knip.json` mínimo:
 
 ## Comandos para el marcador
 
-Con el binario local, nunca con algo que pueda descargar:
+`kit-reglas.sh marcador <wt>` los imprime ya hechos, listos para `kit-activate.sh`; aquí, qué es cada uno. Con el binario local, nunca con algo que pueda descargar:
 
 - `lint.fichero` (cada edición, sin tipos, con caché):
   `--lint-fichero 'ts,tsx,mts,cts,js,jsx,mjs,cjs=KIT_LINT_RAPIDO=1 node_modules/.bin/eslint --cache --cache-location node_modules/.cache/agents-kit/eslint-rapido --no-warn-ignored --pass-on-unpruned-suppressions'`.
@@ -224,7 +224,8 @@ Con el binario local, nunca con algo que pueda descargar:
 
 Si el repo tiene Python:
 - `ruff` (lint y formato), con un `select` amplio en `ruff.toml` (por ejemplo `["E", "F", "B", "UP", "SIM", "I"]`), y `pyright` estricto (`"typeCheckingMode": "strict"` en `pyrightconfig.json`).
-- `lint.fichero`: `--lint-fichero 'py=.venv/bin/ruff check --quiet'` (o el `ruff` del PATH), nunca `uvx` ni `pipx run`.
+- `kit-reglas.sh estado` da `py` en `lenguajes:` con `pyproject.toml`, `ruff.toml`, `.ruff.toml`, `requirements*.txt`, `setup.py` o `setup.cfg` en la raíz, o con algún `.py` versionado, y sus líneas informativas (no cambian `base completa`): `ruff: sí|no`, `ruff select: <códigos>|ninguna|por defecto` y `pyright: sí|no`, de la configuración de la raíz (`.ruff.toml`, `ruff.toml` o `pyproject.toml`, el primero que exista, como `ruff`).
+- `lint.fichero`: lo da `kit-reglas.sh marcador <wt>`. Con `--python <comando>`, `'py="<comando>" -m ruff check --quiet'`; si no se pasa, `.venv/bin/ruff check --quiet` si existe y, si no, el `ruff` del PATH (`ruff check --quiet`). Nunca `uvx` ni `pipx run`. Si el repo decide su intérprete con un script propio (un `tools/python.sh` que nombra su `AGENTS.md`, por ejemplo), pásalo: `--python '$(tools/python.sh)'` da `"$(tools/python.sh)" -m ruff check --quiet`, que se evalúa en cada edición. Sin ese intérprete (un worktree sin `.venv`), el comando sale con 127 y el hook no bloquea. En un monorepo, los hooks lanzan `lint.fichero` desde el proyecto de cada fichero (un `.py` dentro de una app JS, por ejemplo): por eso, con un proyecto en un subdirectorio, `marcador` ancla a la raíz las rutas relativas (`"$(git rev-parse --show-toplevel)/.venv/bin/ruff"`, `"$("$(git rev-parse --show-toplevel)"/tools/python.sh)"`).
 - `ruff.toml` y `pyrightconfig.json` no están en el `blindado` por defecto. Propón añadirlos: la lista del marcador sustituye entera a la de por defecto, así que copia la de `templates/config.json` del kit y añádelos. Mejor en esos ficheros que en `pyproject.toml`, que blindado entero bloquearía cambios normales.
 
 ## Bash

@@ -199,8 +199,9 @@ grep -q 'tsc-base.mjs generar' "$reg" && grep -q 'tsc-base.mjs comprobar' "$reg"
 grep -q 'kit-pr.sh" regla' "$reg" || fail "kit-reglas must post the proposal with kit-pr.sh regla"
 grep -q 'kit-pr.sh" aprobar-regla' "$reg" || fail "kit-reglas must register the approval with aprobar-regla"
 grep -q -- '--chat' "$reg" || fail "kit-reglas must register a chat approval with --chat"
-grep -q 'kit-activate.sh" <wt> --lint-fichero' "$reg" && grep -q -- '--lint-turno' "$reg" && grep -q -- '--verificar-completo' "$reg" \
-  || fail "kit-reglas must write lint and verificar with kit-activate.sh"
+grep -q 'kit-reglas.sh" marcador <wt>' "$reg" && grep -q 'kit-activate.sh" <wt> <las líneas de marcador' "$reg" \
+  && grep -q -- '--verificar-completo' "$reg" || fail "kit-reglas must write lint (from kit-reglas.sh marcador) and verificar with kit-activate.sh"
+grep -q -- '--python' "$reg" || fail "kit-reglas must pass the repo's own Python interpreter with --python"
 grep -q 'templates/reglas/turno.sh' "$reg" && grep -q 'templates/reglas/tsc-base.mjs' "$reg" || fail "kit-reglas must copy both templates"
 grep -q -- '--suppress-all' "$reg" || fail "kit-reglas must freeze the lint debt with --suppress-all"
 grep -q 'npm view <paquete> version' "$reg" || fail "kit-reglas must look versions up in the registry"
