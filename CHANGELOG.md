@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-04
 
-### Interno: el test de la web que comprueba Access vuelve a pasar · [#PR](PR)
+### Interno: el test de la web que comprueba Access vuelve a pasar · [#40](https://github.com/DruMoDev/agents-kit/pull/40)
 El test de punta a punta que comprueba que fuera de localhost se exige Access esperaba la respuesta de cuando Access aún no estaba configurado. Ahora espera el acceso denegado sin la sesión de Access.
 
 ### Mejora: en un monorepo, el lint de cada edición y de cada turno corre dentro de su app · [#38](https://github.com/DruMoDev/agents-kit/pull/38)
