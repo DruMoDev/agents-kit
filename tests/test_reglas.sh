@@ -545,6 +545,9 @@ rm "$py/pyproject.toml"; printf '[lint]\nselect = ["E", "UP"]\n' > "$py/ruff.tom
 run estado "$py"; for x in "ruff: sí" "ruff select: E,UP" "pyright: sí"; do grep -qxF "$x" <<<"$out" || fail "ruff.toml [lint] sin '$x': $out"; done
 printf 'select = ["I"]\n' > "$py/ruff.toml"
 run estado "$py"; grep -qxF "ruff select: I" <<<"$out" || fail "select arriba del todo: $out"
+printf '[lint]\nselect = []\n' > "$py/.ruff.toml"
+run estado "$py"; grep -qxF "ruff select: ninguna" <<<"$out" || fail ".ruff.toml antes que ruff.toml, y select vacío: $out"
+rm "$py/.ruff.toml"
 echo '[tool.black]' > "$py/pyproject.toml"; rm "$py/ruff.toml" "$py/pyrightconfig.json"
 run estado "$py"; grep -qxF "ruff: no" <<<"$out" && grep -qxF "pyright: no" <<<"$out" || fail "pyproject sin ruff ni pyright: $out"
 grep -q '^ruff select' <<<"$out" && fail "sin ruff no hay select: $out"
@@ -580,6 +583,20 @@ run marcador "$py" --python 'a"b'; [ $rc -eq 1 ] && grep -q 'valor de --python i
 run marcador "$py" --python '$(tools/python.sh)'
 grep -qxF -- "--lint-fichero 'py=\"\$(tools/python.sh)\" -m ruff check --quiet'" <<<"$out" || fail "marcador py con \$(...): $out"
 run marcador "$py" --otra x; [ $rc -eq 1 ] || fail "opción desconocida: exit $rc"
+# a project in a subdirectory: the hooks run lint.fichero from there, so the paths relative to the root go from it
+mkdir -p "$mj/.venv/bin"; printf '#!/bin/sh\n' > "$mj/.venv/bin/ruff"; chmod +x "$mj/.venv/bin/ruff"; echo 'x = 1' > "$mj/app/h.py"
+git -C "$mj" add app/h.py
+run marcador "$mj"; grep -qxF -- "--lint-fichero 'py=\"\$(git rev-parse --show-toplevel)/.venv/bin/ruff\" check --quiet'" <<<"$out" || fail "ruff de .venv en monorepo: $out"
+run marcador "$mj" --python '$(tools/python.sh)'
+grep -qxF -- "--lint-fichero 'py=\"\$(\"\$(git rev-parse --show-toplevel)\"/tools/python.sh)\" -m ruff check --quiet'" <<<"$out" || fail "--python \$(...) en monorepo: $out"
+run marcador "$mj" --python 'tools/py.sh'
+grep -qxF -- "--lint-fichero 'py=\"\$(git rev-parse --show-toplevel)/tools/py.sh\" -m ruff check --quiet'" <<<"$out" || fail "--python ruta en monorepo: $out"
+run marcador "$mj" --python 'python3'; grep -qxF -- "--lint-fichero 'py=\"python3\" -m ruff check --quiet'" <<<"$out" || fail "--python del PATH en monorepo: $out"
+# and it really runs from the project directory: the fake interpreter of tools/ is found
+mkdir -p "$mj/tools"; printf '#!/bin/sh\necho /bin/echo\n' > "$mj/tools/python.sh"; chmod +x "$mj/tools/python.sh"
+run marcador "$mj" --python '$(tools/python.sh)'; c="$(sed -n "s/^--lint-fichero 'py=\(.*\)'\$/\1/p" <<<"$out")"
+o="$(cd "$mj/app" && /bin/sh -c "$c \"\$@\"" kit-lint ./h.py)" && [ "$o" = "-m ruff check --quiet ./h.py" ] || fail "el comando desde el proyecto: '$o' ($c)"
+rm -rf "$mj/.venv" "$mj/tools" "$mj/app/h.py"; git -C "$mj" rm -q --cached app/h.py
 # nothing to lint
 mn="$(mk_repo)"; echo '{}' > "$mn/.agents-kit.json"; run marcador "$mn"; [ "$out" = "FIN: 0" ] || fail "marcador vacío: $out"
 # what it prints works as it is with kit-activate.sh

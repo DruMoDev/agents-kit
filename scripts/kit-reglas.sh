@@ -13,7 +13,8 @@
 #   estado: one line per fact, for kit-reglas to propose what is missing: "lenguajes: ts,js,py,sh|ninguno" (py: in
 #     the root pyproject.toml, ruff.toml, .ruff.toml, requirements*.txt, setup.py or setup.cfg, or any versioned .py),
 #     "lint: declarado|sin declarar" (marker of <wt>), with py the informative "ruff: sí|no" (ruff.toml, .ruff.toml or
-#     [tool.ruff...] in pyproject.toml, of the root), "ruff select: <códigos>|por defecto" (lint.select or select;
+#     [tool.ruff...] in pyproject.toml, of the root; the first of them, as ruff), "ruff select: <códigos>|ninguna|por
+#     defecto" (lint.select or select;
 #     [tool.ruff.lint] or [tool.ruff] in pyproject.toml) and "pyright: sí|no" (pyrightconfig.json or [tool.pyright]),
 #     which never change the base, then each project ("." for the root, which is one when it has
 #     tsconfig.json or typescript in its package.json; any other directory of the tree outside node_modules, when it
@@ -39,7 +40,9 @@
 #     types (ts,tsx,mts,cts,js,jsx,mjs,cjs with a TS project, js,jsx,mjs,cjs with only JS ones, plus astro, vue or
 #     svelte when a project has such files); with py, --lint-fichero 'py=<ruff>' (--python <comando>:
 #     "<comando>" -m ruff check --quiet, a value without double quotes, $(...) allowed; else .venv/bin/ruff check
-#     --quiet when it is executable, else ruff check --quiet; never uvx nor pipx); with versioned .sh, 'sh,bash=shellcheck';
+#     --quiet when it is executable, else ruff check --quiet; never uvx nor pipx; with a project in a subdirectory,
+#     from where the hooks run it, a path relative to the root goes from $(git rev-parse --show-toplevel): .venv/bin/ruff,
+#     a <comando> with a / and $(<ruta relativa>)); with versioned .sh, 'sh,bash=shellcheck';
 #     with a TS or JS project, --lint-turno 'bash .agents-kit/turno.sh' when the root is a project or has that file,
 #     else '[ ! -f .agents-kit/turno.sh ] || bash .agents-kit/turno.sh'. FIN: <n> (the number of flags).
 #   trinquete: exit 1 with one line per reason on stderr when a changed or deleted file still has entries in the
@@ -293,14 +296,14 @@ has_py() {
 }
 
 # toml_ruff_select <fichero> <secciones>: the codes of "select" (in one line or several) of the first of <secciones>
-# (separated by |, "" for the top level) that sets it, comma separated; empty if none.
+# (separated by |, "" for the top level) that sets it, comma separated, or "-" for an empty list; nothing if none.
 toml_ruff_select() {
   S="$2" perl -ne '
     BEGIN { @orden = split /\|/, $ENV{S}, -1; %ok = map { $_ => 1 } @orden; $sec = "" }
     s/#.*//;
     if (!$in && /^\s*\[\s*([^\]]*?)\s*\]\s*$/) { $sec = $1; next }
     if (!$in) { next unless $ok{$sec} && !exists $res{$sec} && /^\s*select\s*=\s*\[(.*)/s; $in = 1; $buf = $1 } else { $buf .= $_ }
-    if ($buf =~ /\]/) { $buf =~ s/\].*//s; $res{$sec} = join(",", $buf =~ /["\x27]([^"\x27]*)["\x27]/g); $in = 0 }
+    if ($buf =~ /\]/) { $buf =~ s/\].*//s; $res{$sec} = join(",", $buf =~ /["\x27]([^"\x27]*)["\x27]/g); $res{$sec} = "-" if $res{$sec} eq ""; $in = 0 }
     END { for (@orden) { if (exists $res{$_}) { print "$res{$_}\n"; last } } }
   ' -- "$1"
 }
@@ -310,13 +313,18 @@ toml_ruff_select() {
 # [tool.pyright]). Informative: they never change the base.
 python_lines() {
   local f="" sel=""
-  if [ -f ruff.toml ]; then f=ruff.toml; elif [ -f .ruff.toml ]; then f=.ruff.toml
+  # The same precedence as ruff: .ruff.toml, ruff.toml, pyproject.toml.
+  if [ -f .ruff.toml ]; then f=.ruff.toml; elif [ -f ruff.toml ]; then f=ruff.toml
   elif [ -f pyproject.toml ] && grep -Eq '^[[:space:]]*\[tool\.ruff(\.|\])' pyproject.toml; then f=pyproject.toml; fi
   if [ -n "$f" ]; then
     echo "ruff: sí"
     if [ "$f" = pyproject.toml ]; then sel="$(toml_ruff_select "$f" "tool.ruff.lint|tool.ruff")"
     else sel="$(toml_ruff_select "$f" "lint|")"; fi
-    echo "ruff select: ${sel:-por defecto}"
+    case "$sel" in
+      "") echo "ruff select: por defecto" ;;
+      -) echo "ruff select: ninguna" ;;
+      *) echo "ruff select: $sel" ;;
+    esac
   else
     echo "ruff: no"
   fi
@@ -431,8 +439,21 @@ case "$sub" in
       echo "--lint-fichero $(q "$ex${extras:+,$extras}=$ESLINT_RAPIDO")"; n=$((n + 1))
     fi
     if has_py; then
-      if [ -n "$opt_python" ]; then c="\"$opt_python\" -m ruff check --quiet"
-      elif [ -x .venv/bin/ruff ]; then c=".venv/bin/ruff check --quiet"
+      # The hooks run lint.fichero from the project of each file: with a project in a subdirectory, a path relative to
+      # the root (.venv/bin/ruff, tools/python.sh) goes from the root of the worktree.
+      raiz=""
+      grep -Eqv '^(\.)?$' <<<"$projs" && raiz='$(git rev-parse --show-toplevel)'
+      if [ -n "$opt_python" ]; then
+        p="$opt_python"
+        if [ -n "$raiz" ]; then
+          case "$p" in
+            '$('[!/\$]*')') p='$("'"$raiz"'"/'"${p#\$(}" ;;
+            [!/\$]*/*) p="$raiz/$p" ;;
+          esac
+        fi
+        c="\"$p\" -m ruff check --quiet"
+      elif [ -x .venv/bin/ruff ]; then
+        if [ -n "$raiz" ]; then c="\"$raiz/.venv/bin/ruff\" check --quiet"; else c=".venv/bin/ruff check --quiet"; fi
       else c="ruff check --quiet"; fi
       echo "--lint-fichero $(q "py=$c")"; n=$((n + 1))
     fi
