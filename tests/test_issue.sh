@@ -140,6 +140,12 @@ use_flow_gh
 out="$(bash "$issue" comprobar "$r" 2>&1)" || fail "comprobar v3: exit $? ($out)"
 [ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar v3: '$out'"
 [ "$(grep -c '^label list' "$GH_LOG")" = 1 ] || fail "comprobar: más de una llamada a gh label list"
+# una copia desfasada de una plantilla del kit: aviso con el comando que la arregla, sin bloquear
+mkdir -p "$r/.agents-kit"; echo '// vieja' > "$r/.agents-kit/tsc-base.mjs"
+out="$(bash "$issue" comprobar "$r" 2>&1)" || fail "comprobar con una plantilla desfasada: exit $? ($out)"
+grep -q '^aviso: plantillas del kit desfasadas: \.agents-kit/tsc-base\.mjs; .*kit-reglas\.sh"\{0,1\} plantillas <wt> --actualizar' <<<"$out" \
+  && [ "$(last_line "$out")" = "FIN: v3" ] || fail "comprobar avisa de la plantilla desfasada: '$out'"
+rm -rf "$r/.agents-kit"
 t="$(mktemp)"; jq '.labels = ["en-curso", "listo", "necesita-decision", "bloqueado", "propuesta"]' "$GH_STATE/state.json" > "$t" \
   && mv "$t" "$GH_STATE/state.json"
 err="$(bash "$issue" comprobar "$r" 2>&1 >/dev/null)"; rc=$?

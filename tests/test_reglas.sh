@@ -449,10 +449,44 @@ run estado "$j"; grep -qxF "plantilla: .agents-kit/turno.sh al día" <<<"$(blk s
 sed -i.bak 's#^rc=0$#rc=0; true#' "$j/social-apps/.agents-kit/turno.sh"; rm -f "$j/social-apps/.agents-kit/turno.sh.bak"
 echo '// otra versión' >> "$j/social-apps/.agents-kit/tsc-base.mjs"
 run estado "$j"
-grep -qxF "plantilla: .agents-kit/turno.sh desfasada: vuelve a copiar templates/reglas/turno.sh del kit (conserva TSC_EXT, LINT_EXT, TSC y ANTES_TSC)" <<<"$(blk social-apps)" \
-  && grep -qxF "plantilla: .agents-kit/tsc-base.mjs desfasada: vuelve a copiar templates/reglas/tsc-base.mjs del kit" <<<"$(blk social-apps)" \
+grep -qxF "plantilla: .agents-kit/turno.sh desfasada: kit-reglas.sh plantillas <raíz> --actualizar la pone al día" <<<"$(blk social-apps)" \
+  && grep -qxF "plantilla: .agents-kit/tsc-base.mjs desfasada: kit-reglas.sh plantillas <raíz> --actualizar la pone al día" <<<"$(blk social-apps)" \
   || fail "plantillas desfasadas: $out"
 grep -qxF "proyecto: social-apps (js, base completa)" <<<"$out" || fail "una plantilla desfasada no cambia la base: $out"
+# plantillas: lista las copias desfasadas y, con --actualizar, las rehace desde la plantilla con sus cuatro líneas
+run plantillas "$j"
+[ $rc -eq 0 ] && grep -qxF "desfasada: social-apps/.agents-kit/turno.sh" <<<"$out" \
+  && grep -qxF "desfasada: social-apps/.agents-kit/tsc-base.mjs" <<<"$out" && [ "$(last_line "$out")" = "FIN: 2 desfasadas" ] \
+  || fail "plantillas lista las desfasadas: $rc $out"
+chmod +x "$j/social-apps/.agents-kit/turno.sh"
+run plantillas "$j" --actualizar
+[ $rc -eq 0 ] && grep -qxF "actualizada: social-apps/.agents-kit/turno.sh" <<<"$out" && [ "$(last_line "$out")" = "FIN: 2 actualizadas" ] \
+  || fail "plantillas --actualizar: $rc $out"
+tu="$j/social-apps/.agents-kit/turno.sh"
+grep -qx 'TSC_EXT=""' "$tu" && grep -qx 'LINT_EXT="js mjs astro"' "$tu" && grep -qx 'TSC="node_modules/typescript7/bin/tsc"' "$tu" \
+  && grep -qx 'ANTES_TSC="node_modules/.bin/astro sync"' "$tu" && ! grep -q 'rc=0; true' "$tu" && [ -x "$tu" ] \
+  && cmp -s "$t/tsc-base.mjs" "$j/social-apps/.agents-kit/tsc-base.mjs" || fail "las copias rehechas con sus cuatro líneas: $(cat "$tu")"
+run estado "$j"; grep -qxF "plantilla: .agents-kit/turno.sh al día" <<<"$(blk social-apps)" \
+  && grep -qxF "plantilla: .agents-kit/tsc-base.mjs al día" <<<"$(blk social-apps)" || fail "tras actualizar, al día: $out"
+run plantillas "$j"; [ "$(last_line "$out")" = "FIN: 0 desfasadas" ] || fail "nada desfasado tras actualizar: $out"
+# una copia sin una de las cuatro líneas (de antes de que existiera) está desfasada y recibe la de la plantilla
+sed -i.bak '/^ANTES_TSC=/d' "$tu"; rm -f "$tu.bak"
+run estado "$j"; grep -q "plantilla: .agents-kit/turno.sh desfasada" <<<"$(blk social-apps)" || fail "sin ANTES_TSC, desfasada: $out"
+run plantillas "$j" --actualizar; grep -qxF "$(grep '^ANTES_TSC=' "$t/turno.sh")" "$tu" || fail "la línea que faltaba viene de la plantilla: $(cat "$tu")"
+run plantillas "$j" --otra; [ $rc -eq 1 ] || fail "plantillas con una opción desconocida: $rc"
+# una ruta con = (awk la tomaría por una asignación) conserva igual sus cuatro líneas
+mkdir -p "$j/a=b/.agents-kit"; sed 's#^TSC_EXT=.*#TSC_EXT=""#' "$t/turno.sh" > "$j/a=b/.agents-kit/turno.sh"
+run plantillas "$j"; ! grep -qF "a=b/.agents-kit/turno.sh" <<<"$out" || fail "una ruta con = conserva sus cuatro líneas: $out"
+rm -rf "$j/a=b"
+# un enlace simbólico no es una copia: ni se lista ni se escribe a través de él
+mkdir -p "$j/en/.agents-kit"; echo '// otro' > "$j/en/destino.mjs"; ln -s ../destino.mjs "$j/en/.agents-kit/tsc-base.mjs"
+run plantillas "$j" --actualizar
+[ "$(cat "$j/en/destino.mjs")" = '// otro' ] && ! grep -qF "en/.agents-kit" <<<"$out" || fail "plantillas no sigue un enlace: $out"
+rm -rf "$j/en"
+mkdir -p "$j/en2/x"; echo '// otro' > "$j/en2/x/tsc-base.mjs"; ln -s x "$j/en2/.agents-kit"
+run plantillas "$j" --actualizar
+[ "$(cat "$j/en2/x/tsc-base.mjs")" = '// otro' ] && ! grep -qF "en2/" <<<"$out" || fail "plantillas no escribe a través de un directorio enlazado: $out"
+rm -rf "$j/en2"
 rm -rf "$j/social-apps/.agents-kit"
 # a nested project's .ts does not make its parent TS; a .ts of its own does
 mkdir -p "$j/social-apps/tools"; echo '{}' > "$j/social-apps/tools/package.json"; echo '{}' > "$j/social-apps/tools/tsconfig.json"
@@ -614,6 +648,35 @@ eval "bash \"$REPO_ROOT/scripts/kit-activate.sh\" \"$mj-act\" $flags" >/dev/null
 cp -R "$py" "$py-act"; run marcador "$py-act" --python '$(tools/python.sh)'; flags="$(sed '$d' <<<"$out" | tr '\n' ' ')"
 eval "bash \"$REPO_ROOT/scripts/kit-activate.sh\" \"$py-act\" $flags" >/dev/null 2>&1 || fail "kit-activate con --python: exit $?"
 [ "$(jq -r '.lint.fichero.py' "$py-act/.agents-kit.json")" = '"$(tools/python.sh)" -m ruff check --quiet' ] || fail "py escrito: $(cat "$py-act/.agents-kit.json")"
+
+# --- blindado: la copia exacta de una plantilla del kit (con las cuatro líneas de la base) no cuenta; lo demás, sí
+limpia
+t="$REPO_ROOT/templates/reglas"
+mkdir -p "$r/app/.agents-kit"
+sed -e 's#^TSC_EXT=.*#TSC_EXT=""#' -e 's#^rc=0$#rc=0; true#' "$t/turno.sh" > "$r/app/.agents-kit/turno.sh"
+echo '// vieja' > "$r/app/.agents-kit/tsc-base.mjs"
+push_main plantillas-viejas
+bash "$k" plantillas "$r" --actualizar >/dev/null || fail "plantillas --actualizar en el repo"
+run blindado "$r" origin/main
+[ $rc -eq 0 ] && [ "$(last_line "$out")" = "FIN: 0" ] && grep -qx 'TSC_EXT=""' "$r/app/.agents-kit/turno.sh" \
+  || fail "la copia exacta de la plantilla no cuenta: $rc $out"
+sed -i.bak 's#^TSC_EXT=.*#TSC_EXT="ts"#' "$r/app/.agents-kit/turno.sh"; rm -f "$r/app/.agents-kit/turno.sh.bak"
+run blindado "$r" origin/main
+grep -qxF "app/.agents-kit/turno.sh" <<<"$out" && [ "$(last_line "$out")" = "FIN: 1" ] || fail "cambiar una de las cuatro líneas cuenta: $out"
+limpia; bash "$k" plantillas "$r" --actualizar >/dev/null; echo '// mío' >> "$r/app/.agents-kit/tsc-base.mjs"
+run blindado "$r" origin/main
+grep -qxF "app/.agents-kit/tsc-base.mjs" <<<"$out" && ! grep -qxF "app/.agents-kit/turno.sh" <<<"$out" \
+  || fail "una copia con otro contenido cuenta: $out"
+limpia; mkdir -p "$r/otra/.agents-kit"; cp "$t/tsc-base.mjs" "$r/otra/.agents-kit/tsc-base.mjs"
+run blindado "$r" origin/main; grep -qxF "otra/.agents-kit/tsc-base.mjs" <<<"$out" || fail "una copia nueva cuenta: $out"
+# una copia que pasa a ser un enlace a un fichero sin blindar con el contenido de la plantilla cuenta
+limpia; cp "$t/tsc-base.mjs" "$r/app/x.mjs"; rm "$r/app/.agents-kit/tsc-base.mjs"; ln -s ../x.mjs "$r/app/.agents-kit/tsc-base.mjs"
+run blindado "$r" origin/main; grep -qxF "app/.agents-kit/tsc-base.mjs" <<<"$out" || fail "un enlace en lugar de la copia cuenta: $out"
+# y también si el enlace es el directorio .agents-kit
+limpia; mkdir -p "$r/app/x"; cp "$t/tsc-base.mjs" "$r/app/x/tsc-base.mjs"; cp "$r/app/.agents-kit/turno.sh" "$r/app/x/turno.sh"
+rm -rf "$r/app/.agents-kit"; ln -s x "$r/app/.agents-kit"
+run blindado "$r" origin/main; grep -qxF "app/.agents-kit/tsc-base.mjs" <<<"$out" || fail "un directorio .agents-kit enlazado cuenta: $out"
+limpia
 
 # --- abrir y cerrar
 w="$(mktemp -d)/wt"; git -C "$r" worktree add -q -b otra "$w" >/dev/null 2>&1 || fail "worktree"
