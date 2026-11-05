@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-05
 
-### Arreglo: cada subagente revisa su propio lint y los fallos llegan resumidos · [#PR](PR)
+### Arreglo: cada subagente revisa su propio lint y los fallos llegan resumidos · [#55](https://github.com/DruMoDev/agents-kit/pull/55)
 Cuando una sesión de Claude Code lanzaba subagentes, la comprobación de fin de turno bloqueaba a la sesión principal por el código que los subagentes aún estaban escribiendo, y a ellos nunca los revisaba. Ahora cada subagente revisa lo que él cambió al terminar, y la sesión principal solo lo suyo.
 
 La salida del lint ya no se vuelca entera en la conversación: llegan las primeras líneas y el resumen final, con la ruta del fichero que tiene la salida completa. En Claude Code se muestra como aviso de la comprobación y no como error del hook.
