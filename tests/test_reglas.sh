@@ -474,6 +474,15 @@ sed -i.bak '/^ANTES_TSC=/d' "$tu"; rm -f "$tu.bak"
 run estado "$j"; grep -q "plantilla: .agents-kit/turno.sh desfasada" <<<"$(blk social-apps)" || fail "sin ANTES_TSC, desfasada: $out"
 run plantillas "$j" --actualizar; grep -qxF "$(grep '^ANTES_TSC=' "$t/turno.sh")" "$tu" || fail "la línea que faltaba viene de la plantilla: $(cat "$tu")"
 run plantillas "$j" --otra; [ $rc -eq 1 ] || fail "plantillas con una opción desconocida: $rc"
+# una ruta con = (awk la tomaría por una asignación) conserva igual sus cuatro líneas
+mkdir -p "$j/a=b/.agents-kit"; sed 's#^TSC_EXT=.*#TSC_EXT=""#' "$t/turno.sh" > "$j/a=b/.agents-kit/turno.sh"
+run plantillas "$j"; ! grep -qF "a=b/.agents-kit/turno.sh" <<<"$out" || fail "una ruta con = conserva sus cuatro líneas: $out"
+rm -rf "$j/a=b"
+# un enlace simbólico no es una copia: ni se lista ni se escribe a través de él
+mkdir -p "$j/en/.agents-kit"; echo '// otro' > "$j/en/destino.mjs"; ln -s ../destino.mjs "$j/en/.agents-kit/tsc-base.mjs"
+run plantillas "$j" --actualizar
+[ "$(cat "$j/en/destino.mjs")" = '// otro' ] && ! grep -qF "en/.agents-kit" <<<"$out" || fail "plantillas no sigue un enlace: $out"
+rm -rf "$j/en"
 rm -rf "$j/social-apps/.agents-kit"
 # a nested project's .ts does not make its parent TS; a .ts of its own does
 mkdir -p "$j/social-apps/tools"; echo '{}' > "$j/social-apps/tools/package.json"; echo '{}' > "$j/social-apps/tools/tsconfig.json"
@@ -656,6 +665,9 @@ grep -qxF "app/.agents-kit/tsc-base.mjs" <<<"$out" && ! grep -qxF "app/.agents-k
   || fail "una copia con otro contenido cuenta: $out"
 limpia; mkdir -p "$r/otra/.agents-kit"; cp "$t/tsc-base.mjs" "$r/otra/.agents-kit/tsc-base.mjs"
 run blindado "$r" origin/main; grep -qxF "otra/.agents-kit/tsc-base.mjs" <<<"$out" || fail "una copia nueva cuenta: $out"
+# una copia que pasa a ser un enlace a un fichero sin blindar con el contenido de la plantilla cuenta
+limpia; cp "$t/tsc-base.mjs" "$r/app/x.mjs"; rm "$r/app/.agents-kit/tsc-base.mjs"; ln -s ../x.mjs "$r/app/.agents-kit/tsc-base.mjs"
+run blindado "$r" origin/main; grep -qxF "app/.agents-kit/tsc-base.mjs" <<<"$out" || fail "un enlace en lugar de la copia cuenta: $out"
 limpia
 
 # --- abrir y cerrar

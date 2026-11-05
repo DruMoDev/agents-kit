@@ -348,15 +348,16 @@ python_lines() {
 # q <texto>: <texto> quoted for the shell, between single quotes.
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 
-# plantilla_kit <turno.sh|tsc-base.mjs> <copia>: print what that copy should be with this kit: the template of
-# templates/reglas/, and for turno.sh the first TSC_EXT=, LINT_EXT=, TSC= and ANTES_TSC= line of <copia> (each project
-# sets them) in place of the template's; one the copy lacks keeps the template's.
+# plantilla_kit <turno.sh|tsc-base.mjs> < <copia>: print what that copy should be with this kit: the template of
+# templates/reglas/, and for turno.sh the first TSC_EXT=, LINT_EXT=, TSC= and ANTES_TSC= line of the copy (each project
+# sets them) in place of the template's; one the copy lacks keeps the template's. The copy goes by stdin: awk takes an
+# operand like a=b/.agents-kit/turno.sh for an assignment.
 plantilla_kit() {
   case "$1" in
     turno.sh) awk 'function clave(l) { return match(l, /^(TSC_EXT|LINT_EXT|TSC|ANTES_TSC)=/) ? substr(l, 1, RLENGTH) : "" }
-        FILENAME == ARGV[1] { k = clave($0); if (k != "" && !(k in v)) v[k] = $0; next }
-        { k = clave($0); if (k != "" && (k in v)) print v[k]; else print }' "$2" "$PLANTILLAS/turno.sh" ;;
-    *) cat "$PLANTILLAS/$1" ;;
+        FILENAME == "-" { k = clave($0); if (k != "" && !(k in v)) v[k] = $0; next }
+        { k = clave($0); if (k != "" && (k in v)) print v[k]; else print }' - "$PLANTILLAS/turno.sh" ;;
+    *) cat >/dev/null; cat "$PLANTILLAS/$1" ;;
   esac
 }
 
@@ -365,7 +366,7 @@ templates_lines() {
   local f
   for f in turno.sh tsc-base.mjs; do
     [ -f ".agents-kit/$f" ] || continue
-    if cmp -s ".agents-kit/$f" <(plantilla_kit "$f" ".agents-kit/$f"); then
+    if cmp -s ".agents-kit/$f" <(plantilla_kit "$f" < ".agents-kit/$f"); then
       echo "plantilla: .agents-kit/$f al día"
     else
       echo "plantilla: .agents-kit/$f desfasada: kit-reglas.sh plantillas <raíz> --actualizar la pone al día"
@@ -525,8 +526,9 @@ case "$sub" in
         "$SUP"|*/"$SUP") d="${f%"$SUP"}"; d="${d%/}"; c="$(grows_sup "${d:-.}")" || exit 2; [ -n "$c" ] || continue ;;
         "$TSB"|*/"$TSB") d="${f%"$TSB"}"; d="${d%/}"; c="$(grows_tsb "${d:-.}")" || exit 2; [ -n "$c" ] || continue ;;
         .agents-kit/turno.sh|*/.agents-kit/turno.sh|.agents-kit/tsc-base.mjs|*/.agents-kit/tsc-base.mjs)
-          if [ -f "$f" ] && git cat-file -e "$mb:$f" 2>/dev/null \
-            && cmp -s "$f" <(plantilla_kit "${f##*/}" <(git show "$mb:$f")); then continue; fi ;;
+          # a regular file (a symlink to an unshielded file with the template's text would leave the shield)
+          if [ -f "$f" ] && [ ! -L "$f" ] && git cat-file -e "$mb:$f" 2>/dev/null \
+            && cmp -s "$f" <(git show "$mb:$f" | plantilla_kit "${f##*/}"); then continue; fi ;;
       esac
       echo "$f"; total=$((total + 1))
       if git cat-file -e "$mb:$f" 2>/dev/null || git --literal-pathspecs ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
@@ -576,13 +578,14 @@ case "$sub" in
     copias="$(tree_files)" || { echo "error: no pude listar los ficheros (git falló)" >&2; exit 2; }
     n=0
     while IFS= read -r f; do
-      [ -f "$f" ] || continue
-      cmp -s "$f" <(plantilla_kit "${f##*/}" "$f") && continue
+      # only regular files: a symlink is not a copy, and writing through it would change another file
+      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      cmp -s "$f" <(plantilla_kit "${f##*/}" < "$f") && continue
       n=$((n + 1))
       if [ -z "$actualizar" ]; then echo "desfasada: $f"; continue; fi
       tmp="$(mktemp)" || exit 2
       # through a temp file (the copy is read to render it) and written with cat, so the file keeps its mode
-      plantilla_kit "${f##*/}" "$f" > "$tmp" && cat "$tmp" > "$f" || { rm -f "$tmp"; echo "error: no pude escribir $f" >&2; exit 2; }
+      plantilla_kit "${f##*/}" < "$f" > "$tmp" && cat "$tmp" > "$f" || { rm -f "$tmp"; echo "error: no pude escribir $f" >&2; exit 2; }
       rm -f "$tmp"
       echo "actualizada: $f"
     done < <(grep -E '(^|/)\.agents-kit/(turno\.sh|tsc-base\.mjs)$' <<<"$copias")
