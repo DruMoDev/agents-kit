@@ -4,6 +4,7 @@
 #   marcador  <wt> [--python <comando>]
 #   trinquete <wt> <ref>
 #   blindado  <wt> <ref>
+#   plantillas <wt> [--actualizar]
 #   abrir     <wt> <session_id>
 #   cerrar    <wt>
 # Mechanical checks of the deterministic rules (lint, types, structure) for kit-pr.sh fusionar, the hooks and the
@@ -30,8 +31,7 @@
 #     "directivas-en-linea: <n>" (ESLint directive comments, // or /* followed by eslint, eslint-disable,
 #     eslint-disable-line, eslint-disable-next-line or eslint-enable, in its own files with a lint extension, those
 #     not under a nested project; text in a string that looks like one also counts) and, for each of .agents-kit/turno.sh and .agents-kit/tsc-base.mjs that exists,
-#     "plantilla: <fichero> al día|desfasada: <qué hacer>" against templates/reglas/ of this kit (turno.sh without its
-#     TSC_EXT=, LINT_EXT=, TSC= and ANTES_TSC= lines). Last, its "deuda-lint: <n> entradas|ninguna" (its
+#     "plantilla: <fichero> al día|desfasada: <qué hacer>": al día when it is what plantilla_kit renders from it. Last, its "deuda-lint: <n> entradas|ninguna" (its
 #     eslint-suppressions.json, one entry per file and rule) and "deuda-tsc: <n> ficheros|ninguna" (its
 #     .agents-kit/tsc-base.json). The root's debt lines always appear: right after "lint:" when the root is not a TS
 #     project. FIN: base completa (lint declared and every project complete, or no TS project) or FIN: base incompleta.
@@ -58,7 +58,9 @@
 #     in any directory goes as the pair x and */x (eslint.config.*, */eslint.config.*; .npmrc, */.npmrc), never *x,
 #     which would also match any name ending in it (src/myknip.ts for *knip.*, foo.eslintignore for *.eslintignore).
 #     A change that only shrinks an eslint-suppressions.json or .agents-kit/tsc-base.json (of the root or of a
-#     directory) does not count. Lint
+#     directory) does not count, and neither does a .agents-kit/turno.sh or .agents-kit/tsc-base.mjs that existed at
+#     the merge base and is now exactly what plantilla_kit renders from that base version: the kit's own template (Dru's
+#     code), with the four lines of turno.sh unchanged, so the copies follow the kit without an approval each time. Lint
 #     dependencies are those whose name contains eslint, typescript, knip or dependency-cruiser. Every package.json
 #     of the repo outside node_modules (the root one and nested ones, versioned or new; a deleted or new file compares
 #     against {}) gets the same comparison, and its lines start with its path: "package.json (...)" for the root one,
@@ -76,6 +78,11 @@
 #     Then "hash: <sha256>" of the diff of those files (fixed options, without the user's git config) plus the
 #     normalized fragment of each package.json that counts ("<ruta>TAB<json>", in path order), and FIN: <n>; FIN: 0
 #     without hash if none.
+#   plantillas: "desfasada: <ruta>" for each .agents-kit/turno.sh or .agents-kit/tsc-base.mjs of the tree (the root's
+#     and those of any directory, outside node_modules) that is not what plantilla_kit renders from it, and FIN: <n>
+#     desfasadas; with --actualizar it rewrites each of them with that (keeping the file's mode), prints "actualizada:
+#     <ruta>" and FIN: <n> actualizadas. kit-run does it in its own commit of the issue's PR (kit-issue.sh comprobar
+#     warns), and blindado lets those copies through.
 #   abrir/cerrar: create (with <session_id>) or delete <git-common-dir>/agents-kit/reglas-abiertas, which lets the
 #     pre-edit hook pass edits to shielded files. FIN: abierto / FIN: cerrado.
 # Exit: 0 ok, 1 usage or rejected, 2 environment error.
@@ -84,12 +91,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/config.sh"
 source "$here/lib/blindado.sh"
 
-usage() { echo "uso: $0 estado <wt> | marcador <wt> [--python <comando>] | trinquete <wt> <ref> | blindado <wt> <ref> | abrir <wt> <session_id> | cerrar <wt>" >&2; exit 1; }
+usage() { echo "uso: $0 estado <wt> | marcador <wt> [--python <comando>] | trinquete <wt> <ref> | blindado <wt> <ref> | plantillas <wt> [--actualizar] | abrir <wt> <session_id> | cerrar <wt>" >&2; exit 1; }
 [ $# -ge 2 ] && [ -n "$2" ] || usage
 sub="$1"; shift
-opt_python=""
+opt_python=""; actualizar=""
 case "$sub" in
   estado|cerrar) [ $# -eq 1 ] || usage ;;
+  plantillas)
+    if [ $# -eq 2 ] && [ "$2" = --actualizar ]; then actualizar=1; set -- "$1"; fi
+    [ $# -eq 1 ] || usage ;;
   marcador)
     if [ $# -gt 1 ]; then
       [ $# -eq 3 ] && [ "$2" = --python ] && [ -n "$3" ] || usage
@@ -338,23 +348,29 @@ python_lines() {
 # q <texto>: <texto> quoted for the shell, between single quotes.
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 
+# plantilla_kit <turno.sh|tsc-base.mjs> <copia>: print what that copy should be with this kit: the template of
+# templates/reglas/, and for turno.sh the first TSC_EXT=, LINT_EXT=, TSC= and ANTES_TSC= line of <copia> (each project
+# sets them) in place of the template's; one the copy lacks keeps the template's.
+plantilla_kit() {
+  case "$1" in
+    turno.sh) awk 'function clave(l) { return match(l, /^(TSC_EXT|LINT_EXT|TSC|ANTES_TSC)=/) ? substr(l, 1, RLENGTH) : "" }
+        FILENAME == ARGV[1] { k = clave($0); if (k != "" && !(k in v)) v[k] = $0; next }
+        { k = clave($0); if (k != "" && (k in v)) print v[k]; else print }' "$2" "$PLANTILLAS/turno.sh" ;;
+    *) cat "$PLANTILLAS/$1" ;;
+  esac
+}
+
 # templates_lines: "plantilla: ..." for the kit templates copied into the project in the current directory.
 templates_lines() {
-  local q='^(TSC_EXT|LINT_EXT|TSC|ANTES_TSC)='
-  if [ -f .agents-kit/turno.sh ]; then
-    if cmp -s <(grep -Ev "$q" .agents-kit/turno.sh) <(grep -Ev "$q" "$PLANTILLAS/turno.sh"); then
-      echo "plantilla: .agents-kit/turno.sh al día"
+  local f
+  for f in turno.sh tsc-base.mjs; do
+    [ -f ".agents-kit/$f" ] || continue
+    if cmp -s ".agents-kit/$f" <(plantilla_kit "$f" ".agents-kit/$f"); then
+      echo "plantilla: .agents-kit/$f al día"
     else
-      echo "plantilla: .agents-kit/turno.sh desfasada: vuelve a copiar templates/reglas/turno.sh del kit (conserva TSC_EXT, LINT_EXT, TSC y ANTES_TSC)"
+      echo "plantilla: .agents-kit/$f desfasada: kit-reglas.sh plantillas <raíz> --actualizar la pone al día"
     fi
-  fi
-  if [ -f .agents-kit/tsc-base.mjs ]; then
-    if cmp -s .agents-kit/tsc-base.mjs "$PLANTILLAS/tsc-base.mjs"; then
-      echo "plantilla: .agents-kit/tsc-base.mjs al día"
-    else
-      echo "plantilla: .agents-kit/tsc-base.mjs desfasada: vuelve a copiar templates/reglas/tsc-base.mjs del kit"
-    fi
-  fi
+  done
 }
 
 # base_checks <lint> <ts|js>: the checks of the base for the project in the current directory, one line each; return 1
@@ -508,6 +524,9 @@ case "$sub" in
       case "$f" in
         "$SUP"|*/"$SUP") d="${f%"$SUP"}"; d="${d%/}"; c="$(grows_sup "${d:-.}")" || exit 2; [ -n "$c" ] || continue ;;
         "$TSB"|*/"$TSB") d="${f%"$TSB"}"; d="${d%/}"; c="$(grows_tsb "${d:-.}")" || exit 2; [ -n "$c" ] || continue ;;
+        .agents-kit/turno.sh|*/.agents-kit/turno.sh|.agents-kit/tsc-base.mjs|*/.agents-kit/tsc-base.mjs)
+          if [ -f "$f" ] && git cat-file -e "$mb:$f" 2>/dev/null \
+            && cmp -s "$f" <(plantilla_kit "${f##*/}" <(git show "$mb:$f")); then continue; fi ;;
       esac
       echo "$f"; total=$((total + 1))
       if git cat-file -e "$mb:$f" 2>/dev/null || git --literal-pathspecs ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
@@ -551,6 +570,23 @@ case "$sub" in
       echo "hash: $h"
     fi
     echo "FIN: $total"
+    ;;
+
+  plantillas)
+    copias="$(tree_files)" || { echo "error: no pude listar los ficheros (git falló)" >&2; exit 2; }
+    n=0
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      cmp -s "$f" <(plantilla_kit "${f##*/}" "$f") && continue
+      n=$((n + 1))
+      if [ -z "$actualizar" ]; then echo "desfasada: $f"; continue; fi
+      tmp="$(mktemp)" || exit 2
+      # through a temp file (the copy is read to render it) and written with cat, so the file keeps its mode
+      plantilla_kit "${f##*/}" "$f" > "$tmp" && cat "$tmp" > "$f" || { rm -f "$tmp"; echo "error: no pude escribir $f" >&2; exit 2; }
+      rm -f "$tmp"
+      echo "actualizada: $f"
+    done < <(grep -E '(^|/)\.agents-kit/(turno\.sh|tsc-base\.mjs)$' <<<"$copias")
+    if [ -n "$actualizar" ]; then echo "FIN: $n actualizadas"; else echo "FIN: $n desfasadas"; fi
     ;;
 
   abrir|cerrar)

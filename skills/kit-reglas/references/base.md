@@ -136,7 +136,7 @@ Acotado con `files` a los ficheros que lo necesitan, nunca la regla apagada en t
 
 ### Plantillas del kit
 
-`.agents-kit/turno.sh` y `.agents-kit/tsc-base.mjs` son copias de `templates/reglas/` del kit y no se actualizan solas. `kit-reglas.sh estado` compara las de cada proyecto con las del kit instalado (`plantilla: <fichero> al día|desfasada: ...`; en `turno.sh`, sin contar las líneas `TSC_EXT`, `LINT_EXT`, `TSC` y `ANTES_TSC`, que ajusta cada proyecto). Una copia desfasada puede fallar con lo que el kit ya soporta: un `turno.sh` de antes de `TSC_EXT=""` sale con "falta .agents-kit/tsc-base.mjs" en un proyecto JS. Se vuelve a copiar, conservando esas cuatro líneas, con el OK de Dru (están blindadas).
+`.agents-kit/turno.sh` y `.agents-kit/tsc-base.mjs` son copias de `templates/reglas/` del kit y no se actualizan solas. `kit-reglas.sh estado` compara las de cada proyecto con las del kit instalado (`plantilla: <fichero> al día|desfasada: ...`; en `turno.sh`, sin contar las líneas `TSC_EXT`, `LINT_EXT`, `TSC` y `ANTES_TSC`, que ajusta cada proyecto). Una copia desfasada puede fallar con lo que el kit ya soporta: un `turno.sh` de antes de `TSC_EXT=""` sale con "falta .agents-kit/tsc-base.mjs" en un proyecto JS. `kit-reglas.sh plantillas <wt> --actualizar` las rehace desde la plantilla, conservando esas cuatro líneas, y `kit-reglas.sh blindado` no cuenta esa copia exacta (con las cuatro líneas de la base): siguen al kit sin pedir aprobación. Cambiar una de esas líneas, o cualquier otra cosa, sí la pide. `kit-issue.sh comprobar` avisa de las desfasadas y `kit-run` las pone al día en un commit propio de la PR del issue que lleva.
 
 ### Astro
 

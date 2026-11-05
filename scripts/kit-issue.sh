@@ -41,7 +41,8 @@
 #   other reasons, if any) "falta la base de reglas: ejecuta kit-reglas (si ya está fusionada, haz git pull en el
 #   clon)" when kit-reglas.sh estado says base incompleta (a TS or JS project without its base), unless the marker says
 #   "reglas": false (with a project outside the root, "falta la base de reglas en <dir>, <dir>: ..." names each one, "la raíz" for the root);
-#   FIN: v3 otherwise.
+#   FIN: v3 otherwise. With the rules on, before FIN a warning that does not block: "aviso: plantillas del kit
+#   desfasadas: <ruta>, ...; ..." (kit-reglas.sh plantillas), with the command kit-run runs in the issue's worktree.
 #   Its first line is "kit: <version>", the plugin version on disk: a session that loaded an older SKILL.md notices.
 #   Inside Codex's sandbox without network (CODEX_SANDBOX_NETWORK_DISABLED=1) it exits 1 before any gh call: kit-run
 #   in Codex runs without sandbox (AGENTS.md, "Fusión en Codex y OpenCode").
@@ -433,6 +434,15 @@ case "$sub" in
         esac
       } >&2
       exit 1
+    fi
+    # copies of the kit templates that an older kit left (kit-reglas.sh plantillas): kit-run brings them up to date
+    if [ "$(jq -r '.reglas' "$root/.agents-kit.json")" != false ]; then
+      if pl="$(bash "$here/kit-reglas.sh" plantillas "$root" 2>/dev/null)"; then
+        des="$(printf '%s\n' "$pl" | sed -n 's/^desfasada: //p' | paste -sd, - | sed 's/,/, /g')"
+        [ -z "$des" ] || echo "aviso: plantillas del kit desfasadas: $des; ponlas al día en el worktree del issue con \"$here/kit-reglas.sh\" plantillas <wt> --actualizar, en un commit propio (no pide la aprobación de Dru)"
+      else
+        echo "aviso: no se pudieron comprobar las plantillas del kit (kit-reglas.sh plantillas falló)"
+      fi
     fi
     echo "FIN: v3"
     ;;
