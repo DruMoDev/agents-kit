@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SubagentStart hook (Claude Code). For a subagent (agent_id) whose cwd is in a repo with rules and "lint", note its
+# start and the baseline of that repo (kr_base, keyed by session_id and agent_id: kr_sesion_fichero), as
+# hooks/session-start does for the session, so its SubagentStop (hooks/stop-check) tells what it changed by shell from
+# older work. Silent; inert as described in hooks/lib-reglas.sh.
+source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
+kr_input && [ -n "$KR_SID" ] && [ -n "$KR_AGENTE" ] || exit 0
+kr_root && kr_config && kr_base >/dev/null 2>&1
+exit 0

@@ -16,7 +16,9 @@ KR_PROHIBIDO='eslint-disable|@ts-ignore|@ts-nocheck|\bas\s+any(?![\w$])'
 KR_CODIGO=',ts,tsx,js,jsx,mjs,cjs,mts,cts,astro,vue,svelte,ipynb,'
 
 # kr_input: parse the hook input on stdin (kept in KR_JSON) into KR_CWD (physical), KR_SID (session_id), KR_ACTIVO
-# (1 when stop_hook_active is true), KR_PARCHE (1 for Codex's apply_patch) and KR_ITEMS, pairs "<path>" "<input>" of
+# (1 when stop_hook_active is true), KR_PARCHE (1 for Codex's apply_patch), KR_AGENTE (agent_id: Claude Code sends it,
+# with the session_id of the main session, in the hooks of a subagent), KR_EVENTO (hook_event_name), KR_TURN_ID
+# (turn_id, which Codex sends and Claude Code does not) and KR_ITEMS, pairs "<path>" "<input>" of
 # the files the tool touches, where <input> holds the tool_input that kr_sube_prohibido checks for that file:
 #   - Claude Code: one pair, tool_input.file_path or notebook_path and the whole input (none without a path);
 #   - Codex apply_patch (tool_input.command, the patch): one pair per "*** Add|Update|Delete File:" and per
@@ -32,8 +34,10 @@ KR_CODIGO=',ts,tsx,js,jsx,mjs,cjs,mts,cts,astro,vue,svelte,ipynb,'
 kr_input() {
   local cwd ok x
   [ ! -t 0 ] || return 1
-  KR_JSON="$(cat)"; KR_CWD=""; KR_SID=""; KR_ACTIVO=""; KR_PARCHE=""; KR_ITEMS=(); ok=""
+  KR_JSON="$(cat)"; KR_CWD=""; KR_SID=""; KR_ACTIVO=""; KR_PARCHE=""; KR_AGENTE=""; KR_EVENTO=""; KR_TURN_ID=""
+  KR_ITEMS=(); ok=""
   { IFS= read -r -d '' cwd; IFS= read -r -d '' KR_SID; IFS= read -r -d '' KR_ACTIVO; IFS= read -r -d '' KR_PARCHE
+    IFS= read -r -d '' KR_AGENTE; IFS= read -r -d '' KR_EVENTO; IFS= read -r -d '' KR_TURN_ID
     IFS= read -r -d '' ok; while IFS= read -r -d '' x; do KR_ITEMS+=("$x"); done; } < <(
     printf '%s' "$KR_JSON" | jq -j '
       def s: if type == "string" then . else "" end;
@@ -77,7 +81,8 @@ kr_input() {
           end;
       (.tool_input | if type == "object" then . else {} end) as $i |
       (.cwd | s), "\u0000", (.session_id | s), "\u0000", (if .stop_hook_active == true then "1" else "" end), "\u0000",
-      (if .tool_name == "apply_patch" then "1" else "" end), "\u0000", "ok", "\u0000",
+      (if .tool_name == "apply_patch" then "1" else "" end), "\u0000", (.agent_id | s), "\u0000",
+      (.hook_event_name | s), "\u0000", (.turn_id | s), "\u0000", "ok", "\u0000",
       (if .tool_name == "apply_patch" then ($i.command // $i.patch // $i.input | s | parche)
        else ($i.file_path // $i.notebook_path | s) as $f | select($f != "") | $f, "\u0000", tojson, "\u0000" end)
       ' 2>/dev/null)
@@ -277,16 +282,19 @@ kr_sucios() {
 # (all the changed files of that repo). Nothing without a session_id; the caller checks the trust first
 # (kr_confianza), and stop-check checks it again for every noted root.
 kr_anota() {
-  local f l rel="$KR_REL" nuevo=""
+  local f i l rel="$KR_REL" nuevo=""
   [ -n "$KR_SID" ] && f="$(kr_sesion_fichero sesion)" || return 0
   case "$rel" in *$'\t'*|*$'\n'*) rel='*' ;; esac
   l="$KR_ROOT"$'\t'"f"$'\t'"$rel"
   [ -e "$f" ] || nuevo=1
+  # a subagent whose SubagentStart did not run (the kit installed halfway): its start is its first edit
+  if [ -n "${KR_AGENTE-}" ] && i="$(kr_sesion_fichero inicio)" && [ ! -e "$i" ]; then : > "$i"; fi
   grep -qxF -- "$l" "$f" 2>/dev/null || printf '%s\n' "$l" >> "$f"
   [ -z "$nuevo" ] || kr_sesion_limpia
 }
 
-# kr_base: at the start of a session (hooks/session-start, with KR_SID and KR_ROOT set), touch the session's
+# kr_base: at the start of a session (hooks/session-start) or of a subagent (hooks/subagent-start, with KR_AGENTE),
+# with KR_SID and KR_ROOT set, touch the session's
 # "inicio" file and write the baseline of KR_ROOT (kr_sucios), each only when it does not exist yet for this session
 # (resume, clear, compact and fork start it again with the same session_id).
 kr_base() {
@@ -317,13 +325,21 @@ kr_sesion_dir() {
   printf '%s\n' "$d"
 }
 
-# kr_sesion_fichero <qué>: print <kr_sesion_dir>/<qué>-<sha256 of the session_id ("-" without one)>. Return 1 when
-# the directory is not reliable or the file exists and is a symlink or not ours.
+# kr_sesion_fichero <qué>: print <kr_sesion_dir>/<qué>-<sha256 of the session_id ("-" without one)>, followed by
+# -<sha256 of the agent_id> in the hooks of a subagent (KR_AGENTE): a subagent notes its edits, keeps its start and
+# baseline and counts its blocks apart from the main session, so the Stop of the main session leaves them to the
+# subagent's SubagentStop, and the files of one session and its subagents share a prefix (stop-check: "familia").
+# Return 1 when the directory is not reliable or the file exists and is a symlink or not ours.
 kr_sesion_fichero() {
-  local d h f
+  local d h a f
   d="$(kr_sesion_dir)" || return 1
   h="$(printf '%s' "${KR_SID:--}" | shasum -a 256 2>/dev/null)"; h="${h%% *}"
   [ ${#h} -eq 64 ] || return 1
+  if [ -n "${KR_AGENTE-}" ]; then
+    a="$(printf '%s' "$KR_AGENTE" | shasum -a 256 2>/dev/null)"; a="${a%% *}"
+    [ ${#a} -eq 64 ] || return 1
+    h="$h-$a"
+  fi
   f="$d/$1-$h"
   [ ! -L "$f" ] || return 1
   [ ! -e "$f" ] || { [ -f "$f" ] && [ -O "$f" ]; } || return 1
@@ -464,6 +480,27 @@ kr_lint() {
     126|127) echo "agents-kit: el lint no se pudo ejecutar ($cmd, exit $rc); no bloquea" >&2; return 0 ;;
     142) echo "agents-kit: el lint pasó de $t s ($cmd); no bloquea" >&2; return 0 ;;
   esac
-  printf 'El lint falla en %s (%s, exit %s). Arréglalo:\n%s\n' "$what" "$cmd" "$rc" "$KIT_HOOK_OUT" >&2
+  kr_recorta
+  printf 'El lint falla en %s (%s, exit %s). Arréglalo:\n%s\n' "$what" "$cmd" "$rc" "$KR_SALIDA" >&2
   return 2
+}
+
+# kr_recorta: KR_SALIDA, KIT_HOOK_OUT for the agent. With more than KIT_LINT_LINEAS lines (40), only the first three
+# quarters and the last quarter (the summary of tools like ESLint, with their --fix hint), with the number of lines
+# left out and the path of a file with the whole output (in kr_sesion_dir, removed after 7 days like the session
+# files; without it, only the number). Every line is cut at 400 characters (minified code). The agent fixes what it
+# sees and the next check shows the rest; Claude Code moves a hook text of more than 10,000 characters to a file.
+kr_recorta() {
+  local max n f="" d
+  max="$(kr_tope "${KIT_LINT_LINEAS:-}" 40)"
+  n="$(printf '%s\n' "$KIT_HOOK_OUT" | awk 'END { print NR }')"
+  if [ "$n" -gt "$max" ] && d="$(kr_sesion_dir)" && f="$(mktemp "$d/lint-XXXXXX" 2>/dev/null)"; then
+    printf '%s\n' "$KIT_HOOK_OUT" > "$f"
+  else f=""; fi
+  KR_SALIDA="$(printf '%s\n' "$KIT_HOOK_OUT" | awk -v max="$max" -v n="$n" -v f="$f" '
+    function corta(l) { return length(l) > 400 ? substr(l, 1, 400) "..." : l }
+    BEGIN { cab = max - int(max / 4) }
+    n <= max || NR <= cab || NR > n - (max - cab) { print corta($0) }
+    n > max && NR == cab + 1 {
+      print "... (" n - max " líneas omitidas" (f == "" ? ")" : "; la salida completa está en " f ")") }')"
 }
