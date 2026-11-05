@@ -25,7 +25,7 @@ ya existía con ese email, se vincula sola.
 
 ## 2026-11-05
 
-### Mejora: las copias de la comprobación de fin de turno se ponen al día solas con el kit · [#PR](PR)
+### Mejora: las copias de la comprobación de fin de turno se ponen al día solas con el kit · [#57](https://github.com/DruMoDev/agents-kit/pull/57)
 Cada repo guarda una copia de los scripts del kit que comprueban el lint y los tipos al final del turno. Antes se quedaban en la versión con la que se instalaron hasta que alguien las copiaba a mano y aprobaba el cambio. Ahora el siguiente `kit-run` de cada repo avisa de las copias viejas y las pone al día solo, sin pedir aprobación, siempre que sean la copia exacta del kit (con los ajustes propios del repo intactos).
 
 ### Arreglo: cada subagente revisa su propio lint y los fallos llegan resumidos · [#55](https://github.com/DruMoDev/agents-kit/pull/55)
