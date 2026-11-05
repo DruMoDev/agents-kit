@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop hook. For the repo of the cwd and for every repo noted for this session by pre-edit/post-edit (kr_apunta: edits
+# Stop and SubagentStop hook. For the repo of the cwd and for every repo noted for this session by pre-edit/post-edit (kr_apunta: edits
 # in a repo that does not contain the cwd, such as a kit-run worktree), when it has .agents-kit.json and .lint.turno:
 # passes its changed files that exist (git diff --name-only HEAD plus untracked files not ignored) as arguments to
 # .lint.turno (with ./ in front, so a name starting with - is not an option), once per TS project (kr_proyecto in
@@ -8,9 +8,15 @@
 # where the session noted the files it edited (kr_anota, lines in hooks/lib-reglas.sh), it passes those that are
 # still changed plus any other changed file that was not there when the session started (an edit by shell): not in
 # the baseline that hooks/session-start writes for the cwd's root, or with another hash since; in a root without a
-# baseline, newer than the session's start. Files another live session noted are left out, so the half-done files
-# of other sessions in the same clone do not block this one. A repo with no noted file gets all its changed files.
-# Exit 2 with the output on stderr when any fails; 0 with nothing changed, when a lock is busy, when the tool is
+# baseline, newer than the session's start. Files another live session (or subagent) noted are left out, so the
+# half-done files of other sessions in the same clone do not block this one. A repo with no noted file gets all its
+# changed files but those.
+# A subagent of Claude Code (agent_id; its tool hooks carry the main session_id) has its own session file
+# (kr_sesion_fichero), written at its start by hooks/subagent-start: the Stop of the main session does not check its
+# edits, and its SubagentStop checks only the repos where it noted files (none: nothing), with the same filter.
+# Exit 2 with the output on stderr when any fails; in Claude Code (CLAUDECODE=1 and no turn_id, which Codex sends),
+# exit 0 with that text in hookSpecificOutput.additionalContext instead, the documented way for a check working as
+# designed (shown as "Stop hook feedback", not as a hook error; the turn goes on all the same). 0 with nothing changed, when a lock is busy, when the tool is
 # missing (126/127) or after KIT_TURNO_TIMEOUT (120 s). It checks again with stop_hook_active, up to
 # KIT_TURNO_BLOQUEOS (8) blocks in a row in the same session (count in kr_sesion_fichero turno-bloqueos, one file per
 # session, removed after a clean check or at the cap): then it lets the turn end with a warning. Codex has no cap of
@@ -20,6 +26,8 @@
 # blocks (no cap). Inert as in hooks/lib-reglas.sh.
 source "$(dirname "${BASH_SOURCE[0]:-$0}")/lib-reglas.sh" || exit 0
 kr_input || exit 0
+sub=""
+if [ "$KR_EVENTO" = SubagentStop ]; then [ -n "$KR_AGENTE" ] || exit 0; sub=1; fi
 roots=(); commons=()
 add_root() {
   local r
@@ -61,6 +69,11 @@ if [ "$n" -ge "$max" ]; then
   echo "agents-kit: el lint del turno sigue fallando tras $n intentos seguidos; se deja terminar (lo frenan fusionar y el CI)" >&2
   exit 0
 fi
+# Claude Code: the messages go to a buffer and, when the check blocks, out as additionalContext (see the header)
+buf=""
+if [ "${CLAUDECODE-}" = 1 ] && [ -z "$KR_TURN_ID" ] && buf="$(mktemp "${TMPDIR:-/tmp}/kit-turno.XXXXXX" 2>/dev/null)"; then
+  exec 3>&2 2>"$buf"
+else buf=""; fi
 t="$(kr_tope "${KIT_TURNO_TIMEOUT:-}" 120)"
 final=0; j=0; empiezo=$SECONDS
 while [ $j -lt ${#roots[@]} ]; do
@@ -76,6 +89,7 @@ while [ $j -lt ${#roots[@]} ]; do
   filtra=""; base=""
   case "$propio" in *$'\n'"$KR_ROOT"$'\t'f$'\t'*) filtra=1 ;; esac
   case "$propio" in *$'\n'"$KR_ROOT"$'\t'base$'\n'*) base=1 ;; esac
+  [ -z "$sub" ] || [ -n "$filtra" ] || { shopt -u nocasematch; continue; }
   k=0
   while [ $k -lt ${#KR_SUC[@]} ]; do
     f="${KR_SUC[$k]}"; h="${KR_HASH[$k]}"; k=$((k + 1))
@@ -88,6 +102,8 @@ while [ $j -lt ${#roots[@]} ]; do
              case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac ;;
            esac ;;
       esac
+    else
+      case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac
     fi
     files+=("./$f")
   done
@@ -129,4 +145,14 @@ elif [ $final -eq 2 ]; then
   [ -e "$cuenta" ] || kr_sesion_limpia
   printf '%s\n' $((n + 1)) > "$cuenta"
 else rm -f "$cuenta"; fi
+if [ -n "$buf" ]; then
+  exec 2>&3 3>&-
+  if [ $final -eq 2 ]; then
+    # under Claude Code's cap of 10,000 characters for a hook text (over it, the text goes to a file)
+    jq -Rs --arg ev "${KR_EVENTO:-Stop}" 'if length > 9500 then .[:9500] + "\n... (recortado)" else . end
+      | {hookSpecificOutput: {hookEventName: $ev, additionalContext: .}}' "$buf"
+    final=0
+  else cat "$buf" >&2; fi
+  rm -f "$buf"
+fi
 exit $final

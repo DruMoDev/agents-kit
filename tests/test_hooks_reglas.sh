@@ -2,8 +2,10 @@
 # Tests for hooks/pre-edit, hooks/post-edit and hooks/stop-check (fed by stdin with JSON, fake lint commands).
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 export TMPDIR="$(mktemp -d)"
+# Claude Code mode (JSON additionalContext) only where a test asks for it: these tests may run inside Claude Code.
+unset CLAUDECODE
 H="$REPO_ROOT/hooks"
-for h in pre-edit pre-bash post-edit stop-check; do [ -x "$H/$h" ] || fail "hooks/$h falta o no es ejecutable"; done
+for h in pre-edit pre-bash post-edit stop-check subagent-start; do [ -x "$H/$h" ] || fail "hooks/$h falta o no es ejecutable"; done
 jq -e '(.hooks.PreToolUse[0].matcher == "Edit|Write|MultiEdit|NotebookEdit")
   and (.hooks.PostToolUse[0].matcher == "Edit|Write|MultiEdit|NotebookEdit")
   and (.hooks.Stop[0] | has("matcher") | not)
@@ -12,6 +14,9 @@ jq -e '(.hooks.PreToolUse[0].matcher == "Edit|Write|MultiEdit|NotebookEdit")
   and (.hooks.PreToolUse[1].hooks[0].command | endswith("/hooks/pre-bash\""))
   and (.hooks.PostToolUse[0].hooks[0].command | endswith("/hooks/post-edit\""))
   and (.hooks.Stop[0].hooks[0].command | endswith("/hooks/stop-check\""))
+  and (.hooks.SubagentStop[0] | has("matcher") | not)
+  and (.hooks.SubagentStop[0].hooks[0].command | endswith("/hooks/stop-check\""))
+  and (.hooks.SubagentStart[0].hooks[0].command | endswith("/hooks/subagent-start\""))
   and (.hooks.SessionStart[0].matcher == "startup|resume|clear|compact|fork")' "$H/hooks.json" >/dev/null \
   || fail "hooks.json sin los hooks de reglas"
 
@@ -504,6 +509,34 @@ got="$(sed -n '2,$p' "$LOG" | sort | tr '\n' ' ')"
 FAKE_RC=1 hook stop-check "$(stop_json)"
 [ $rc -eq 2 ] && [[ "$out" == *"error de lint en --turno"* ]] || fail "stop-check con exit 1: $rc $out"
 FAKE_RC=127 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] || fail "stop-check exit 127 no bloquea: $rc"
+# Claude Code (CLAUDECODE=1, sin turn_id): bloquea con additionalContext (exit 0), no con exit 2; Codex (turn_id), exit 2
+FAKE_RC=1 CLAUDECODE=1 hook stop-check "$(stop_json)"
+[ $rc -eq 0 ] && jq -e '.hookSpecificOutput.hookEventName == "Stop"
+  and (.hookSpecificOutput.additionalContext | contains("error de lint en --turno"))' <<<"$out" >/dev/null \
+  || fail "en Claude Code, Stop bloquea con additionalContext: $rc $out"
+FAKE_RC=1 CLAUDECODE=1 hook stop-check "$(inp --arg c "$r" '{session_id: "s1", turn_id: "t1", cwd: $c, stop_hook_active: false}')"
+[ $rc -eq 2 ] && [[ "$out" == *"error de lint en --turno"* ]] || fail "con turn_id (Codex) sigue el exit 2: $rc $out"
+CLAUDECODE=1 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "en Claude Code, en verde no imprime nada: $rc $out"
+# salida larga: primeras líneas y resumen final, con la ruta de la salida completa
+cat > "$bin/largolint" <<'EOF2'
+#!/usr/bin/env bash
+for i in $(seq 1 200); do echo "linea $i del lint"; done
+echo "200 problems, potentially fixable with the --fix option"; exit 1
+EOF2
+chmod +x "$bin/largolint"
+marker "{\"lint\": {\"fichero\": {\"ts\": \"$bin/largolint\"}, \"turno\": \"$bin/largolint\"}}"
+hook stop-check "$(stop_json)"
+completa="$(sed -n 's/.*la salida completa está en \(.*\))$/\1/p' <<<"$out")"
+[ $rc -eq 2 ] && [[ "$out" == *"linea 1 del lint"* ]] && [[ "$out" == *"potentially fixable with the --fix option"* ]] \
+  && [[ "$out" != *"linea 100 del lint"* ]] && [ "$(wc -l <<<"$out")" -lt 50 ] && grep -qx 'linea 100 del lint' "$completa" \
+  || fail "stop-check recorta la salida larga y guarda la completa: $rc $(wc -l <<<"$out") '$completa' $out"
+hook post-edit "$(post_json src/a.ts)"
+[ $rc -eq 2 ] && [[ "$out" == *"líneas omitidas"* ]] && [ "$(wc -l <<<"$out")" -lt 50 ] || fail "post-edit también recorta: $rc $out"
+KIT_LINT_LINEAS=500 hook stop-check "$(stop_json)"; [[ "$out" == *"linea 100 del lint"* ]] || fail "KIT_LINT_LINEAS manda: $out"
+CLAUDECODE=1 hook stop-check "$(stop_json)"
+[ $rc -eq 0 ] && [ "$(jq -r '.hookSpecificOutput.additionalContext | length' <<<"$out")" -lt 10000 ] \
+  || fail "additionalContext bajo el tope de 10.000 caracteres de Claude Code: $rc $out"
+marker "$LINT"
 FAKE_RC=1 hook stop-check "$(inp --arg c "$r" '{cwd: $c, stop_hook_active: true}')"
 [ $rc -eq 2 ] || fail "stop_hook_active sigue comprobando: $rc"
 # tope propio de bloqueos seguidos (Codex no tiene): con stop_hook_active, a los 8 deja terminar y vuelve a empezar
@@ -612,6 +645,60 @@ if [ "$(uname)" = Darwin ]; then
   rm -f "$r/src/mayus.ts" "$r/src/otra.ts"
 fi
 git -C "$r" checkout -q -- src/b.ts
+
+# --- subagentes de Claude Code: sus hooks llegan con el session_id del principal y su agent_id. Cada uno revisa lo
+# suyo en su SubagentStop; el Stop del principal no revisa lo que apuntó un subagente vivo
+export TMPDIR="$(mktemp -d)"
+agj() { inp --arg c "$r" --arg s "$1" --arg a "$2" --arg e "$3" --arg f "${4:-}" '{session_id: $s, cwd: $c,
+  hook_event_name: $e, agent_id: $a, agent_type: "general-purpose"}
+  + (if $f == "" then {} else {tool_name: "Write", tool_input: {file_path: $f, content: "x"}} end)
+  + (if ($e | endswith("Stop")) then {stop_hook_active: false} else {} end)'; }
+ini sp
+hook subagent-start "$(agj sp ag1 SubagentStart)"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "subagent-start: $rc $out"
+echo 'export const a = 3;' > "$r/src/a.ts"; hook post-edit "$(sesj sp src/a.ts PostToolUse)"
+echo 'export const b = 3;' > "$r/src/b.ts"; hook post-edit "$(agj sp ag1 PostToolUse src/b.ts)"
+: > "$LOG"; hook stop-check "$(sjson sp false)"
+[ $rc -eq 0 ] && [ "$(cat "$LOG")" = ./src/a.ts ] || fail "el Stop del principal no revisa lo del subagente: $rc $out / $(cat "$LOG")"
+: > "$LOG"; hook stop-check "$(agj sp ag1 SubagentStop)"
+[ $rc -eq 2 ] && [ "$(cat "$LOG")" = ./src/b.ts ] && [[ "$out" == *"b.ts está a medias"* ]] \
+  || fail "SubagentStop revisa lo del subagente y le bloquea: $rc $out / $(cat "$LOG")"
+[ -f "$(cnt sp/ag1)" ] && [ ! -f "$(cnt sp)" ] || fail "el subagente lleva su propia cuenta de bloqueos"
+out="$(cd / && printf '%s' "$(agj sp ag1 SubagentStop)" | CLAUDECODE=1 "$H/stop-check" 2>&1)"; rc=$?
+[ $rc -eq 0 ] && jq -e '.hookSpecificOutput.hookEventName == "SubagentStop"
+  and (.hookSpecificOutput.additionalContext | contains("b.ts está a medias"))' <<<"$out" >/dev/null \
+  || fail "en Claude Code, SubagentStop bloquea con additionalContext: $rc $out"
+# lo que el subagente escribe por shell tras empezar también es suyo
+echo 'export const s = 1;' > "$r/src/s.ts"
+: > "$LOG"; hook stop-check "$(agj sp ag1 SubagentStop)"
+grep -qx ./src/s.ts "$LOG" && grep -qx ./src/b.ts "$LOG" && ! grep -qx ./src/a.ts "$LOG" \
+  || fail "SubagentStop revisa lo escrito por shell por el subagente: $(cat "$LOG")"
+rm -f "$r/src/s.ts"
+# un subagente sin ediciones (Explore) no revisa nada aunque el repo tenga cambios; sin agent_id, tampoco
+hook subagent-start "$(agj sp ag2 SubagentStart)"; echo 'export const m = 1;' > "$r/src/manual.ts"
+: > "$LOG"; hook stop-check "$(agj sp ag2 SubagentStop)"
+[ $rc -eq 0 ] && [ -z "$out" ] && [ ! -s "$LOG" ] || fail "un subagente sin ediciones no revisa nada: $rc $out / $(cat "$LOG")"
+rm -f "$r/src/manual.ts"
+: > "$LOG"; hook stop-check "$(inp --arg c "$r" '{session_id: "sp", cwd: $c, hook_event_name: "SubagentStop", stop_hook_active: false}')"
+[ $rc -eq 0 ] && [ ! -s "$LOG" ] || fail "SubagentStop sin agent_id no revisa nada: $rc $(cat "$LOG")"
+# su línea base (SubagentStart): lo que escribe por shell antes de su primera edición también es suyo
+hook subagent-start "$(agj sp ag4 SubagentStart)"
+echo 'export const s = 4;' > "$r/src/s4.ts"; old "$r/src/s4.ts" 5
+hook post-edit "$(agj sp ag4 PostToolUse src/b.ts)"
+: > "$LOG"; hook stop-check "$(agj sp ag4 SubagentStop)"
+grep -qx ./src/s4.ts "$LOG" || fail "SubagentStop revisa lo escrito por shell antes de la primera edición: $(cat "$LOG")"
+rm -f "$r/src/s4.ts"
+# el caso de kit-run: el subagente trabaja en un worktree; el Stop del principal no lo mira, su SubagentStop sí
+rw3="$(mktemp -d)/wt3"; git -C "$r" worktree add -q -b wt3 "$rw3" || fail "worktree wt3"
+hook subagent-start "$(agj sp ag3 SubagentStart)"
+echo 'export const b = 4;' > "$rw3/src/b.ts"; hook post-edit "$(agj sp ag3 PostToolUse "$rw3/src/b.ts")"
+: > "$LOG"; hook stop-check "$(sjson sp false)"
+[ $rc -eq 0 ] && ! grep -q b.ts "$LOG" || fail "el Stop del principal no revisa el worktree de su subagente: $rc $out / $(cat "$LOG")"
+: > "$LOG"; hook stop-check "$(agj sp ag3 SubagentStop)"
+[ $rc -eq 2 ] && [ "$(cat "$LOG")" = ./src/b.ts ] || fail "SubagentStop revisa el worktree del subagente: $rc $out / $(cat "$LOG")"
+# una sesión que no editó nada en la raíz tampoco carga con lo que apuntó un subagente vivo
+ini sv; : > "$LOG"; hook stop-check "$(sjson sv false)"
+! grep -q b.ts "$LOG" || fail "una raíz sin apuntes propios no revisa lo de un subagente vivo: $(cat "$LOG")"
+git -C "$r" worktree remove --force "$rw3"; git -C "$r" checkout -q -- src/a.ts src/b.ts
 
 # --- monorepos: el lint de cada fichero corre en su proyecto TS (package.json y tsconfig.json), con rutas relativas a él
 rm2="$(mk_repo)"
