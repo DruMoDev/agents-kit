@@ -483,6 +483,10 @@ mkdir -p "$j/en/.agents-kit"; echo '// otro' > "$j/en/destino.mjs"; ln -s ../des
 run plantillas "$j" --actualizar
 [ "$(cat "$j/en/destino.mjs")" = '// otro' ] && ! grep -qF "en/.agents-kit" <<<"$out" || fail "plantillas no sigue un enlace: $out"
 rm -rf "$j/en"
+mkdir -p "$j/en2/x"; echo '// otro' > "$j/en2/x/tsc-base.mjs"; ln -s x "$j/en2/.agents-kit"
+run plantillas "$j" --actualizar
+[ "$(cat "$j/en2/x/tsc-base.mjs")" = '// otro' ] && ! grep -qF "en2/" <<<"$out" || fail "plantillas no escribe a través de un directorio enlazado: $out"
+rm -rf "$j/en2"
 rm -rf "$j/social-apps/.agents-kit"
 # a nested project's .ts does not make its parent TS; a .ts of its own does
 mkdir -p "$j/social-apps/tools"; echo '{}' > "$j/social-apps/tools/package.json"; echo '{}' > "$j/social-apps/tools/tsconfig.json"
@@ -668,6 +672,10 @@ run blindado "$r" origin/main; grep -qxF "otra/.agents-kit/tsc-base.mjs" <<<"$ou
 # una copia que pasa a ser un enlace a un fichero sin blindar con el contenido de la plantilla cuenta
 limpia; cp "$t/tsc-base.mjs" "$r/app/x.mjs"; rm "$r/app/.agents-kit/tsc-base.mjs"; ln -s ../x.mjs "$r/app/.agents-kit/tsc-base.mjs"
 run blindado "$r" origin/main; grep -qxF "app/.agents-kit/tsc-base.mjs" <<<"$out" || fail "un enlace en lugar de la copia cuenta: $out"
+# y también si el enlace es el directorio .agents-kit
+limpia; mkdir -p "$r/app/x"; cp "$t/tsc-base.mjs" "$r/app/x/tsc-base.mjs"; cp "$r/app/.agents-kit/turno.sh" "$r/app/x/turno.sh"
+rm -rf "$r/app/.agents-kit"; ln -s x "$r/app/.agents-kit"
+run blindado "$r" origin/main; grep -qxF "app/.agents-kit/tsc-base.mjs" <<<"$out" || fail "un directorio .agents-kit enlazado cuenta: $out"
 limpia
 
 # --- abrir y cerrar

@@ -361,6 +361,13 @@ plantilla_kit() {
   esac
 }
 
+# copia_real <ruta>: return 0 when <ruta> (relative to the repo root, the current directory) is a regular file and no
+# component of its path is a symlink: a symlink, to the file or to its .agents-kit directory, pointing at an unshielded
+# file with the template's text would leave the shield, and writing through it would change another file.
+copia_real() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(cd "${1%/*}" 2>/dev/null && pwd -P)" = "$(pwd -P)/${1%/*}" ]
+}
+
 # templates_lines: "plantilla: ..." for the kit templates copied into the project in the current directory.
 templates_lines() {
   local f
@@ -526,8 +533,7 @@ case "$sub" in
         "$SUP"|*/"$SUP") d="${f%"$SUP"}"; d="${d%/}"; c="$(grows_sup "${d:-.}")" || exit 2; [ -n "$c" ] || continue ;;
         "$TSB"|*/"$TSB") d="${f%"$TSB"}"; d="${d%/}"; c="$(grows_tsb "${d:-.}")" || exit 2; [ -n "$c" ] || continue ;;
         .agents-kit/turno.sh|*/.agents-kit/turno.sh|.agents-kit/tsc-base.mjs|*/.agents-kit/tsc-base.mjs)
-          # a regular file (a symlink to an unshielded file with the template's text would leave the shield)
-          if [ -f "$f" ] && [ ! -L "$f" ] && git cat-file -e "$mb:$f" 2>/dev/null \
+          if copia_real "$f" && git cat-file -e "$mb:$f" 2>/dev/null \
             && cmp -s "$f" <(git show "$mb:$f" | plantilla_kit "${f##*/}"); then continue; fi ;;
       esac
       echo "$f"; total=$((total + 1))
@@ -578,8 +584,7 @@ case "$sub" in
     copias="$(tree_files)" || { echo "error: no pude listar los ficheros (git falló)" >&2; exit 2; }
     n=0
     while IFS= read -r f; do
-      # only regular files: a symlink is not a copy, and writing through it would change another file
-      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      copia_real "$f" || continue
       cmp -s "$f" <(plantilla_kit "${f##*/}" < "$f") && continue
       n=$((n + 1))
       if [ -z "$actualizar" ]; then echo "desfasada: $f"; continue; fi
