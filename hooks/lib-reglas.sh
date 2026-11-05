@@ -325,15 +325,21 @@ kr_sesion_dir() {
   printf '%s\n' "$d"
 }
 
-# kr_sesion_fichero <qué>: print <kr_sesion_dir>/<qué>-<sha256 of the session_id ("-" without one)>, or of
-# "<session_id>/<agent_id>" in the hooks of a subagent (KR_AGENTE): a subagent notes its edits, keeps its start and
+# kr_sesion_fichero <qué>: print <kr_sesion_dir>/<qué>-<sha256 of the session_id ("-" without one)>, followed by
+# -<sha256 of the agent_id> in the hooks of a subagent (KR_AGENTE): a subagent notes its edits, keeps its start and
 # baseline and counts its blocks apart from the main session, so the Stop of the main session leaves them to the
-# subagent's SubagentStop. Return 1 when the directory is not reliable or the file exists and is a symlink or not ours.
+# subagent's SubagentStop, and the files of one session and its subagents share a prefix (stop-check: "familia").
+# Return 1 when the directory is not reliable or the file exists and is a symlink or not ours.
 kr_sesion_fichero() {
-  local d h f
+  local d h a f
   d="$(kr_sesion_dir)" || return 1
-  h="$(printf '%s' "${KR_SID:--}${KR_AGENTE:+/$KR_AGENTE}" | shasum -a 256 2>/dev/null)"; h="${h%% *}"
+  h="$(printf '%s' "${KR_SID:--}" | shasum -a 256 2>/dev/null)"; h="${h%% *}"
   [ ${#h} -eq 64 ] || return 1
+  if [ -n "${KR_AGENTE-}" ]; then
+    a="$(printf '%s' "$KR_AGENTE" | shasum -a 256 2>/dev/null)"; a="${a%% *}"
+    [ ${#a} -eq 64 ] || return 1
+    h="$h-$a"
+  fi
   f="$d/$1-$h"
   [ ! -L "$f" ] || return 1
   [ ! -e "$f" ] || { [ -f "$f" ] && [ -O "$f" ]; } || return 1

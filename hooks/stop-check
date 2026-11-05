@@ -39,7 +39,9 @@ kr_cwd_common || exit 0
 ! kr_root || add_root
 ses=""
 [ -z "$KR_SID" ] || ses="$(kr_sesion_fichero sesion)" || ses=""
-propio=$'\n'; ajeno=$'\n'
+propio=$'\n'; ajeno=$'\n'; familia=$'\n'
+# the files of this session and of its subagents (kr_sesion_fichero: same prefix)
+fam=""; [ -z "$ses" ] || fam="$(KR_AGENTE="" kr_sesion_fichero sesion)" || fam=""
 if [ -n "$ses" ] && [ -f "$ses" ]; then
   while IFS= read -r l; do
     r="${l%%$'\t'*}"
@@ -47,11 +49,14 @@ if [ -n "$ses" ] && [ -f "$ses" ]; then
     [ "$r" = "$l" ] || propio="$propio$l"$'\n'
     [ -d "$r" ] && _kr_git "$r" && [ "$KR_ROOT" = "$r" ] && kr_confianza && add_root
   done < "$ses"
-  # files that other live sessions noted as theirs ("f" lines of session files touched in the last 24 h)
+  # files that other live sessions noted as theirs ("f" lines of session files touched in the last 24 h); those of the
+  # same session (the main one and its subagents) also in "familia"
   while IFS= read -r o; do
     [ "$o" != "$ses" ] && [ -f "$o" ] && [ ! -L "$o" ] || continue
+    esfam=""
+    case "$o" in "$fam"|"$fam"-*) [ -z "$fam" ] || esfam=1 ;; esac
     while IFS= read -r l; do
-      case "$l" in /*$'\t'f$'\t'*) ajeno="$ajeno$l"$'\n' ;; esac
+      case "$l" in /*$'\t'f$'\t'*) ajeno="$ajeno$l"$'\n'; [ -z "$esfam" ] || familia="$familia$l"$'\n' ;; esac
     done < "$o"
   done < <(find "${ses%/*}" -maxdepth 1 -type f -name 'sesion-*' -mmin -1440 2>/dev/null)
 fi
@@ -71,82 +76,93 @@ if [ "$n" -ge "$max" ]; then
 fi
 # Claude Code: the messages go to a buffer and, when the check blocks, out as additionalContext (see the header)
 buf=""
-if [ "${CLAUDECODE-}" = 1 ] && [ -z "$KR_TURN_ID" ] && buf="$(mktemp "${TMPDIR:-/tmp}/kit-turno.XXXXXX" 2>/dev/null)"; then
-  exec 3>&2 2>"$buf"
-else buf=""; fi
+if [ "${CLAUDECODE-}" = 1 ] && [ -z "$KR_TURN_ID" ]; then
+  buf="$(mktemp "${TMPDIR:-/tmp}/kit-turno.XXXXXX" 2>/dev/null)" || buf=""
+fi
 t="$(kr_tope "${KIT_TURNO_TIMEOUT:-}" 120)"
 final=0; j=0; empiezo=$SECONDS
-while [ $j -lt ${#roots[@]} ]; do
-  KR_ROOT="${roots[$j]}"; KR_COMMON="${commons[$j]}"; j=$((j + 1))
-  kr_config && [ -n "$KR_TURNO" ] || continue
-  files=(); kr_sucios
-  # Only a root this session noted files in is filtered (paths without case on macOS, like kr_resolve). A changed
-  # file this session did not note is skipped when it was already there when the session started: in the baseline
-  # with the same hash, or, in a root without a baseline (a worktree created later), older than the session's start;
-  # or when it is not in the baseline and a live session noted it. Anything else (an edit by shell, a baseline file
-  # whose hash changed) goes. A root without notes gets all its changed files.
-  case "$OSTYPE" in darwin*) shopt -s nocasematch ;; esac
-  filtra=""; base=""
-  case "$propio" in *$'\n'"$KR_ROOT"$'\t'f$'\t'*) filtra=1 ;; esac
-  case "$propio" in *$'\n'"$KR_ROOT"$'\t'base$'\n'*) base=1 ;; esac
-  [ -z "$sub" ] || [ -n "$filtra" ] || { shopt -u nocasematch; continue; }
-  k=0
-  while [ $k -lt ${#KR_SUC[@]} ]; do
-    f="${KR_SUC[$k]}"; h="${KR_HASH[$k]}"; k=$((k + 1))
-    if [ -n "$filtra" ]; then
-      case "$propio" in
-        *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*|*$'\n'"$KR_ROOT"$'\tf\t*\n'*) ;;
-        *) [ -n "$base" ] || [ -z "$inicio" ] || ! [ "$inicio" -nt "$KR_ROOT/$f" ] || continue
-           [ -z "$h" ] || case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'"$h  $f"$'\n'*) continue ;; esac
-           case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'*"  $f"$'\n'*) ;; *)
-             case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac ;;
-           esac ;;
-      esac
-    else
-      case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac
-    fi
-    files+=("./$f")
-  done
-  shopt -u nocasematch
-  [ ${#files[@]} -gt 0 ] || continue
-  # One run per TS project (kr_proyecto), from its directory and with paths relative to it; the files of no project
-  # from the root. KIT_TURNO_TIMEOUT is the budget of the whole check: each run gets what is left.
-  projs=(); for f in "${files[@]}"; do kr_proyecto "${f#./}"; projs+=("$KR_PROY"); done
-  [ -z "${KR_LOCK_OK:-}" ] || { _kr_soltar; KR_LOCK_OK=""; }
-  vistos=$'\n'; k=0
-  while [ $k -lt ${#files[@]} ]; do
-    pr="${projs[$k]}"; k=$((k + 1))
-    case "$vistos" in *$'\n'"$pr"$'\n'*) continue ;; esac
-    vistos="$vistos$pr"$'\n'; args=(); m=0
-    while [ $m -lt ${#files[@]} ]; do
-      if [ "${projs[$m]}" = "$pr" ]; then
-        if [ -n "$pr" ]; then args+=("./${files[$m]#"./$pr/"}"); else args+=("${files[$m]}"); fi
+# turno: every run of the check; exit 2 when one fails. It runs in a subshell whose stderr is the buffer in Claude
+# Code, so the real stderr is never kept in another descriptor: with exec 3>&2, a daemon started by the lint inherited
+# a copy of it and kept the hook's reader waiting until it died. The lock that kr_lint takes ends with the subshell.
+turno() {
+  while [ $j -lt ${#roots[@]} ]; do
+    KR_ROOT="${roots[$j]}"; KR_COMMON="${commons[$j]}"; j=$((j + 1))
+    kr_config && [ -n "$KR_TURNO" ] || continue
+    files=(); kr_sucios
+    # Only a root this session noted files in is filtered (paths without case on macOS, like kr_resolve). A changed
+    # file this session did not note is skipped when it was already there when the session started: in the baseline
+    # with the same hash, or, in a root without a baseline (a worktree created later), older than the session's start;
+    # or when it is not in the baseline and a live session noted it, or when the main session or a subagent of this
+    # same session noted it (a file of the baseline that a subagent edited is the subagent's). Anything else (an edit
+    # by shell, a baseline file whose hash changed) goes. A root without notes gets all its changed files but those
+    # live sessions noted.
+    case "$OSTYPE" in darwin*) shopt -s nocasematch ;; esac
+    filtra=""; base=""
+    case "$propio" in *$'\n'"$KR_ROOT"$'\t'f$'\t'*) filtra=1 ;; esac
+    case "$propio" in *$'\n'"$KR_ROOT"$'\t'base$'\n'*) base=1 ;; esac
+    [ -z "$sub" ] || [ -n "$filtra" ] || { shopt -u nocasematch; continue; }
+    k=0
+    while [ $k -lt ${#KR_SUC[@]} ]; do
+      f="${KR_SUC[$k]}"; h="${KR_HASH[$k]}"; k=$((k + 1))
+      if [ -n "$filtra" ]; then
+        case "$propio" in
+          *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*|*$'\n'"$KR_ROOT"$'\tf\t*\n'*) ;;
+          *) case "$familia" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac
+             [ -n "$base" ] || [ -z "$inicio" ] || ! [ "$inicio" -nt "$KR_ROOT/$f" ] || continue
+             [ -z "$h" ] || case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'"$h  $f"$'\n'*) continue ;; esac
+             case "$propio" in *$'\n'"$KR_ROOT"$'\t'b$'\t'*"  $f"$'\n'*) ;; *)
+               case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac ;;
+             esac ;;
+        esac
+      else
+        case "$ajeno" in *$'\n'"$KR_ROOT"$'\t'f$'\t'"$f"$'\n'*) continue ;; esac
       fi
-      m=$((m + 1))
+      files+=("./$f")
     done
-    d="$KR_ROOT${pr:+/$pr}"
-    what="los ficheros cambiados"
-    case "$KR_CWD/" in
-      "$d"/*) ;;
-      "$KR_ROOT"/*) what="los ficheros cambiados de $pr" ;;
-      *) what="los ficheros cambiados de $d" ;;
-    esac
-    resto=$((t - (SECONDS - empiezo)))
-    if [ $resto -le 0 ]; then
-      echo "agents-kit: el lint del turno pasó de $t s; no se comprueban $what; no bloquea" >&2
-      continue
-    fi
-    KR_DIR="$d"
-    kr_lint "$resto" "$what" "$KR_TURNO" "${args[@]}" || final=2
+    shopt -u nocasematch
+    [ ${#files[@]} -gt 0 ] || continue
+    # One run per TS project (kr_proyecto), from its directory and with paths relative to it; the files of no project
+    # from the root. KIT_TURNO_TIMEOUT is the budget of the whole check: each run gets what is left.
+    projs=(); for f in "${files[@]}"; do kr_proyecto "${f#./}"; projs+=("$KR_PROY"); done
+    [ -z "${KR_LOCK_OK:-}" ] || { _kr_soltar; KR_LOCK_OK=""; }
+    vistos=$'\n'; k=0
+    while [ $k -lt ${#files[@]} ]; do
+      pr="${projs[$k]}"; k=$((k + 1))
+      case "$vistos" in *$'\n'"$pr"$'\n'*) continue ;; esac
+      vistos="$vistos$pr"$'\n'; args=(); m=0
+      while [ $m -lt ${#files[@]} ]; do
+        if [ "${projs[$m]}" = "$pr" ]; then
+          if [ -n "$pr" ]; then args+=("./${files[$m]#"./$pr/"}"); else args+=("${files[$m]}"); fi
+        fi
+        m=$((m + 1))
+      done
+      d="$KR_ROOT${pr:+/$pr}"
+      what="los ficheros cambiados"
+      case "$KR_CWD/" in
+        "$d"/*) ;;
+        "$KR_ROOT"/*) what="los ficheros cambiados de $pr" ;;
+        *) what="los ficheros cambiados de $d" ;;
+      esac
+      resto=$((t - (SECONDS - empiezo)))
+      if [ $resto -le 0 ]; then
+        echo "agents-kit: el lint del turno pasó de $t s; no se comprueban $what; no bloquea" >&2
+        continue
+      fi
+      KR_DIR="$d"
+      kr_lint "$resto" "$what" "$KR_TURNO" "${args[@]}" || final=2
+    done
   done
-done
+  return $final
+}
+if [ -n "$buf" ]; then ( turno ) 2>"$buf"; else ( turno ); fi
+final=$?
+[ $final -eq 2 ] || final=0
 if [ -z "$cuenta" ]; then :
 elif [ $final -eq 2 ]; then
   [ -e "$cuenta" ] || kr_sesion_limpia
   printf '%s\n' $((n + 1)) > "$cuenta"
 else rm -f "$cuenta"; fi
 if [ -n "$buf" ]; then
-  exec 2>&3 3>&-
   if [ $final -eq 2 ]; then
     # under Claude Code's cap of 10,000 characters for a hook text (over it, the text goes to a file)
     jq -Rs --arg ev "${KR_EVENTO:-Stop}" 'if length > 9500 then .[:9500] + "\n... (recortado)" else . end

@@ -517,6 +517,19 @@ FAKE_RC=1 CLAUDECODE=1 hook stop-check "$(stop_json)"
 FAKE_RC=1 CLAUDECODE=1 hook stop-check "$(inp --arg c "$r" '{session_id: "s1", turn_id: "t1", cwd: $c, stop_hook_active: false}')"
 [ $rc -eq 2 ] && [[ "$out" == *"error de lint en --turno"* ]] || fail "con turn_id (Codex) sigue el exit 2: $rc $out"
 CLAUDECODE=1 hook stop-check "$(stop_json)"; [ $rc -eq 0 ] && [ -z "$out" ] || fail "en Claude Code, en verde no imprime nada: $rc $out"
+# el stderr real del hook (guardado aparte en Claude Code) no lo hereda el lint: un daemon que se desacopla no lo
+# deja abierto (quien lee el stderr del hook esperaría a que muera)
+cat > "$bin/daemonlint" <<'EOF2'
+#!/usr/bin/env bash
+perl -MPOSIX -e 'exit 0 if fork; POSIX::setsid(); open STDIN, "</dev/null"; open STDOUT, ">/dev/null";
+  open STDERR, ">/dev/null"; sleep 4'
+echo "error de lint"; exit 1
+EOF2
+chmod +x "$bin/daemonlint"
+marker "{\"lint\": {\"fichero\": {\"ts\": \"true\"}, \"turno\": \"$bin/daemonlint\"}}"
+t0=$(date +%s); CLAUDECODE=1 hook stop-check "$(stop_json)"; t1=$(date +%s)
+[ $rc -eq 0 ] && [ $((t1 - t0)) -lt 3 ] || fail "un daemon del lint no retiene el stderr del hook: $rc $((t1 - t0)) s $out"
+marker "$LINT"
 # salida larga: primeras líneas y resumen final, con la ruta de la salida completa
 cat > "$bin/largolint" <<'EOF2'
 #!/usr/bin/env bash
@@ -662,7 +675,8 @@ echo 'export const b = 3;' > "$r/src/b.ts"; hook post-edit "$(agj sp ag1 PostToo
 : > "$LOG"; hook stop-check "$(agj sp ag1 SubagentStop)"
 [ $rc -eq 2 ] && [ "$(cat "$LOG")" = ./src/b.ts ] && [[ "$out" == *"b.ts está a medias"* ]] \
   || fail "SubagentStop revisa lo del subagente y le bloquea: $rc $out / $(cat "$LOG")"
-[ -f "$(cnt sp/ag1)" ] && [ ! -f "$(cnt sp)" ] || fail "el subagente lleva su propia cuenta de bloqueos"
+ha="$(printf '%s' ag1 | shasum -a 256)"
+[ -f "$(cnt sp)-${ha%% *}" ] && [ ! -f "$(cnt sp)" ] || fail "el subagente lleva su propia cuenta de bloqueos"
 out="$(cd / && printf '%s' "$(agj sp ag1 SubagentStop)" | CLAUDECODE=1 "$H/stop-check" 2>&1)"; rc=$?
 [ $rc -eq 0 ] && jq -e '.hookSpecificOutput.hookEventName == "SubagentStop"
   and (.hookSpecificOutput.additionalContext | contains("b.ts está a medias"))' <<<"$out" >/dev/null \
@@ -687,6 +701,19 @@ hook post-edit "$(agj sp ag4 PostToolUse src/b.ts)"
 : > "$LOG"; hook stop-check "$(agj sp ag4 SubagentStop)"
 grep -qx ./src/s4.ts "$LOG" || fail "SubagentStop revisa lo escrito por shell antes de la primera edición: $(cat "$LOG")"
 rm -f "$r/src/s4.ts"
+# un fichero que ya estaba cambiado al empezar la sesión (en su línea base) y que luego edita un subagente es del
+# subagente: el Stop del principal no lo revisa; y lo que el principal edita después de lanzar al subagente, tampoco
+# lo revisa el subagente aunque esté en su línea base
+echo 'export const p = 1;' > "$r/src/previo.ts"
+ini sq; echo 'export const a = 5;' > "$r/src/a.ts"; hook post-edit "$(sesj sq src/a.ts PostToolUse)"
+hook subagent-start "$(agj sq ag5 SubagentStart)"
+echo 'export const p = 2;' > "$r/src/previo.ts"; hook post-edit "$(agj sq ag5 PostToolUse src/previo.ts)"
+echo 'export const a = 6;' > "$r/src/a.ts"; hook post-edit "$(sesj sq src/a.ts PostToolUse)"
+: > "$LOG"; hook stop-check "$(sjson sq false)"
+[ "$(cat "$LOG")" = ./src/a.ts ] || fail "un fichero de la línea base editado por un subagente es suyo: $(cat "$LOG")"
+: > "$LOG"; hook stop-check "$(agj sq ag5 SubagentStop)"
+[ "$(cat "$LOG")" = ./src/previo.ts ] || fail "lo que edita el principal no lo revisa su subagente: $(cat "$LOG")"
+rm -f "$r/src/previo.ts"; git -C "$r" checkout -q -- src/a.ts
 # el caso de kit-run: el subagente trabaja en un worktree; el Stop del principal no lo mira, su SubagentStop sí
 rw3="$(mktemp -d)/wt3"; git -C "$r" worktree add -q -b wt3 "$rw3" || fail "worktree wt3"
 hook subagent-start "$(agj sp ag3 SubagentStart)"
