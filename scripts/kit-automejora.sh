@@ -100,7 +100,8 @@ jq -r '
     | if .type == "text" then "### Asistente:\n" + .text + "\n"
       elif .type == "tool_use" then "- herramienta " + .name + ": " + (.input | tostring | .[0:300])
       else empty end
-  else empty end' "$transcript" 2>/dev/null | tail -c "$max_bytes" > "$tmpd/sesion.txt"
+  else empty end' "$transcript" 2>/dev/null | tail -c "$max_bytes" \
+  | sed 's#<\(/\{0,1\}\)transcript>#<\1transcript_>#g' > "$tmpd/sesion.txt" # the session never closes its own data block
 
 # --- 4. worktree
 abrir() { "$ship" abrir "$root" "$branch" con-marcador > "$tmpd/abrir.out" 2>&1; }
@@ -109,24 +110,27 @@ cerrar_pr() {
   (cd "$root" && gh pr close "$1" --delete-branch \
     --comment "<!-- kit-automejora --> Automejora descartada: $2" >/dev/null 2>&1)
 }
-abrir; rc=$?
-cat "$tmpd/abrir.out"
-if [ $rc -eq 1 ]; then
-  # left by a run that died (this one holds the lock): an open PR, or a remote or local branch, of kit-automejora
+# What a run that died left (this one holds the lock) is cleaned one piece per try, as abrir reports it: its worktree
+# (ya existía), its open PR, its branch in origin or in local. A few tries cover any mix of them.
+for intento in 1 2 3 4 5; do
+  abrir; rc=$?
+  cat "$tmpd/abrir.out"
+  if [ $rc -eq 0 ]; then
+    grep -qx 'ya existía' "$tmpd/abrir.out" || break
+    "$ship" descartar "$root" "$branch" || exit 2
+    continue
+  fi
+  [ $rc -eq 1 ] || break
   pr="$(sed -n "s/.*ya hay un PR abierto desde '$branch': \(https:[^ ]*\)\..*/\1/p" "$tmpd/abrir.out")"
-  if [ -n "$pr" ]; then cerrar_pr "$pr" "una ejecución anterior la dejó abierta." || { echo "error: no se pudo cerrar $pr" >&2; exit 2; }
+  if [ -n "$pr" ]; then
+    cerrar_pr "$pr" "una ejecución anterior la dejó abierta." || { echo "error: no se pudo cerrar $pr" >&2; exit 2; }
+    echo "cerrado el PR que dejó una ejecución anterior: $pr"
   elif grep -q "ya existe en origin" "$tmpd/abrir.out"; then git -C "$root" push -q origin --delete "$branch" 2>/dev/null || exit 2
   elif grep -q "ya existe en local" "$tmpd/abrir.out"; then git -C "$root" branch -D "$branch" >/dev/null || exit 2
+  else break
   fi
-  [ -z "$pr" ] || echo "cerrado el PR que dejó una ejecución anterior: $pr"
-  abrir; rc=$?; cat "$tmpd/abrir.out"
-fi
-[ $rc -eq 0 ] || { echo "error: no se pudo abrir el worktree de $branch" >&2; exit 2; }
-if grep -qx 'ya existía' "$tmpd/abrir.out"; then
-  "$ship" descartar "$root" "$branch" || exit 2
-  abrir; rc=$?; cat "$tmpd/abrir.out"
-  [ $rc -eq 0 ] || { echo "error: no se pudo abrir el worktree de $branch" >&2; exit 2; }
-fi
+done
+[ $rc -eq 0 ] && ! grep -qx 'ya existía' "$tmpd/abrir.out" || { echo "error: no se pudo abrir el worktree de $branch" >&2; exit 2; }
 wt="$(sed -n 's/^FIN: //p' "$tmpd/abrir.out")"
 base="$(sed -n 's/^base: //p' "$tmpd/abrir.out")"
 [ -d "$wt" ] && [ -n "$base" ] || { echo "error: salida de abrir ilegible" >&2; exit 2; }
