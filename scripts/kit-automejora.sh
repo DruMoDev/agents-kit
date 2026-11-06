@@ -62,14 +62,15 @@ flags="$(kit_config "$root" '"\(.automejora != false) \(.flujo != false)"')" || 
 
 # --- 1. trivial sessions
 # dru: the text of each message of Dru (a jq filter on one transcript line; empty for anything else). A slash command
-# he typed (<command-name>/x</command-name>... <command-args>y</command-args>) counts as "/x y": a session that opens
+# he typed (<command-name>/x</command-name>, with or without <command-args>y</command-args>) counts as "/x y" (no
+# match of capture gives nothing, not an error: hence the [..] | first // ""): a session that opens
 # with /kit-run 5 is the friction with a skill this is for; the built-in ones that only steer Claude Code do not.
 dru='def texto: if type == "string" then . else (map(select(.type == "text") | .text) | join("\n")) end;
-  def comando: (try capture("<command-name>/?(?<n>[^<]*)</command-name>").n catch "") as $n
-    | (try capture("<command-args>(?<a>[^<]*)</command-args>").a catch "") as $a
-    | if $n == "" or ([$n] | inside(["clear", "compact", "exit", "quit", "resume", "model", "config", "help", "cost",
-        "status", "context", "login", "logout", "fast", "effort", "theme", "vim", "plugin", "hooks", "mcp", "memory",
-        "permissions", "doctor", "agents", "rewind", "export"])) then empty
+  def comando: ([capture("<command-name>/?(?<n>[^<]*)</command-name>").n] | first // "") as $n
+    | ([capture("<command-args>(?<a>[\\s\\S]*?)</command-args>").a] | first // "") as $a
+    | if $n == "" or (["clear", "compact", "exit", "quit", "resume", "model", "config", "help", "cost", "status",
+        "context", "login", "logout", "fast", "effort", "theme", "vim", "plugin", "hooks", "mcp", "memory", "permissions",
+        "doctor", "agents", "rewind", "export"] | any(. == $n)) then empty
       else "/" + $n + (if $a == "" then "" else " " + $a end) end;
   select(.type == "user" and (.isMeta | not)) | (.message.content | texto)
   | if startswith("<command-") then comando else . end
