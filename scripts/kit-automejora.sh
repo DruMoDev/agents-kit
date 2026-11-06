@@ -224,6 +224,9 @@ git -C "$wt" diff --cached --stat HEAD
 "$review" "$wt" --local --contexto "$tmpd/contexto.txt" --estricto --implementador claude > "$tmpd/review.out" 2>&1
 rc=$?
 cat "$tmpd/review.out"
+# exit 1 is a rejection only when the reviewers ran (their FIN line with the findings); without it, a usage or
+# configuration error (no seats, unknown family), which must not pass for a verdict
+[ $rc -ne 1 ] || grep -Eq '^FIN: [0-9]+ puestos, [0-9]+ sin confirmar, [0-9]+ hallazgos' "$tmpd/review.out" || rc=2
 case $rc in
   0) ;;
   1) descartar; echo "descartado: la revisión no lo aprueba"; echo "FIN: descartado"; exit 0 ;;

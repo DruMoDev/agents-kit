@@ -53,6 +53,7 @@ cat > "$stubs/review" <<'EOF'
 #!/usr/bin/env bash
 echo "review $*" >> "$STUB_LOG"
 while [ $# -gt 0 ]; do [ "$1" = --contexto ] && cp "$2" "$STUB_LOG.contexto"; shift; done
+[ "${REVIEW_SIN_FIN:-}" = 1 ] && { echo "sin puestos de revisión configurados" >&2; exit 1; }
 echo "FIN: 3 puestos, 0 sin confirmar, 0 hallazgos (0 graves, 0 medios)"
 exit "${REVIEW_RC:-0}"
 EOF
@@ -199,6 +200,10 @@ REVIEW_RC=1 EDITOR_CMD='echo "x" >> AGENTS.md' run "$r" "$t"
 ! called "ship enviar" || fail "revisión rechaza y envía"; called "ship descartar" || fail "revisión rechaza sin descartar"
 REVIEW_RC=2 EDITOR_CMD='echo "x" >> AGENTS.md' run "$r" "$t"
 [ $rc -eq 2 ] || fail "revisión rota: exit $rc"; ! called "ship enviar" || fail "revisión rota y envía"
+# exit 1 without the reviewers' FIN line (no seats, unknown family) is an error, not a verdict
+REVIEW_SIN_FIN=1 EDITOR_CMD='echo "x" >> AGENTS.md' run "$r" "$t"
+[ $rc -eq 2 ] || fail "revisión mal configurada: exit $rc ($out)"; ! called "ship enviar" || fail "revisión mal configurada y envía"
+[ ! -e "$STUB_WT" ] || fail "revisión mal configurada deja el worktree"
 
 # --- a PR that does not merge (conflict, red CI) is closed with its branch, never left open; no notice
 SHIP_ABIERTO=1 EDITOR_CMD='echo "x" >> AGENTS.md' EDITOR_RESUMEN="AGENTS.md: x" run "$r" "$t"
