@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# SessionEnd hook: launches scripts/kit-automejora.sh detached (its own session, setsid) and returns at once, so the
+# review goes on after Claude Code has closed. Only in Claude Code (CLAUDECODE=1): Codex runs hooks/hooks.json too,
+# with another transcript format and a SessionEnd capped at a few seconds. Silent, exit 0, when the session's repo has
+# no .agents-kit.json, without a readable transcript, or in a session the kit launched (KIT_AUTOMEJORA set: the
+# self-improvement itself and its reviewers). The rest (the marker's "automejora", trivial sessions) is decided by the
+# script. Claude Code allows SessionEnd hooks little time, so stdin is read with a 1 s cap: with reason "clear" the
+# pipe may never be closed (Claude Code issue 79508).
+# Log: ${KIT_AUTOMEJORA_LOGS:-~/.agents-kit/logs}/automejora-<repo>-<fecha>-<sesión>.log (older than 30 days, deleted).
+
+[ "${CLAUDECODE:-}" = 1 ] || exit 0
+[ -z "${KIT_AUTOMEJORA:-}" ] || exit 0
+command -v jq >/dev/null 2>&1 && command -v perl >/dev/null 2>&1 || exit 0
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+
+input="$(perl -e '$SIG{ALRM} = sub { print $b; exit 0 }; alarm 1; while (sysread(STDIN, $c, 65536)) { $b .= $c } print $b' 2>/dev/null)"
+cwd="$(printf '%s' "$input" | jq -r '.cwd // empty | strings' 2>/dev/null)"
+transcript="$(printf '%s' "$input" | jq -r '.transcript_path // empty | strings' 2>/dev/null)"
+reason="$(printf '%s' "$input" | jq -r '.reason // "?" | tostring' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
+sid="$(printf '%s' "$input" | jq -r '.session_id // empty | strings' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
+[ -n "$cwd" ] && [ -d "$cwd" ] && [ -n "$transcript" ] && [ -f "$transcript" ] || exit 0
+root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$root" ] && [ -f "$root/.agents-kit.json" ] || exit 0
+
+logs="${KIT_AUTOMEJORA_LOGS:-$HOME/.agents-kit/logs}"
+mkdir -p "$logs" 2>/dev/null || exit 0
+find "$logs" -maxdepth 1 -name 'automejora-*.log' -mtime +30 -delete 2>/dev/null
+log="$logs/automejora-$(basename "$root" | tr -cd 'A-Za-z0-9._-')-$(date +%Y%m%d-%H%M%S)-${sid:-sin-sesion}.log"
+nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$PLUGIN_ROOT/scripts/kit-automejora.sh" "$root" "$transcript" "${reason:-?}" \
+  </dev/null >>"$log" 2>&1 &
+exit 0

@@ -23,6 +23,11 @@ ya existía con ese email, se vincula sola.
 ![Pantalla de acceso](docs/changelog/12-login.png)
 -->
 
+## 2026-11-06
+
+### Nuevo: cada sesión mejora las instrucciones del proyecto al cerrarse, solo si hace falta · [#PR](PR)
+Al cerrar una sesión de Claude Code en un repo con el kit, un repaso en segundo plano lee lo que pasó y, si dejó algo concreto sin guardar (una fricción con una skill, un dato de `AGENTS.md` que ya no es verdad, una decisión tuya con su porqué), lo corrige con el cambio mínimo y lo deja fusionado solo, tras pasar la revisión de los otros modelos. Lo normal es que no cambie nada: entonces no hay PR ni aviso. Solo toca `AGENTS.md`, las skills del proyecto y las rutas de contenido, nunca código ni reglas, y te avisa cuando fusiona algo. Se apaga con `"automejora": false` en `.agents-kit.json`.
+
 ## 2026-11-05
 
 ### Mejora: las copias de la comprobación de fin de turno se ponen al día solas con el kit · [#57](https://github.com/DruMoDev/agents-kit/pull/57)

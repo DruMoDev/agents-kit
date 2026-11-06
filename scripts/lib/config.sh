@@ -6,7 +6,7 @@
 _KIT_TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/templates/config.json"
 
 # Keys a repo marker may set (plus revision.puestos, which replaces the whole list).
-_KIT_REPO_KEYS='["reglas","flujo","autoMerge","maxReviewRounds","contenido","protegido","setup","checks","changelog","ciTimeoutMin","verificar","lint","blindado"]'
+_KIT_REPO_KEYS='["reglas","flujo","autoMerge","automejora","maxReviewRounds","contenido","protegido","setup","checks","changelog","ciTimeoutMin","verificar","lint","blindado"]'
 
 # kit_global_path: print the global config path.
 kit_global_path() {

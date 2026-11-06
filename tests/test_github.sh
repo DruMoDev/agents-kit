@@ -328,7 +328,7 @@ bash "$ship" abrir "$r" "rama mala" sin-marcador >/dev/null 2>&1; [ $? -eq 1 ] |
 for sub in "abrir $r issue-3-x sin-marcador" "enviar $r main t b" "descartar $r feature" "fusionar $r kit-run"; do
   err="$(bash "$ship" $sub 2>&1 >/dev/null)"; rc=$?
   [ $rc -eq 1 ] || fail "rama fuera de la lista ($sub): exit $rc"
-  case "$err" in *"rama no permitida"*"kit-on, kit-off y kit-reglas"*) ;; *) fail "rama fuera de la lista ($sub): '$err'";; esac
+  case "$err" in *"rama no permitida"*"kit-on, kit-off, kit-reglas y kit-automejora"*) ;; *) fail "rama fuera de la lista ($sub): '$err'";; esac
 done
 [ "$(git -C "$r" worktree list | wc -l | tr -d ' ')" = 1 ] || fail "una rama rechazada no crea worktree"
 r="$(mk_with_origin main)"
