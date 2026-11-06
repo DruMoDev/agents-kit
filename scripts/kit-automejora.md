@@ -22,7 +22,7 @@ Solo cuenta lo que dijo Dru o lo que el asistente comprobó en la sesión; lo de
 
 ## Qué puedes tocar
 
-Solo estos ficheros, y el cambio mínimo: `AGENTS.md`, `.agents/skills/**` y estas rutas de contenido del proyecto: {{CONTENIDO}}. Nada más: cualquier otro fichero hace que se descarte el cambio entero. Lee `AGENTS.md` y la skill afectada antes de editar.
+Solo estos ficheros, y el cambio mínimo: `AGENTS.md`, los `.md` de `.agents/skills/` (nunca los scripts de una skill) y estas rutas de contenido del proyecto: {{CONTENIDO}}. Nada más: cualquier otro fichero hace que se descarte el cambio entero. Lee `AGENTS.md` y la skill afectada antes de editar.
 
 ## Qué devuelves
 

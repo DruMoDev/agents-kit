@@ -6,25 +6,29 @@
 # branch on its own. Doing nothing is the expected outcome. Steps:
 #   1. Nothing when the marker says "automejora": false or "flujo": false, or for a trivial session (fewer than 2
 #      messages of Dru or fewer than 5 tool calls: a claude -p of the kit has one prompt).
-#   2. One run per repo at a time: <git-common-dir>/agents-kit/automejora.lock (waits, up to KIT_AUTOMEJORA_ESPERA s).
+#   2. One run per repo at a time: flock on <git-common-dir>/agents-kit/automejora.lock (waits, up to
+#      KIT_AUTOMEJORA_ESPERA s; the kernel frees it when its owner dies, so a dead run never needs cleaning).
 #   3. A compact transcript (jq: Dru's text, the assistant's text, each tool's name and its input cut to 300 chars;
 #      never tool results, the way outside content would come in), the last KIT_AUTOMEJORA_MAX_BYTES bytes.
-#   4. kit-ship-pr.sh abrir <root> kit-automejora: a fresh worktree of origin/<default>, never Dru's tree.
+#   4. kit-ship-pr.sh abrir <root> kit-automejora: a fresh worktree of origin/<default>, never Dru's tree. What a dead
+#      run left (an open PR or a remote or local branch kit-automejora; this run holds the lock) is closed or deleted
+#      first, so one failure never blocks the next runs.
 #   5. claude -p (proveedores.claude.modelos.rapido) in that worktree with the prompt of kit-automejora.md: only Read,
 #      Grep, Glob, Edit and Write, reads only inside the worktree and edits only on the allowed paths (dontAsk denies
 #      the rest, also outside the worktree; checked with claude 2.1.319), no Bash, git,
 #      network or MCP, no settings but the worktree's local ones (no plugins, no user permissions).
-#   6. Gate of this script: the diff may only touch AGENTS.md, .agents/skills/** and the contenido paths (marker of
+#   6. Gate of this script: the diff may only touch AGENTS.md, the .md files of .agents/skills/ (never a skill's
+#      scripts: no code) and the contenido paths (marker of
 #      origin/<default>), nothing shielded (blindado), at most KIT_AUTOMEJORA_MAX_LINEAS changed lines, no binary
 #      files, and no new broken citation (kit-skills-check.sh); otherwise it is dropped whole.
 #   7. kit-review-all.sh --local --estricto with the editor's evidence as context: any unconfirmed seat or grave or
 #      medio finding drops it.
-#   8. kit-ship-pr.sh enviar: commit, PR, CI and squash merge; kit-notify.sh tells Dru (info when merged, accion when
-#      the PR stays open).
+#   8. kit-ship-pr.sh enviar: commit, PR, CI and squash merge; kit-notify.sh tells Dru (info). A PR that does not merge
+#      (conflict with the default branch, red CI or CI past its time) is closed with its branch: dropped, never forced.
 # KIT_AUTOMEJORA=1 is exported, so no session launched from here (the editor, the reviewers) reviews itself.
 # Env (tests): KIT_SHIP_BIN, KIT_REVIEW_ALL_BIN, KIT_NOTIFY_BIN, KIT_SKILLS_CHECK_BIN; KIT_AUTOMEJORA_ESPERA (3600),
-#   KIT_AUTOMEJORA_POLL (10), KIT_AUTOMEJORA_MAX_LINEAS (200), KIT_AUTOMEJORA_MAX_BYTES (400000).
-# Output: the steps, then FIN: desactivado | trivial | sin cambios | descartado | fusionada <url> | PR abierto <url>.
+#   KIT_AUTOMEJORA_MAX_LINEAS (200), KIT_AUTOMEJORA_MAX_BYTES (400000).
+# Output: the steps, then FIN: desactivado | trivial | sin cambios | descartado | fusionada <url>.
 # Exit: 0 ok (any FIN above), 1 usage, 2 environment error (claude, git, gh, the worktree or the review failed).
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,7 +47,7 @@ export KIT_AUTOMEJORA=1
 usage() { echo "uso: $0 <root> <transcript> [<motivo>]" >&2; exit 1; }
 [ $# -ge 2 ] && [ $# -le 3 ] && [ -n "$1" ] && [ -n "$2" ] || usage
 motivo="${3:-?}"
-for c in git jq; do command -v "$c" >/dev/null 2>&1 || { echo "error: falta '$c' en el PATH" >&2; exit 2; }; done
+for c in git jq perl; do command -v "$c" >/dev/null 2>&1 || { echo "error: falta '$c' en el PATH" >&2; exit 2; }; done
 [ -d "$1" ] || { echo "error: '$1' no es un directorio" >&2; exit 2; }
 [ -f "$2" ] && [ -r "$2" ] || { echo "error: no se puede leer el transcript: $2" >&2; exit 2; }
 transcript="$2"
@@ -72,24 +76,16 @@ command -v claude >/dev/null 2>&1 || { echo "error: falta 'claude' en el PATH" >
 echo "sesión: $msgs mensajes, $tools herramientas"
 
 tmpd="$(mktemp -d)" || exit 2
-lock=""
-cleanup() { rm -rf "$tmpd"; [ -z "$lock" ] || rm -rf "$lock"; }
-trap cleanup EXIT
+trap 'rm -rf "$tmpd"' EXIT
 
-# --- 2. one run per repo
+# --- 2. one run per repo: an flock held on fd 8 for the whole run (perl takes it on bash's own open file description,
+# which stays locked after perl exits; the kernel drops it when every holder is gone, also on a crash)
 common="$(cd "$root" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" || { echo "error: no se pudo leer el git-common-dir" >&2; exit 2; }
 mkdir -p "$common/agents-kit" || exit 2
-l="$common/agents-kit/automejora.lock" waited=0
-until mkdir "$l" 2>/dev/null; do
-  pid="$(cat "$l/pid" 2>/dev/null)"
-  # dead owner: its pid is gone, or it died between mkdir and writing the pid (no pid after a minute)
-  if { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; } || { [ -z "$pid" ] && [ -n "$(find "$l" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
-    rm -rf "$l"; continue
-  fi
-  [ "$waited" -lt "${KIT_AUTOMEJORA_ESPERA:-3600}" ] || { echo "error: otra automejora sigue en marcha en este repo ($l)" >&2; exit 2; }
-  sleep "${KIT_AUTOMEJORA_POLL:-10}"; waited=$((waited + ${KIT_AUTOMEJORA_POLL:-10}))
-done
-lock="$l"; echo $$ > "$lock/pid"
+exec 8>>"$common/agents-kit/automejora.lock" || exit 2
+perl -MFcntl=:flock -e 'open(my $f, ">&=", 8) or exit 2; $SIG{ALRM} = sub { exit 1 }; alarm($ARGV[0] > 0 ? $ARGV[0] : 1);
+  exit(flock($f, LOCK_EX) ? 0 : 1)' "${KIT_AUTOMEJORA_ESPERA:-3600}" \
+  || { echo "error: otra automejora sigue en marcha en este repo ($common/agents-kit/automejora.lock)" >&2; exit 2; }
 
 # --- 3. compact transcript
 jq -r '
@@ -108,11 +104,25 @@ jq -r '
 
 # --- 4. worktree
 abrir() { "$ship" abrir "$root" "$branch" con-marcador > "$tmpd/abrir.out" 2>&1; }
+# cerrar_pr <url> <motivo>: close an open PR of kit-automejora (by its URL) with its remote branch
+cerrar_pr() {
+  (cd "$root" && gh pr close "$1" --delete-branch \
+    --comment "<!-- kit-automejora --> Automejora descartada: $2" >/dev/null 2>&1)
+}
 abrir; rc=$?
 cat "$tmpd/abrir.out"
+if [ $rc -eq 1 ]; then
+  # left by a run that died (this one holds the lock): an open PR, or a remote or local branch, of kit-automejora
+  pr="$(sed -n "s/.*ya hay un PR abierto desde '$branch': \(https:[^ ]*\)\..*/\1/p" "$tmpd/abrir.out")"
+  if [ -n "$pr" ]; then cerrar_pr "$pr" "una ejecución anterior la dejó abierta." || { echo "error: no se pudo cerrar $pr" >&2; exit 2; }
+  elif grep -q "ya existe en origin" "$tmpd/abrir.out"; then git -C "$root" push -q origin --delete "$branch" 2>/dev/null || exit 2
+  elif grep -q "ya existe en local" "$tmpd/abrir.out"; then git -C "$root" branch -D "$branch" >/dev/null || exit 2
+  fi
+  [ -z "$pr" ] || echo "cerrado el PR que dejó una ejecución anterior: $pr"
+  abrir; rc=$?; cat "$tmpd/abrir.out"
+fi
 [ $rc -eq 0 ] || { echo "error: no se pudo abrir el worktree de $branch" >&2; exit 2; }
 if grep -qx 'ya existía' "$tmpd/abrir.out"; then
-  # left by a run that died (this one holds the lock): start again from the current default branch
   "$ship" descartar "$root" "$branch" || exit 2
   abrir; rc=$?; cat "$tmpd/abrir.out"
   [ $rc -eq 0 ] || { echo "error: no se pudo abrir el worktree de $branch" >&2; exit 2; }
@@ -125,12 +135,12 @@ descartar() { "$ship" descartar "$root" "$branch" >/dev/null || echo "aviso: no 
 # allowed and shielded paths, from the marker of the default branch (the change cannot widen its own gate)
 contenido="$(kit_config_base "$wt" '.contenido // [] | .[] | strings' "origin/$base")" || { descartar; exit 2; }
 blindado="$(kit_config_base "$wt" '.blindado // [] | .[] | strings' "origin/$base")" || { descartar; exit 2; }
-permitido="$(printf 'AGENTS.md\n.agents/skills/\n%s' "$contenido")"
+permitido="$(printf 'AGENTS.md\n.agents/skills/*.md\n%s' "$contenido")"
 roto_antes="$("$skills_check" "$wt" 2>&1 >/dev/null | sort)"
 
 # --- 5. the editor
 # reads (Read, Grep, Glob) and edits only inside the worktree: a bare "Read" would read anywhere (seen with /etc/hosts)
-allowed=("Read(./**)" "Edit(./AGENTS.md)" "Edit(./.agents/skills/**)")
+allowed=("Read(./**)" "Edit(./AGENTS.md)" "Edit(./.agents/skills/**/*.md)")
 while IFS= read -r c; do
   [ -n "$c" ] || continue
   case "$c" in */) allowed+=("Edit(./${c}**)") ;; *) allowed+=("Edit(./$c)") ;; esac
@@ -226,8 +236,11 @@ if [ $rc -eq 0 ]; then
 fi
 url="$(grep -Eo 'https://github\.com/[^ ]+/pull/[0-9]+' "$tmpd/enviar.out" | sed -n '$p')"
 if [ -n "$url" ]; then
-  "$notify" "$root" accion "$repo: automejora sin fusionar" "El PR sigue abierto: mira su CI. $resumen" "$url" || true
-  echo "FIN: PR abierto $url"
+  # never left open: it would block the next runs, and a conflict or a red CI is not this change's to fix
+  cerrar_pr "$url" "no se pudo fusionar (conflicto con la rama por defecto o CI que no salió verde)." \
+    || echo "aviso: no se pudo cerrar $url; la siguiente automejora lo cierra" >&2
+  echo "descartado: el PR no se fusionó ($url)"
+  echo "FIN: descartado"
   exit 0
 fi
 "$ship" descartar "$root" "$branch" >/dev/null 2>&1 || true
