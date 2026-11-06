@@ -64,7 +64,9 @@ flags="$(kit_config "$root" '"\(.automejora != false) \(.flujo != false)"')" || 
 # dru: the text of each message of Dru (a jq filter on one transcript line; empty for anything else). A slash command
 # he typed (<command-name>/x</command-name>, with or without <command-args>y</command-args>) counts as "/x y" (no
 # match of capture gives nothing, not an error: hence the [..] | first // ""): a session that opens
-# with /kit-run 5 is the friction with a skill this is for; the built-in ones that only steer Claude Code do not.
+# with /kit-run 5 is the friction with a skill this is for; the built-in ones that only steer Claude Code do not. A
+# "! <cmd>" of his counts as "!<cmd>", never its output (<bash-stdout>, outside content), and the summary that
+# /compact writes (isCompactSummary) is the model's text, not his.
 dru='def texto: if type == "string" then . else (map(select(.type == "text") | .text) | join("\n")) end;
   def comando: ([capture("<command-name>/?(?<n>[^<]*)</command-name>").n] | first // "") as $n
     | ([capture("<command-args>(?<a>[\\s\\S]*?)</command-args>").a] | first // "") as $a
@@ -72,8 +74,12 @@ dru='def texto: if type == "string" then . else (map(select(.type == "text") | .
         "context", "login", "logout", "fast", "effort", "theme", "vim", "plugin", "hooks", "mcp", "memory", "permissions",
         "doctor", "agents", "rewind", "export"] | any(. == $n)) then empty
       else "/" + $n + (if $a == "" then "" else " " + $a end) end;
-  select(.type == "user" and (.isMeta | not)) | (.message.content | texto)
-  | if startswith("<command-") then comando else . end
+  select(.type == "user" and (.isMeta | not) and (.isCompactSummary | not) and (.isVisibleInTranscriptOnly | not))
+  | (.message.content | texto)
+  | if startswith("<command-") then comando
+    elif startswith("<bash-input>") then "!" + ([capture("<bash-input>(?<c>[\\s\\S]*?)</bash-input>").c] | first // "")
+    elif startswith("<bash-std") then empty
+    else . end
   | select(length > 0)
   | select(test("^(<local-command|Stop hook feedback|<task-notification|<system-reminder|\\[Request interrupted)") | not)'
 msgs="$(jq -r "$dru | \"x\"" "$transcript" 2>/dev/null | wc -l | tr -d ' ')"
