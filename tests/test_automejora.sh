@@ -109,6 +109,13 @@ r="$(repo '{"flujo": false}')"; run "$r" "$t"; expect "FIN: desactivado" "sin fl
 r="$(repo '{}')"
 run "$r" "$(transcript 1 9)"; expect "FIN: trivial (1 mensajes, 9 herramientas)" "un solo mensaje"; ! called claude || fail "trivial llama a claude"
 run "$r" "$(transcript 3 4)"; expect "FIN: trivial (3 mensajes, 4 herramientas)" "pocas herramientas"
+# a slash command of Dru counts as his message (/clear and the like, which only steer Claude Code, do not)
+tc="$(transcript 1 5)"
+jq -cn '{type: "user", message: {content: "<command-message>agents-kit:kit-run</command-message>\n<command-name>/agents-kit:kit-run</command-name>\n<command-args>5</command-args>"}}' >> "$tc"
+jq -cn '{type: "user", message: {content: "<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>"}}' >> "$tc"
+run "$r" "$tc"; expect "sesión: 2 mensajes, 5 herramientas" "comando de Dru"
+grep -q '^/agents-kit:kit-run 5$' "$STUB_LOG.claude-prompt" || fail "el comando de Dru no llega al editor"
+grep -q '/clear' "$STUB_LOG.claude-prompt" && fail "/clear no es un mensaje de Dru"
 bash "$script" "$(mktemp -d)" "$t" >/dev/null 2>&1; [ $? -ne 0 ] || fail "sin repo debe fallar"
 bash "$script" "$r" /no/existe >/dev/null 2>&1; [ $? -eq 2 ] || fail "sin transcript debe salir 2"
 bash "$script" "$r" >/dev/null 2>&1; [ $? -eq 1 ] || fail "uso"

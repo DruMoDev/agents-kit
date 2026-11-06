@@ -61,11 +61,21 @@ flags="$(kit_config "$root" '"\(.automejora != false) \(.flujo != false)"')" || 
 [ "$flags" = "true true" ] || { echo "FIN: desactivado"; exit 0; }
 
 # --- 1. trivial sessions
-user_text='def texto: if type == "string" then . else (map(select(.type == "text") | .text) | join("\n")) end;
+# dru: the text of each message of Dru (a jq filter on one transcript line; empty for anything else). A slash command
+# he typed (<command-name>/x</command-name>... <command-args>y</command-args>) counts as "/x y": a session that opens
+# with /kit-run 5 is the friction with a skill this is for; the built-in ones that only steer Claude Code do not.
+dru='def texto: if type == "string" then . else (map(select(.type == "text") | .text) | join("\n")) end;
+  def comando: (try capture("<command-name>/?(?<n>[^<]*)</command-name>").n catch "") as $n
+    | (try capture("<command-args>(?<a>[^<]*)</command-args>").a catch "") as $a
+    | if $n == "" or ([$n] | inside(["clear", "compact", "exit", "quit", "resume", "model", "config", "help", "cost",
+        "status", "context", "login", "logout", "fast", "effort", "theme", "vim", "plugin", "hooks", "mcp", "memory",
+        "permissions", "doctor", "agents", "rewind", "export"])) then empty
+      else "/" + $n + (if $a == "" then "" else " " + $a end) end;
   select(.type == "user" and (.isMeta | not)) | (.message.content | texto)
+  | if startswith("<command-") then comando else . end
   | select(length > 0)
-  | select(test("^(<local-command|<command-|Stop hook feedback|<task-notification|<system-reminder|\\[Request interrupted)") | not)'
-msgs="$(jq -r "$user_text | \"x\"" "$transcript" 2>/dev/null | wc -l | tr -d ' ')"
+  | select(test("^(<local-command|Stop hook feedback|<task-notification|<system-reminder|\\[Request interrupted)") | not)'
+msgs="$(jq -r "$dru | \"x\"" "$transcript" 2>/dev/null | wc -l | tr -d ' ')"
 tools="$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | "x"' "$transcript" 2>/dev/null \
   | wc -l | tr -d ' ')"
 if [ "$msgs" -lt "$min_msgs" ] || [ "$tools" -lt "$min_tools" ]; then
@@ -88,13 +98,9 @@ perl -MFcntl=:flock -e 'open(my $f, ">&=", 8) or exit 2; $SIG{ALRM} = sub { exit
   || { echo "error: otra automejora sigue en marcha en este repo ($common/agents-kit/automejora.lock)" >&2; exit 2; }
 
 # --- 3. compact transcript
-jq -r '
-  def texto: if type == "string" then . else (map(select(.type == "text") | .text) | join("\n")) end;
+jq -r "def dru: $dru;"'
   if .type == "user" and (.isMeta | not) then
-    (.message.content | texto) as $t
-    | select(($t | length) > 0)
-    | select($t | test("^(<local-command|<command-|Stop hook feedback|<task-notification|<system-reminder|\\[Request interrupted)") | not)
-    | "### Dru (" + (.timestamp // "" | .[0:16]) + "):\n" + $t + "\n"
+    (.timestamp // "" | .[0:16]) as $ts | dru | "### Dru (" + $ts + "):\n" + . + "\n"
   elif .type == "assistant" then
     .message.content[]?
     | if .type == "text" then "### Asistente:\n" + .text + "\n"
