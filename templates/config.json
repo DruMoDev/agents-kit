@@ -14,6 +14,7 @@
   "implementador": { "familia": "claude", "nivel": "profundo" },
   "notify": "ntfy",
   "autoMerge": true,
+  "automejora": true,
   "maxReviewRounds": 10,
   "blindado": [
     "eslint.config.*", "*/eslint.config.*", ".eslintrc*", "*/.eslintrc*", ".eslintignore", "*/.eslintignore",
